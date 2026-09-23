@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# secrets - never commit
+.env
+.env.local
+API.txt
+
+# Excel lock files
+~$*
+
+# build artifacts (rebuild with: zip -qr ... / python3 scripts/build-scope.py)
+*.zip
+
+# macOS
+.DS_Store
+
+# unpacked copy of the distribution zip (duplicate of this folder)
+/Talent-Carriage-Attendance-Agent/

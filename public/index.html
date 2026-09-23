@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attendance Agent · Talent Carriage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sansation:wght@400;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FFFFFF; --surface:#FFFFFF; --surface-2:#F7FAFC;
+  --sidebar:#073B5C; --sidebar-text:#BFD6E1; --sidebar-active:#0C4E75;
+  --banner-from:#1E5A78; --banner-to:#073B52;
+  --accent:#0C737E; --accent-hover:#095F68;
+  --ink:#0E1E28; --muted:#3E5763; --faint:#607884;
+  --border:#CBDAE1; --border-soft:#DCE8ED; --chip:#E1EFEE;
+  --warn-bg:#FBEEDB; --warn-text:#8A5A10;
+  --ok-bg:#DFF3E7; --ok-text:#136B3D;
+  --danger-bg:#FFE3E3; --danger-text:#A82020;
+  --shadow:0 10px 28px -12px rgba(14,30,40,.28);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:16px;line-height:1.45}
+h1,h2,h3,.brandtype{font-family:Sansation,Inter,sans-serif}
+button,input,select{font-family:inherit}
+.shell{display:flex;min-height:100vh}
+.sidebar{width:250px;flex:0 0 250px;background:var(--sidebar);padding:22px 16px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.logo-row{display:flex;flex-direction:column;gap:10px;padding:4px 6px 24px}
+.logo-card{background:#fff;border-radius:9px;padding:13px 14px;box-shadow:0 2px 8px rgba(2,12,20,.22);color:#073B5C}
+.logo-main{font-weight:800;font-size:22px;letter-spacing:.02em}
+.logo-sub{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#3F9E9E;margin-top:2px}
+.caption{font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6BCFCB}
+.nav{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.nav-item{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:10px;color:var(--sidebar-text);font-size:16px;font-weight:600}
+.nav-item.active{background:var(--sidebar-active);color:#fff}
+.nav-item svg{width:18px;height:18px;flex:0 0 18px}
+.soon{font-size:11px;font-weight:800;letter-spacing:.04em;background:rgba(255,255,255,.14);color:var(--sidebar-text);padding:2px 7px;border-radius:20px;margin-left:auto}
+.sidebar-foot{margin-top:auto;padding:14px 8px 4px;border-top:1px solid rgba(255,255,255,.1)}
+.sidebar-foot-name{color:#fff;font-size:14.5px;font-weight:700}
+.sidebar-foot-role{color:var(--sidebar-text);font-size:13.5px;margin-top:2px}
+.main{flex:1;min-width:0;padding:0 32px 42px}
+.summary{position:sticky;top:0;z-index:5;background:linear-gradient(100deg,var(--banner-from),var(--banner-to));padding:16px 26px 14px;margin:0 -32px 24px;box-shadow:var(--shadow)}
+.summary-grid{display:grid;grid-template-columns:repeat(5,1fr) 1.32fr;align-items:center}
+.stat{display:flex;flex-direction:column;gap:6px;padding:4px 14px;border-right:1px solid rgba(255,255,255,.16);min-width:0}
+.stat .lbl{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,.64)}
+.stat .val{font-size:24px;font-weight:800;color:#fff;line-height:1.2;white-space:nowrap;font-variant-numeric:tabular-nums}
+.stat .warn{color:#ffcf5c}
+.stat.hero{border-right:none;border-radius:14px;background:rgba(255,255,255,.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);padding:10px 22px;margin-left:8px}
+.stat.hero .lbl{color:#CFF3EF}.stat.hero .val{font-size:29px}
+.flags{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.14)}
+.flag{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;padding:5px 11px;border-radius:20px}
+.flag.ok{background:rgba(87,222,149,.16);color:#8FEFB9}.flag.warn{background:rgba(232,184,92,.18);color:#F0C878}.flag.idle{background:rgba(255,255,255,.12);color:rgba(255,255,255,.78)}
+.page-head{padding-top:26px}
+.eyebrow{display:inline-flex;align-items:center;gap:6px;background:var(--chip);color:var(--accent);font-size:13.5px;font-weight:700;letter-spacing:.04em;padding:5px 12px;border-radius:20px;margin-bottom:12px}
+h1{font-size:29px;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
+.page-head p{margin:0;color:var(--muted);font-size:16px;max-width:70ch}
+.layout{display:grid;grid-template-columns:minmax(0,1.55fr) 360px;gap:18px;margin-top:24px}
+.section{margin-top:18px}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
+.section-head h2{font-size:18.5px;margin:0;font-weight:700}.hint{font-size:14px;color:var(--faint)}
+.card{background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 1px 2px rgba(14,30,40,.06)}
+.upload{padding:20px 22px;display:grid;grid-template-columns:1.2fr 1fr auto;gap:16px;align-items:end}
+.field label{display:block;font-size:13px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+.input{width:100%;padding:11px 13px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface-2);color:var(--ink);font-size:15px;font-weight:700}
+.btn{border-radius:10px;font-weight:700;cursor:pointer;white-space:nowrap;border:1.5px solid var(--border);background:var(--surface);color:var(--ink);padding:11px 16px;font-size:14.5px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn.primary:hover{background:var(--accent-hover)}
+.btn.small{padding:7px 10px;font-size:13px;border-radius:8px}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn:focus-visible,.input:focus-visible,.reply-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.case-table{width:100%;border-collapse:collapse;font-size:14px}
+.case-table th{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-align:left;padding:13px 14px;border-bottom:1px solid var(--border-soft);background:var(--surface-2)}
+.case-table td{padding:13px 14px;border-bottom:1px solid var(--border-soft);vertical-align:middle}
+.employee{font-weight:700;color:var(--ink)}.sub{font-size:12.5px;color:var(--faint);margin-top:2px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:20px;font-size:12.5px;font-weight:800;white-space:nowrap}
+.pill.pending{background:var(--warn-bg);color:var(--warn-text)}.pill.waiting{background:var(--chip);color:var(--accent)}.pill.call{background:var(--danger-bg);color:var(--danger-text)}.pill.done{background:var(--ok-bg);color:var(--ok-text)}
+.reply-link{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;color:var(--ink)}
+.reply-link:hover{color:var(--accent)}
+.empty-row td{padding:34px 14px;text-align:center;color:var(--faint);font-size:14.5px}
+.side-stack{display:flex;flex-direction:column;gap:18px}.message-card{padding:18px 20px}
+.message-title{font-weight:700;font-size:17px;margin:0 0 4px}.message-note{font-size:14px;color:var(--faint);margin-bottom:14px}
+.message-box{background:var(--surface-2);border:1px dashed var(--border);border-radius:13px;padding:14px 15px;font-size:14px;white-space:pre-line;color:var(--ink)}
+.action-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.timeline{padding:18px 20px}
+.step{display:grid;grid-template-columns:26px 1fr;gap:10px;padding:10px 0;border-bottom:1px dashed var(--border-soft)}
+.step:last-child{border-bottom:none}.dot{width:22px;height:22px;border-radius:50%;background:var(--chip);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800}
+.step-title{font-size:14px;font-weight:700}.step-copy{font-size:13px;color:var(--faint);margin-top:2px}
+@media(max-width:980px){.shell{display:block}.sidebar{width:auto;height:auto;position:relative}.nav{display:grid;grid-template-columns:repeat(3,1fr)}.sidebar-foot{display:none}.main{padding:0 16px 32px}.summary{margin:0 -16px 20px}.summary-grid{grid-template-columns:repeat(2,1fr)}.stat.hero{grid-column:1/-1;margin:8px 0 0}.layout{grid-template-columns:1fr}.upload{grid-template-columns:1fr}}
+@media(max-width:640px){.nav{grid-template-columns:1fr 1fr}.case-scroll{overflow-x:auto}.case-table{min-width:820px}.summary-grid{grid-template-columns:1fr}.stat{border-right:none;border-bottom:1px solid rgba(255,255,255,.12)}}
+
+html{scroll-behavior:smooth}
+a.nav-item{text-decoration:none}
+a.nav-item:hover{background:rgba(255,255,255,.06);color:#fff}
+.run{padding:20px 22px;display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:end}
+.import{padding:16px 22px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end}
+.preview-list{border-top:1px solid var(--border-soft);padding:14px 22px 18px}
+.preview-list h3{font-size:15px;margin:0 0 10px}
+.preview-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border-soft);font-size:14px}
+.preview-row:last-child{border-bottom:none}
+.notice{margin:12px 22px 0;padding:10px 13px;border-radius:10px;font-size:14px;font-weight:600}
+.notice.ok{background:var(--ok-bg);color:var(--ok-text)}.notice.err{background:var(--danger-bg);color:var(--danger-text)}.notice.info{background:var(--chip);color:var(--accent)}
+.case-scroll{overflow-x:auto}
+.case-table .pill{white-space:nowrap}
+.case-table td.date{white-space:nowrap}
+.case-table tbody tr{cursor:pointer}
+.case-table tbody tr:hover{background:var(--surface-2)}
+.case-table tbody tr.selected{background:#EAF5F5}
+.case-table tbody tr.unsent{cursor:default;background:#FFFBF3}
+.tools{display:flex;gap:10px;align-items:center}
+.tools label{font-size:13px;color:var(--muted);font-weight:600;display:flex;gap:6px;align-items:center}
+.chat{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;background:#EFEAE2;border-radius:13px;padding:12px}
+.bubble{max-width:88%;padding:8px 11px;border-radius:10px;font-size:13.5px;white-space:pre-line;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+.bubble.out{align-self:flex-end;background:#D9FDD3}
+.bubble.in{align-self:flex-start;background:#fff}
+.bubble .meta{display:block;font-size:11px;color:var(--faint);margin-top:4px;text-align:right}
+.sim{margin-top:14px;border-top:1px dashed var(--border);padding-top:12px}
+.sim-title{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.sim-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.sim-text{display:flex;gap:6px;margin-top:8px}
+.settings{padding:18px 20px}
+.settings .field{margin-bottom:12px}
+.switch{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;margin-bottom:12px}
+.muted{color:var(--faint);font-size:13px}
+code{background:var(--surface-2);border:1px solid var(--border-soft);padding:1px 5px;border-radius:5px;font-size:12.5px;word-break:break-all}
+@media(max-width:980px){.run,.import{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="logo-row">
+      <div class="logo-card">
+        <div class="logo-main">Talent Carriage</div>
+        <div class="logo-sub">Imagine Innovate Transform</div>
+      </div>
+      <div class="caption">Attendance Agent</div>
+    </div>
+    <nav class="nav">
+      <a class="nav-item active" href="#top">▦ <span>Dashboard</span></a>
+      <a class="nav-item" href="#cases">☑ <span>Follow-up Cases</span></a>
+      <a class="nav-item" href="#whatsapp">◉ <span>WhatsApp</span></a>
+      <a class="nav-item" href="#settings">⚙ <span>Settings</span></a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="sidebar-foot-name">Talent Carriage</div>
+      <div class="sidebar-foot-role">HR follow-up workspace · demo</div>
+    </div>
+  </aside>
+  <main class="main" id="top">
+    <section class="summary">
+      <div class="summary-grid">
+        <div class="stat"><span class="lbl">Total Cases</span><span class="val" id="statTotal">–</span></div>
+        <div class="stat"><span class="lbl">Waiting Reply</span><span class="val warn" id="statWaiting">–</span></div>
+        <div class="stat"><span class="lbl">Leave Needed</span><span class="val" id="statLeave">–</span></div>
+        <div class="stat"><span class="lbl">Regularization</span><span class="val" id="statReg">–</span></div>
+        <div class="stat"><span class="lbl">Manager Approval</span><span class="val" id="statMgr">–</span></div>
+        <div class="stat hero"><span class="lbl">Needs Attention</span><span class="val" id="statAttention">–</span></div>
+      </div>
+      <div class="flags" id="flags"></div>
+    </section>
+    <section class="page-head">
+      <div class="eyebrow">✦ HR Command Center</div>
+      <h1>Attendance Follow-up Dashboard</h1>
+      <p>Check a day's attendance, WhatsApp everyone marked absent or half-day (A|A, A|P, P|A), and answer their replies automatically.</p>
+    </section>
+    <div class="layout">
+      <div>
+        <section class="section">
+          <div class="section-head"><h2>Run Attendance Check</h2><span class="hint" id="dataRange"></span></div>
+          <div class="card">
+            <div class="run">
+              <div class="field"><label for="checkDate">Attendance date</label><input class="input" type="date" id="checkDate"></div>
+              <button class="btn" type="button" id="previewBtn">Preview</button>
+              <button class="btn primary" type="button" id="runBtn">Run check &amp; send</button>
+            </div>
+            <div id="runNotice"></div>
+            <div class="preview-list" id="previewList" hidden></div>
+          </div>
+        </section>
+        <section class="section" id="cases">
+          <div class="section-head">
+            <h2>Follow-up Cases</h2>
+            <div class="tools"><label><input type="checkbox" id="allDates"> All dates</label></div>
+          </div>
+          <div class="card case-scroll">
+            <table class="case-table">
+              <thead><tr><th>Employee</th><th>Absent date</th><th>Case status</th><th>Reply → action</th><th>Next step</th></tr></thead>
+              <tbody id="caseBody"><tr class="empty-row"><td colspan="5">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-head"><h2>Import Attendance</h2><span class="hint">TimeOffice "Attendance register" export (.xlsx)</span></div>
+          <div class="card">
+            <div class="import">
+              <div class="field"><label for="fileInput">Attendance file</label><input class="input" type="file" id="fileInput" accept=".xlsx,.xls"></div>
+              <button class="btn" type="button" id="importBtn">Import</button>
+            </div>
+            <div id="importNotice" style="padding-bottom:14px"></div>
+          </div>
+        </section>
+      </div>
+      <aside class="side-stack">
+        <section class="card message-card" id="whatsapp">
+          <h2 class="message-title" id="chatTitle">WhatsApp</h2>
+          <div class="message-note" id="chatNote">Select a case to see its conversation.</div>
+          <div class="chat" id="chat"></div>
+          <div class="sim" id="simBox" hidden>
+            <div class="sim-title">Simulate employee reply (dry run)</div>
+            <div class="sim-grid" id="simButtons"></div>
+            <div class="sim-text"><input class="input" id="simText" placeholder='Type a reply, e.g. "I was sick"'><button class="btn small primary" id="simSend" type="button">Send</button></div>
+          </div>
+        </section>
+        <section class="card settings" id="settings">
+          <div class="section-head"><h2>Settings</h2></div>
+          <div class="field"><label for="checkTime">Daily check time (IST)</label><input class="input" type="time" id="checkTime"></div>
+          <label class="switch"><input type="checkbox" id="schedEnabled"> Run the check automatically every day</label>
+          <button class="btn primary" type="button" id="saveSettings">Save</button>
+          <div class="muted" id="settingsNote" style="margin-top:10px"></div>
+          <div class="muted" style="margin-top:14px;line-height:1.6">
+            Webhook callback URL: <code id="webhookUrl"></code><br>
+            Template: <code id="templateName"></code>
+          </div>
+        </section>
+        <section class="card timeline">
+          <div class="section-head"><h2>Automation Flow</h2></div>
+          <div class="step"><div class="dot">1</div><div><div class="step-title">Daily attendance check</div><div class="step-copy">At the set time (or on click), find everyone marked A|A, A|P or P|A.</div></div></div>
+          <div class="step"><div class="dot">2</div><div><div class="step-title">Send first WhatsApp</div><div class="step-copy">One approved template message per employee and date, with 4 reply buttons.</div></div></div>
+          <div class="step"><div class="dot">3</div><div><div class="step-title">Understand the reply</div><div class="step-copy">Buttons and 1–4 map directly; free text is classified by AI. Unclear replies are flagged for HR.</div></div></div>
+          <div class="step"><div class="dot">4</div><div><div class="step-title">Send guidance</div><div class="step-copy">Leave, regularization, or manager-approval instructions go back automatically. No reply in 48h is marked "No reply".</div></div></div>
+        </section>
+      </aside>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

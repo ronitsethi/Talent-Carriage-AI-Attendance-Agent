@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attendance Follow-up Command Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sansation:wght@400;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FFFFFF; --surface:#FFFFFF; --surface-2:#F7FAFC;
+  --sidebar:#073B5C; --sidebar-text:#BFD6E1; --sidebar-active:#0C4E75;
+  --banner-from:#1E5A78; --banner-to:#073B52;
+  --accent:#0C737E; --accent-hover:#095F68;
+  --ink:#0E1E28; --muted:#3E5763; --faint:#607884;
+  --border:#CBDAE1; --border-soft:#DCE8ED; --chip:#E1EFEE;
+  --warn-bg:#FBEEDB; --warn-text:#8A5A10;
+  --ok-bg:#DFF3E7; --ok-text:#136B3D;
+  --danger-bg:#FFE3E3; --danger-text:#A82020;
+  --shadow:0 10px 28px -12px rgba(14,30,40,.28);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:16px;line-height:1.45}
+h1,h2,h3,.brandtype{font-family:Sansation,Inter,sans-serif}
+button,input,select{font-family:inherit}
+.shell{display:flex;min-height:100vh}
+.sidebar{width:250px;flex:0 0 250px;background:var(--sidebar);padding:22px 16px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.logo-row{display:flex;flex-direction:column;gap:10px;padding:4px 6px 24px}
+.logo-card{background:#fff;border-radius:9px;padding:13px 14px;box-shadow:0 2px 8px rgba(2,12,20,.22);color:#073B5C}
+.logo-main{font-weight:800;font-size:22px;letter-spacing:.02em}
+.logo-sub{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#3F9E9E;margin-top:2px}
+.caption{font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6BCFCB}
+.nav{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.nav-item{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:10px;color:var(--sidebar-text);font-size:16px;font-weight:600}
+.nav-item.active{background:var(--sidebar-active);color:#fff}
+.nav-item svg{width:18px;height:18px;flex:0 0 18px}
+.soon{font-size:11px;font-weight:800;letter-spacing:.04em;background:rgba(255,255,255,.14);color:var(--sidebar-text);padding:2px 7px;border-radius:20px;margin-left:auto}
+.sidebar-foot{margin-top:auto;padding:14px 8px 4px;border-top:1px solid rgba(255,255,255,.1)}
+.sidebar-foot-name{color:#fff;font-size:14.5px;font-weight:700}
+.sidebar-foot-role{color:var(--sidebar-text);font-size:13.5px;margin-top:2px}
+.main{flex:1;min-width:0;padding:0 32px 42px}
+.summary{position:sticky;top:0;z-index:5;background:linear-gradient(100deg,var(--banner-from),var(--banner-to));padding:16px 26px 14px;margin:0 -32px 24px;box-shadow:var(--shadow)}
+.summary-grid{display:grid;grid-template-columns:repeat(5,1fr) 1.32fr;align-items:center}
+.stat{display:flex;flex-direction:column;gap:6px;padding:4px 14px;border-right:1px solid rgba(255,255,255,.16);min-width:0}
+.stat .lbl{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,.64)}
+.stat .val{font-size:24px;font-weight:800;color:#fff;line-height:1.2;white-space:nowrap;font-variant-numeric:tabular-nums}
+.stat .warn{color:#ffcf5c}
+.stat.hero{border-right:none;border-radius:14px;background:rgba(255,255,255,.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);padding:10px 22px;margin-left:8px}
+.stat.hero .lbl{color:#CFF3EF}.stat.hero .val{font-size:29px}
+.flags{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.14)}
+.flag{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;padding:5px 11px;border-radius:20px}
+.flag.ok{background:rgba(87,222,149,.16);color:#8FEFB9}.flag.warn{background:rgba(232,184,92,.18);color:#F0C878}.flag.idle{background:rgba(255,255,255,.12);color:rgba(255,255,255,.78)}
+.page-head{padding-top:26px}
+.eyebrow{display:inline-flex;align-items:center;gap:6px;background:var(--chip);color:var(--accent);font-size:13.5px;font-weight:700;letter-spacing:.04em;padding:5px 12px;border-radius:20px;margin-bottom:12px}
+h1{font-size:29px;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
+.page-head p{margin:0;color:var(--muted);font-size:16px;max-width:70ch}
+.layout{display:grid;grid-template-columns:minmax(0,1.55fr) 360px;gap:18px;margin-top:24px}
+.section{margin-top:18px}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
+.section-head h2{font-size:18.5px;margin:0;font-weight:700}.hint{font-size:14px;color:var(--faint)}
+.card{background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 1px 2px rgba(14,30,40,.06)}
+.upload{padding:20px 22px;display:grid;grid-template-columns:1.2fr 1fr auto;gap:16px;align-items:end}
+.field label{display:block;font-size:13px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+.input{width:100%;padding:11px 13px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface-2);color:var(--ink);font-size:15px;font-weight:700}
+.btn{border-radius:10px;font-weight:700;cursor:pointer;white-space:nowrap;border:1.5px solid var(--border);background:var(--surface);color:var(--ink);padding:11px 16px;font-size:14.5px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn.primary:hover{background:var(--accent-hover)}
+.btn.small{padding:7px 10px;font-size:13px;border-radius:8px}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn:focus-visible,.input:focus-visible,.reply-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.case-table{width:100%;border-collapse:collapse;font-size:14px}
+.case-table th{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-align:left;padding:13px 14px;border-bottom:1px solid var(--border-soft);background:var(--surface-2)}
+.case-table td{padding:13px 14px;border-bottom:1px solid var(--border-soft);vertical-align:middle}
+.employee{font-weight:700;color:var(--ink)}.sub{font-size:12.5px;color:var(--faint);margin-top:2px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:20px;font-size:12.5px;font-weight:800;white-space:nowrap}
+.pill.pending{background:var(--warn-bg);color:var(--warn-text)}.pill.waiting{background:var(--chip);color:var(--accent)}.pill.call{background:var(--danger-bg);color:var(--danger-text)}.pill.done{background:var(--ok-bg);color:var(--ok-text)}
+.reply-link{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;color:var(--ink)}
+.reply-link:hover{color:var(--accent)}
+.empty-row td{padding:34px 14px;text-align:center;color:var(--faint);font-size:14.5px}
+.side-stack{display:flex;flex-direction:column;gap:18px}.message-card{padding:18px 20px}
+.message-title{font-weight:700;font-size:17px;margin:0 0 4px}.message-note{font-size:14px;color:var(--faint);margin-bottom:14px}
+.message-box{background:var(--surface-2);border:1px dashed var(--border);border-radius:13px;padding:14px 15px;font-size:14px;white-space:pre-line;color:var(--ink)}
+.action-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.timeline{padding:18px 20px}
+.step{display:grid;grid-template-columns:26px 1fr;gap:10px;padding:10px 0;border-bottom:1px dashed var(--border-soft)}
+.step:last-child{border-bottom:none}.dot{width:22px;height:22px;border-radius:50%;background:var(--chip);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800}
+.step-title{font-size:14px;font-weight:700}.step-copy{font-size:13px;color:var(--faint);margin-top:2px}
+@media(max-width:980px){.shell{display:block}.sidebar{width:auto;height:auto;position:relative}.nav{display:grid;grid-template-columns:repeat(3,1fr)}.sidebar-foot{display:none}.main{padding:0 16px 32px}.summary{margin:0 -16px 20px}.summary-grid{grid-template-columns:repeat(2,1fr)}.stat.hero{grid-column:1/-1;margin:8px 0 0}.layout{grid-template-columns:1fr}.upload{grid-template-columns:1fr}}
+@media(max-width:640px){.nav{grid-template-columns:1fr 1fr}.case-scroll{overflow-x:auto}.case-table{min-width:820px}.summary-grid{grid-template-columns:1fr}.stat{border-right:none;border-bottom:1px solid rgba(255,255,255,.12)}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="logo-row">
+      <div class="logo-card">
+        <div class="logo-main">Talent Carriage</div>
+        <div class="logo-sub">Imagine Innovate Transform</div>
+      </div>
+      <div class="caption">Attendance Agent</div>
+    </div>
+    <nav class="nav">
+      <div class="nav-item active">▦ <span>Dashboard</span></div>
+      <div class="nav-item">⇧ <span>Upload</span></div>
+      <div class="nav-item">☑ <span>Follow-up Cases</span></div>
+      <div class="nav-item">◉ <span>WhatsApp</span></div>
+      <div class="nav-item">☎ <span>Call Center</span></div>
+      <div class="nav-item">⚙ <span>Settings</span><span class="soon">Next</span></div>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="sidebar-foot-name">DPOD Lifestyle</div>
+      <div class="sidebar-foot-role">HR follow-up workspace</div>
+    </div>
+  </aside>
+  <main class="main">
+    <section class="summary">
+      <div class="summary-grid">
+        <div class="stat"><span class="lbl">Total Cases</span><span class="val" id="statTotal">25</span></div>
+        <div class="stat"><span class="lbl">Waiting Reply</span><span class="val warn" id="statWaiting">18</span></div>
+        <div class="stat"><span class="lbl">Leave Needed</span><span class="val" id="statLeave">4</span></div>
+        <div class="stat"><span class="lbl">Regularization</span><span class="val" id="statReg">3</span></div>
+        <div class="stat"><span class="lbl">Call Required</span><span class="val warn" id="statCall">6</span></div>
+        <div class="stat hero"><span class="lbl">Open Follow-ups</span><span class="val" id="statOpen">21</span></div>
+      </div>
+      <div class="flags">
+        <span class="flag ok">✓ Runs entirely in this browser</span>
+        <span class="flag warn">◷ No server, no database</span>
+        <span class="flag idle">AI reply classification planned</span>
+      </div>
+    </section>
+    <section class="page-head">
+      <div class="eyebrow">✦ HR Command Center</div>
+      <h1>Attendance Follow-up Dashboard</h1>
+      <p>Upload the monthly TimeOffice attendance register, flag every absent date, send one WhatsApp question per case, log replies, and escalate unresolved ones to a call — all client-side.</p>
+    </section>
+    <div class="layout">
+      <div>
+        <section class="section">
+          <div class="section-head"><h2>Upload and Generate</h2><span class="hint">Flags any day where either session is "A" · works with sample data too</span></div>
+          <div class="card upload">
+            <div class="field"><label>Attendance file (.xlsx)</label><input class="input" type="file" id="fileInput" accept=".xlsx,.xls"></div>
+            <div class="field"><label>Test phone number (optional)</label><input class="input" type="tel" id="testPhone" placeholder="e.g. 9999999999"></div>
+            <button class="btn primary" type="button" id="generateBtn">Generate Follow-ups</button>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-head"><h2>Follow-up Cases</h2><span class="hint">One row equals one employee and one absent date · click a reply to log it</span></div>
+          <div class="card case-scroll">
+            <table class="case-table">
+              <thead><tr><th>Employee</th><th>Absent date</th><th>Status</th><th>Reply</th><th>Action</th><th>Case status</th><th>Next step</th></tr></thead>
+              <tbody id="caseBody">
+                <tr><td><div class="employee">Leo Johnson</div><div class="sub">Finance & Accounts · Deepak Gajjar</div></td><td>01-Aug-2026</td><td><span class="pill pending">A|A</span></td><td class="reply-link" onclick="logReply(0)">Waiting</td><td>Pending response</td><td><span class="pill waiting">Waiting reply</span></td><td><button class="btn small primary" type="button" onclick="openPreview(0)">Send WhatsApp</button></td></tr>
+                <tr><td><div class="employee">Brijesh Patel</div><div class="sub">Procurement · Deepak Gajjar</div></td><td>05-Aug-2026</td><td><span class="pill pending">A|A</span></td><td class="reply-link" onclick="logReply(1)">2 · No, working</td><td>Apply regularization</td><td><span class="pill pending">Pending regularization</span></td><td><button class="btn small" type="button" onclick="openPreview(1)">Follow up</button></td></tr>
+                <tr><td><div class="employee">Jasvant Katariya</div><div class="sub">Marketing & Brand · Mayank Talpada</div></td><td>31-Aug-2026</td><td><span class="pill pending">P|A</span></td><td class="reply-link" onclick="logReply(2)">1 · Absent</td><td>Apply leave</td><td><span class="pill pending">Pending leave</span></td><td><button class="btn small" type="button" onclick="openPreview(2)">Reminder</button></td></tr>
+                <tr><td><div class="employee">Dhruvi Barot</div><div class="sub">Content Development · Mayank Talpada</div></td><td>17-Aug-2026</td><td><span class="pill pending">A|A</span></td><td class="reply-link" onclick="logReply(3)">No reply</td><td>Follow-up required</td><td><span class="pill call">Call required</span></td><td><button class="btn small primary" type="button" onclick="openPreview(3)">Call now</button></td></tr>
+                <tr><td><div class="employee">Krish Patel</div><div class="sub">Interior Design · Aelin Gajjar</div></td><td>23-Aug-2026</td><td><span class="pill pending">A|A</span></td><td class="reply-link" onclick="logReply(4)">3 · On leave</td><td>Verify leave</td><td><span class="pill done">Verification</span></td><td><button class="btn small" type="button" onclick="openPreview(4)">Check HRMS</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <aside class="side-stack">
+        <section class="card message-card" id="previewCard">
+          <h2 class="message-title"><span id="previewTitleText">WhatsApp Preview</span></h2>
+          <div class="message-note" id="previewNote">One message is sent for one absent date.</div>
+          <div class="message-box" id="previewBox">Hi Leo, our attendance record shows you are marked absent on 01-Aug-2026.
+
+Were you actually absent?
+
+Reply with one option:
+1. Yes, I was absent
+2. No, I was working
+3. I was on Leave</div>
+          <div class="action-row"><button class="btn primary" id="previewPrimaryBtn" type="button">Send WhatsApp</button><button class="btn" id="scheduleBtn" type="button">Schedule</button></div>
+        </section>
+        <section class="card timeline">
+          <div class="section-head"><h2>Automation Flow</h2></div>
+          <div class="step"><div class="dot">1</div><div><div class="step-title">Send date-wise WhatsApp</div><div class="step-copy">Question maps directly to one follow-up row.</div></div></div>
+          <div class="step"><div class="dot">2</div><div><div class="step-title">Capture employee reply</div><div class="step-copy">Click a reply cell and log it — 1 becomes leave, 2 becomes regularization, 3 becomes leave verification.</div></div></div>
+          <div class="step"><div class="dot">3</div><div><div class="step-title">Send reminder</div><div class="step-copy">Pending rows keep a follow-up button until resolved.</div></div></div>
+          <div class="step"><div class="dot">4</div><div><div class="step-title">Call unresolved cases</div><div class="step-copy">No reply after sending moves that row into "Call now" for you to trigger.</div></div></div>
+        </section>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const DAY_COL_RE = /^\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\|/;
+
+const SAMPLE_CASES = [
+  {name:"Leo Johnson", dept:"Finance & Accounts", manager:"Deepak Gajjar", date:"01-Aug-2026", code:"A|A", reply:"Waiting", action:"Pending response", status:"waiting"},
+  {name:"Brijesh Patel", dept:"Procurement", manager:"Deepak Gajjar", date:"05-Aug-2026", code:"A|A", reply:"2 · No, working", action:"Apply regularization", status:"pending-regularization"},
+  {name:"Jasvant Katariya", dept:"Marketing & Brand", manager:"Mayank Talpada", date:"31-Aug-2026", code:"P|A", reply:"1 · Absent", action:"Apply leave", status:"pending-leave"},
+  {name:"Dhruvi Barot", dept:"Content Development", manager:"Mayank Talpada", date:"17-Aug-2026", code:"A|A", reply:"No reply", action:"Follow-up required", status:"call-required"},
+  {name:"Krish Patel", dept:"Interior Design", manager:"Aelin Gajjar", date:"23-Aug-2026", code:"A|A", reply:"3 · On leave", action:"Verify leave", status:"verification"}
+];
+
+let cases = SAMPLE_CASES.map(c => ({...c}));
+let currentIndex = null;
+
+const pillMap = {
+  "waiting":               {cls:"waiting", label:"Waiting reply",           nextLabel:"Send WhatsApp"},
+  "pending-leave":         {cls:"pending", label:"Pending leave",           nextLabel:"Reminder"},
+  "pending-regularization":{cls:"pending", label:"Pending regularization",  nextLabel:"Follow up"},
+  "call-required":         {cls:"call",    label:"Call required",          nextLabel:"Call now"},
+  "verification":          {cls:"done",    label:"Verification",           nextLabel:"Check HRMS"},
+  "sent":                  {cls:"waiting", label:"Sent · awaiting reply",   nextLabel:"Call now"},
+  "call-logged":           {cls:"done",    label:"Call logged",            nextLabel:"Done"},
+  "verified":              {cls:"done",    label:"Verified",               nextLabel:"Done"}
+};
+
+function firstName(n){ return String(n).split(" ")[0]; }
+
+function whatsAppMessage(c){
+  return `Hi ${firstName(c.name)}, our attendance record shows you are marked absent on ${c.date}.
+
+Were you actually absent?
+
+Reply with one option:
+1. Yes, I was absent
+2. No, I was working
+3. I was on Leave`;
+}
+function callScript(c){
+  return `Hello ${firstName(c.name)}, this is an automated reminder from HR.
+
+You are marked absent on ${c.date}.
+
+Please apply leave if you were on leave, or apply regularization if your attendance was missed.
+
+Thank you.`;
+}
+function verifyNote(c){
+  return `Cross-check ${c.name}'s HRMS leave entry for ${c.date} before closing this case.
+
+Latest reply on file: "${c.reply}".`;
+}
+function formatDate(d){
+  const months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${String(d.getDate()).padStart(2,"0")}-${months[d.getMonth()]}-${d.getFullYear()}`;
+}
+
+function parseWorkbook(file, testPhone, onDone){
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:"array"});
+
+      let year = new Date().getFullYear();
+      const filterSheetName = wb.SheetNames.find(n => /filter/i.test(n));
+      if(filterSheetName){
+        const frows = XLSX.utils.sheet_to_json(wb.Sheets[filterSheetName], {header:1});
+        const m = /(\d{2})-(\d{2})-(\d{4})/.exec(JSON.stringify(frows));
+        if(m) year = parseInt(m[3], 10);
+      }
+
+      const sheetName = wb.SheetNames.find(n => /attendance/i.test(n)) || wb.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {defval:null});
+
+      const dayCols = [];
+      if(rows.length){
+        Object.keys(rows[0]).forEach(col => {
+          const m = DAY_COL_RE.exec(String(col));
+          if(m) dayCols.push({col, date: new Date(year, parseInt(m[2],10)-1, parseInt(m[1],10))});
+        });
+      }
+
+      const built = [];
+      rows.forEach(row => {
+        const name = row["Full name"];
+        if(!name) return;
+        const dept = row["Department"] || "—";
+        const manager = row["Reporting manager"] || "—";
+        dayCols.forEach(({col, date}) => {
+          const raw = row[col];
+          if(!raw) return;
+          const parts = String(raw).split("|");
+          const fn = (parts[0] || "").trim();
+          const an = (parts[1] || parts[0] || "").trim();
+          if(fn === "A" || an === "A"){
+            built.push({
+              name, dept, manager,
+              date: formatDate(date),
+              code: `${fn}|${an}`,
+              reply: "Waiting",
+              action: "Pending response",
+              status: "waiting"
+            });
+          }
+        });
+      });
+      onDone(built, null);
+    }catch(err){
+      console.error(err);
+      onDone(null, err);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function generateFollowUps(){
+  const btn = document.getElementById("generateBtn");
+  const fileInput = document.getElementById("fileInput");
+  btn.disabled = true;
+  btn.textContent = "Generating…";
+
+  const finish = (data) => {
+    cases = data;
+    btn.disabled = false;
+    btn.textContent = "Generate Follow-ups";
+    renderTable();
+    updateStats();
+    if(cases.length) openPreview(0);
+  };
+
+  if(fileInput.files && fileInput.files[0]){
+    parseWorkbook(fileInput.files[0], document.getElementById("testPhone").value.trim(), (built, err) => {
+      setTimeout(() => {
+        if(err){
+          alert('Could not read that file — check it\\'s the same layout as the TimeOffice export (a sheet with day columns like "1 / 8 | Sat").');
+          btn.disabled = false;
+          btn.textContent = "Generate Follow-ups";
+          return;
+        }
+        finish(built);
+      }, 300);
+    });
+  } else {
+    setTimeout(() => finish(SAMPLE_CASES.map(c => ({...c}))), 500);
+  }
+}
+
+function renderTable(){
+  const body = document.getElementById("caseBody");
+  if(!cases.length){
+    body.innerHTML = '<tr class="empty-row"><td colspan="7">No follow-up cases in that file — nothing came back marked "A".</td></tr>';
+    return;
+  }
+  body.innerHTML = cases.map((c,i) => {
+    const p = pillMap[c.status];
+    const primary = (p.nextLabel === "Send WhatsApp" || p.nextLabel === "Call now") ? "primary" : "";
+    const disabled = p.nextLabel === "Done" ? "disabled" : "";
+    return `<tr>
+      <td><div class="employee">${c.name}</div><div class="sub">${c.dept} · ${c.manager}</div></td>
+      <td>${c.date}</td>
+      <td><span class="pill pending">${c.code}</span></td>
+      <td class="reply-link" tabindex="0" onclick="logReply(${i})">${c.reply}</td>
+      <td>${c.action}</td>
+      <td><span class="pill ${p.cls}">${p.label}</span></td>
+      <td><button class="btn small ${primary}" type="button" ${disabled} onclick="openPreview(${i})">${p.nextLabel}</button></td>
+    </tr>`;
+  }).join("");
+}
+
+function updateStats(){
+  const total = cases.length;
+  const waiting = cases.filter(c => c.status==="waiting" || c.status==="sent").length;
+  const leave = cases.filter(c => c.status==="pending-leave").length;
+  const reg = cases.filter(c => c.status==="pending-regularization").length;
+  const call = cases.filter(c => c.status==="call-required").length;
+  const open = cases.filter(c => c.status!=="verified" && c.status!=="call-logged").length;
+  document.getElementById("statTotal").textContent = total;
+  document.getElementById("statWaiting").textContent = waiting;
+  document.getElementById("statLeave").textContent = leave;
+  document.getElementById("statReg").textContent = reg;
+  document.getElementById("statCall").textContent = call;
+  document.getElementById("statOpen").textContent = open;
+}
+
+function openPreview(i){
+  currentIndex = i;
+  const c = cases[i];
+  const nextLabel = pillMap[c.status].nextLabel;
+  const titleEl = document.getElementById("previewTitleText");
+  const noteEl = document.getElementById("previewNote");
+  const boxEl = document.getElementById("previewBox");
+  const btnEl = document.getElementById("previewPrimaryBtn");
+  btnEl.disabled = false;
+
+  if(nextLabel === "Call now"){
+    titleEl.textContent = "Call Script Preview";
+    noteEl.textContent = `Automated reminder call for ${c.name} · ${c.date}`;
+    boxEl.textContent = callScript(c);
+    btnEl.textContent = "Place Call";
+  } else if(nextLabel === "Check HRMS"){
+    titleEl.textContent = "Verification Note";
+    noteEl.textContent = `Quick HRMS cross-check for ${c.name}`;
+    boxEl.textContent = verifyNote(c);
+    btnEl.textContent = "Mark Verified";
+  } else if(nextLabel === "Done"){
+    titleEl.textContent = "Case Closed";
+    noteEl.textContent = `${c.name}'s case for ${c.date} is resolved.`;
+    boxEl.textContent = "No further action needed.";
+    btnEl.textContent = "Done";
+    btnEl.disabled = true;
+  } else {
+    titleEl.textContent = "WhatsApp Preview";
+    noteEl.textContent = "One message is sent for one absent date.";
+    boxEl.textContent = whatsAppMessage(c);
+    btnEl.textContent = "Send WhatsApp";
+  }
+  document.getElementById("previewCard").scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+function confirmPrimaryAction(){
+  if(currentIndex === null) return;
+  const c = cases[currentIndex];
+  const nextLabel = pillMap[c.status].nextLabel;
+  const now = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  const noteEl = document.getElementById("previewNote");
+  const btnEl = document.getElementById("previewPrimaryBtn");
+
+  if(nextLabel === "Call now"){
+    c.status = "call-logged";
+    noteEl.textContent = `✓ Call placed to ${c.name} at ${now}`;
+  } else if(nextLabel === "Check HRMS"){
+    c.status = "verified";
+    noteEl.textContent = `✓ Marked verified at ${now}`;
+  } else {
+    c.status = "sent";
+    noteEl.textContent = `✓ Sent to ${c.name} at ${now}`;
+  }
+  btnEl.disabled = true;
+  btnEl.textContent = "Done";
+  renderTable();
+  updateStats();
+}
+
+function scheduleCurrent(){
+  if(currentIndex === null) return;
+  const btn = document.getElementById("scheduleBtn");
+  const original = btn.textContent;
+  btn.textContent = "Scheduled ✓";
+  setTimeout(() => { btn.textContent = original; }, 1800);
+}
+
+function logReply(i){
+  const c = cases[i];
+  const reply = window.prompt(`What did ${c.name} reply?`, c.reply === "Waiting" || c.reply === "No reply" ? "" : c.reply);
+  if(reply === null || !reply.trim()) return;
+  c.reply = reply.trim();
+  if(/\b1\b|absent/i.test(reply)){ c.status = "pending-leave"; c.action = "Apply leave"; }
+  else if(/\b2\b|working/i.test(reply)){ c.status = "pending-regularization"; c.action = "Apply regularization"; }
+  else if(/\b3\b|leave/i.test(reply)){ c.status = "verification"; c.action = "Verify leave"; }
+  else { c.action = "Follow-up required"; }
+  renderTable();
+  updateStats();
+}
+
+document.getElementById("generateBtn").addEventListener("click", generateFollowUps);
+document.getElementById("previewPrimaryBtn").addEventListener("click", confirmPrimaryAction);
+document.getElementById("scheduleBtn").addEventListener("click", scheduleCurrent);
+</script>
+</body>
+</html>

@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Attendance Agent — Product Scope</title>
+<link href="https://fonts.googleapis.com/css2?family=Sansation:wght@400;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#073B5C; --navy-2:#0C4E75; --teal:#0C737E; --teal-soft:#E1EFEE;
+  --ink:#12232E; --muted:#3F5866; --faint:#69818F;
+  --line:#CBDAE1; --line-soft:#E3ECF0; --bg-soft:#F6FAFB;
+  --amber:#8A5A10; --amber-bg:#FBEEDB; --green:#136B3D;
+}
+@page { size: A4; margin: 15mm 14mm 15mm 14mm; }
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,sans-serif;font-size:9.2pt;line-height:1.42;color:var(--ink)}
+h1,h2,h3,h4{font-family:Sansation,Inter,sans-serif}
+h2{font-size:14pt;margin:6mm 0 2.5mm;padding-bottom:1.6mm;border-bottom:2px solid var(--teal);color:var(--navy);page-break-after:avoid}
+h3{font-size:10.6pt;margin:4.5mm 0 1.5mm;color:var(--navy-2);page-break-after:avoid}
+h4{font-size:9.6pt;margin:3.5mm 0 1mm;page-break-after:avoid}
+p{margin:0 0 2.2mm}
+ul,ol{margin:0 0 2.4mm;padding-left:5mm}
+li{margin-bottom:.9mm}
+.lead{font-size:10pt;color:var(--muted);margin-bottom:3mm}
+strong{font-weight:700}
+code{font-family:ui-monospace,Menlo,monospace;font-size:8.2pt;background:var(--bg-soft);border:1px solid var(--line-soft);padding:0 .8mm;border-radius:1mm}
+table{width:100%;border-collapse:collapse;margin:1.6mm 0 3mm;font-size:8.5pt;page-break-inside:auto}
+thead{display:table-header-group}
+tr{page-break-inside:avoid}
+th{background:var(--navy);color:#fff;text-align:left;padding:1.6mm 2mm;font-size:7.6pt;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+td{padding:1.6mm 2mm;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tr:nth-child(even) td{background:#FAFCFD}
+.t-code td:first-child{font-family:ui-monospace,Menlo,monospace;font-size:8pt;white-space:nowrap}
+.box{background:var(--bg-soft);border:1px solid var(--line-soft);border-radius:2mm;padding:3mm 4mm;margin:2.4mm 0;page-break-inside:avoid}
+.callout{border-left:2.6mm solid var(--teal);background:var(--teal-soft);border-radius:2mm;padding:2.8mm 4mm;margin:2.4mm 0;page-break-inside:avoid}
+.callout.warn{border-left-color:#C98A25;background:var(--amber-bg)}
+.callout .lbl{font-size:7.2pt;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin-bottom:.8mm}
+.callout.warn .lbl{color:var(--amber)}
+.pill{display:inline-block;font-size:7pt;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:.5mm 1.6mm;border-radius:3mm;background:var(--teal-soft);color:var(--teal);white-space:nowrap}
+.pill.p1{background:#DCEBF5;color:#0B4D74}.pill.p2{background:#E3F4EA;color:var(--green)}
+.pill.p3{background:var(--amber-bg);color:var(--amber)}.pill.later{background:#EDEFF1;color:#5A6B75}
+.footnote{font-size:8pt;color:var(--faint)}
+figure{margin:2.4mm 0 3mm;page-break-inside:avoid}
+figcaption{font-size:7.8pt;color:var(--faint);margin-top:1mm;text-align:center}
+svg{display:block;margin:0 auto;max-width:100%}
+
+/* cover */
+.cover{height:262mm;display:flex;flex-direction:column;page-break-after:always}
+.cover-top{background:linear-gradient(120deg,#1E5A78,#073B52);color:#fff;padding:20mm 16mm 15mm;border-radius:0 0 4mm 4mm}
+.logo{display:inline-block;background:#fff;color:var(--navy);border-radius:3mm;padding:4mm 6mm;margin-bottom:10mm}
+.logo .n{font-size:18pt;font-weight:800;line-height:1}
+.logo .t{font-size:6.6pt;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#3F9E9E;margin-top:1mm}
+.cover h1{font-size:28pt;line-height:1.08;margin:0 0 3.5mm;font-weight:700}
+.cover .sub{font-size:11.5pt;color:#BFD9E2;max-width:132mm}
+.cover .kicker{font-size:7.6pt;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#6BCFCB;margin-bottom:4mm}
+.cover-body{padding:11mm 16mm 0}
+.meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:5mm 9mm}
+.meta-grid .k{font-size:7.2pt;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.meta-grid .v{font-size:10pt;font-weight:600;margin-top:.7mm}
+.cover-note{margin-top:8mm;padding:5mm 6mm;background:var(--bg-soft);border:1px solid var(--line-soft);border-left:2.6mm solid var(--teal);border-radius:2mm;font-size:9pt;color:var(--muted)}
+
+/* contents */
+.toc-row{display:flex;gap:2.5mm;padding:1.2mm 0;border-bottom:1px dotted var(--line);font-size:9.2pt}
+.toc-row .i{color:var(--teal);font-weight:700;width:6mm}
+.toc-row .t{font-weight:600}
+.toc-row .d{color:var(--faint);margin-left:auto;text-align:right;max-width:78mm;font-weight:400;font-size:8.4pt}
+.toc-row .pg{width:8mm;text-align:right;font-weight:700;color:var(--navy)}
+</style>
+</head>
+<body>
+
+<!-- ================= COVER ================= -->
+<div class="cover">
+  <div class="cover-top">
+    <div class="logo"><div class="n">Talent Carriage</div><div class="t">Imagine Innovate Transform</div></div>
+    <div class="kicker">Product Scope Document · Version 1.0</div>
+    <h1>AI Attendance Agent</h1>
+    <div class="sub">An AI agent that closes attendance gaps by itself — it talks to the employee on WhatsApp or by
+    phone, answers their questions about company policy, gets the manager's approval, and completes the action inside
+    the customer's HRMS.</div>
+  </div>
+  <div class="cover-body">
+    <div class="meta-grid">
+      <div><div class="k">Prepared by</div><div class="v">Talent Carriage Management Pvt Ltd</div></div>
+      <div><div class="k">Date</div><div class="v">23 September 2026</div></div>
+      <div><div class="k">Document type</div><div class="v">Functional &amp; technical scope</div></div>
+      <div><div class="k">Status</div><div class="v">For review and sign-off</div></div>
+      <div><div class="k">Product model</div><div class="v">Multi-tenant SaaS, sold to employer customers</div></div>
+      <div><div class="k">Cloud</div><div class="v">Microsoft Azure</div></div>
+    </div>
+    <div class="cover-note">
+      <strong>What this document is.</strong> Everything the platform will do, how it adapts to each customer's HRMS and
+      attendance codes, the technology proposed, and the order of delivery. Items marked “prospective” may change
+      during build; the functional scope is what we are agreeing to.
+      <br><br>
+      <strong>Where we are today.</strong> A working demo covers the first stage: it reads an attendance register, finds
+      absentees and half-days, sends the WhatsApp question, understands replies — including free text in English and
+      Hinglish — and responds with the correct instruction.
+    </div>
+  </div>
+</div>
+
+<!-- ================= CONTENTS ================= -->
+<h2>Contents</h2>
+<div class="toc-row" data-ref="1"><span class="i">1</span><span class="t">The product in one page</span><span class="d">What it is, who uses it, what it replaces</span><span class="pg">2</span></div>
+<div class="toc-row" data-ref="2"><span class="i">2</span><span class="t">How it works, end to end</span><span class="d">Detect → ask → act → remind → call</span><span class="pg">3</span></div>
+<div class="toc-row" data-ref="3"><span class="i">3</span><span class="t">Built to fit any customer</span><span class="d">Field mapping, attendance-code mapping, policy rules</span><span class="pg">4</span></div>
+<div class="toc-row" data-ref="4"><span class="i">4</span><span class="t">Functional scope by module</span><span class="d">Fourteen modules and their delivery phase</span><span class="pg">6</span></div>
+<div class="toc-row" data-ref="5"><span class="i">5</span><span class="t">The Action Engine</span><span class="d">Doing the work in the HRMS, not just reminding</span><span class="pg">7</span></div>
+<div class="toc-row" data-ref="6"><span class="i">6</span><span class="t">WhatsApp: a real conversation</span><span class="d">Buttons, free text, and policy questions answered</span><span class="pg">8</span></div>
+<div class="toc-row" data-ref="7"><span class="i">7</span><span class="t">Voice: a real conversation</span><span class="d">Speech in, speech out, keypad as fallback</span><span class="pg">9</span></div>
+<div class="toc-row" data-ref="8"><span class="i">8</span><span class="t">The AI layer and model strategy</span><span class="d">GPT-4o mini, Claude Haiku, Sarvam AI — and the limits</span><span class="pg">9</span></div>
+<div class="toc-row" data-ref="9"><span class="i">9</span><span class="t">Connecting to a customer's HRMS</span><span class="d">Ways in, ways to write back, connectors</span><span class="pg">11</span></div>
+<div class="toc-row" data-ref="10"><span class="i">10</span><span class="t">Architecture and tech stack</span><span class="d">Azure components, multi-tenancy, environments</span><span class="pg">11</span></div>
+<div class="toc-row" data-ref="11"><span class="i">11</span><span class="t">Security, privacy and compliance</span><span class="d">Isolation, DPDP Act, audit trail</span><span class="pg">12</span></div>
+<div class="toc-row" data-ref="12"><span class="i">12</span><span class="t">Reporting, scale and reliability</span><span class="d">What HR sees, and the targets we design to</span><span class="pg">13</span></div>
+<div class="toc-row" data-ref="13"><span class="i">13</span><span class="t">Onboarding a new customer</span><span class="d">The repeatable two-week playbook</span><span class="pg">13</span></div>
+<div class="toc-row" data-ref="14"><span class="i">14</span><span class="t">Delivery roadmap</span><span class="d">Five phases, deliverables, indicative durations</span><span class="pg">14</span></div>
+<div class="toc-row" data-ref="15"><span class="i">15</span><span class="t">Assumptions, exclusions and risks</span><span class="d">What we rely on, what we are not building</span><span class="pg">15</span></div>
+<div class="toc-row" data-ref="16"><span class="i">16</span><span class="t">Running costs and pricing levers</span><span class="d">What drives cost per customer</span><span class="pg">16</span></div>
+<div class="toc-row" data-ref="A"><span class="i">A</span><span class="t">Appendix A — Attendance model and action catalogue</span><span class="d">The internal vocabulary and what the agent can do</span><span class="pg">16</span></div>
+<div class="toc-row" data-ref="B"><span class="i">B</span><span class="t">Appendix B — Message and conversation catalogue</span><span class="d">What employees and managers actually receive</span><span class="pg">17</span></div>
+
+<p style="margin-top:4mm">Sections 1 to 3 need no technical background. Sections 4 to 10 carry the detail an IT team or
+HRMS vendor will ask for. Sections 13 and 14 are the practical ones: what each customer must provide, and when each
+capability is ready. Phase labels show delivery order:
+<span class="pill p1">Phase 1</span> core platform ·
+<span class="pill p2">Phase 2</span> mapping &amp; integration ·
+<span class="pill p3">Phase 3</span> actions &amp; approvals ·
+<span class="pill later">Later</span> voice, analytics, scale-up.</p>
+
+<!-- ================= 1 ================= -->
+<h2>1. The product in one page</h2>
+<p class="lead">A product Talent Carriage sells to employers. It watches attendance data, talks to the employees whose
+attendance is incomplete, and finishes the paperwork for them.</p>
+
+<h3>1.1 The problem it removes</h3>
+<p>Every month, HR teams spend days chasing the same thing: employees marked absent, on half-day, or with a missed
+punch, who have not applied for leave or regularisation. Payroll cannot close until each one is explained and
+approved. Today it is done with phone calls, hand-typed WhatsApp messages and spreadsheets — slow, repetitive, and
+badly recorded.</p>
+
+<h3>1.2 What the agent does instead</h3>
+<ul>
+  <li><strong>It notices.</strong> Each day, at a time the customer sets, it reads that day's attendance and finds every
+    gap: absent, half-day, missed punch, or any other status that customer treats as needing an explanation.</li>
+  <li><strong>It asks.</strong> One WhatsApp message per gap, in the employee's language, with buttons to reply.</li>
+  <li><strong>It talks.</strong> Employees can reply with a button, a number, or plain typed text — and can ask questions
+    back: how much leave they have left, what the regularisation deadline is, what to do if they were at a client
+    site. The agent answers from that employer's own policy.</li>
+  <li><strong>It acts.</strong> This is what makes it an agent rather than a reminder tool. If leave or regularisation
+    needs applying, it asks the manager to approve on WhatsApp and then performs the action in the customer's HRMS.</li>
+  <li><strong>It chases.</strong> Still pending after two days? A reminder. Still pending on day three? An automated
+    phone call that holds a short spoken conversation and records the outcome.</li>
+  <li><strong>It reports.</strong> Every case, message, approval and action, with a full audit trail and clean month-end
+    numbers.</li>
+</ul>
+
+<h3>1.3 Who uses it</h3>
+<table>
+  <tr><th style="width:28mm">User</th><th style="width:34mm">Where</th><th>What they do</th></tr>
+  <tr><td><strong>Employee</strong></td><td>WhatsApp and phone</td><td>Answers the question about their attendance, asks policy questions, asks for leave or regularisation to be applied for them.</td></tr>
+  <tr><td><strong>Manager</strong></td><td>WhatsApp, or the portal</td><td>Approves or rejects with one tap; sees what is pending with their team.</td></tr>
+  <tr><td><strong>HR user</strong></td><td>Web portal</td><td>Watches the day's cases, handles what the agent flags, runs month-end reports.</td></tr>
+  <tr><td><strong>HR admin</strong> (customer)</td><td>Web portal</td><td>Sets the rules: timings, which statuses to chase, message wording, escalation, policy content.</td></tr>
+  <tr><td><strong>Talent Carriage team</strong></td><td>Admin console</td><td>Onboards customers, maps their data, connects the HRMS, monitors health across all customers.</td></tr>
+</table>
+
+<h3>1.4 Why it can be sold to many different employers</h3>
+<p>No two employers record attendance the same way. One writes <code>A|A</code> for a full-day absence and
+<code>P|A</code> for a second-half absence; another writes <code>Ab</code>, <code>CL</code>, <code>SL</code>. One
+stores <em>Full name</em>, another <em>First name</em> and <em>Last name</em>. One has a modern HRMS with an API,
+another exports an Excel file daily. The platform therefore keeps everything customer-specific in a
+<strong>mapping layer</strong>, configured once during onboarding. Detection, messaging, AI, actions and reporting are
+then identical for every customer — one product, sold repeatedly, not rebuilt per employer. Section 3 explains it.</p>
+
+<!-- ================= 2 ================= -->
+<h2>2. How it works, end to end</h2>
+<p class="lead">One employee, one date with a gap, followed until it is closed — the flow from the agreed process
+flowchart, with conversation and action steps added.</p>
+
+<figure>
+  <svg viewBox="0 0 700 500" width="580" role="img" aria-label="End to end flow">
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#3F5866"/></marker>
+      <style>
+        .bx{fill:#fff;stroke:#CBDAE1}.bt{fill:#12232E;font:600 11px Inter,sans-serif}
+        .bs{fill:#69818F;font:400 9.5px Inter,sans-serif}
+        .hd{fill:#073B5C}.hdt{fill:#fff;font:700 10px Inter,sans-serif}
+        .ln{stroke:#3F5866;stroke-width:1.2;fill:none;marker-end:url(#ar)}
+        .lb{fill:#3F5866;font:600 8.5px Inter,sans-serif}
+        .ac{fill:#E1EFEE;stroke:#0C737E}.al{fill:#FBEEDB;stroke:#C98A25}
+      </style>
+    </defs>
+    <rect class="hd" x="0" y="0" rx="5" width="700" height="21"/>
+    <text class="hdt" x="10" y="15">DAY 0 — detect, ask, discuss</text>
+    <rect class="bx" x="0" y="32" rx="6" width="200" height="44"/>
+    <text class="bt" x="11" y="50">Attendance data arrives</text><text class="bs" x="11" y="65">API · database · file · upload</text>
+    <path class="ln" d="M205 54 H 245"/>
+    <rect class="bx" x="250" y="32" rx="6" width="200" height="44"/>
+    <text class="bt" x="261" y="50">Mapped and checked</text><text class="bs" x="261" y="65">customer codes → gap types</text>
+    <path class="ln" d="M455 54 H 495"/>
+    <rect class="ac" x="500" y="32" rx="6" width="200" height="44"/>
+    <text class="bt" x="511" y="50">WhatsApp question</text><text class="bs" x="511" y="65">one per employee, per date</text>
+    <path class="ln" d="M600 81 V 106"/>
+    <rect class="bx" x="500" y="111" rx="6" width="200" height="44"/>
+    <text class="bt" x="511" y="129">Employee replies or asks</text><text class="bs" x="511" y="144">button · text · question</text>
+    <path class="ln" d="M497 133 H 455"/>
+    <rect class="ac" x="250" y="111" rx="6" width="200" height="44"/>
+    <text class="bt" x="261" y="129">Agent understands</text><text class="bs" x="261" y="144">answers from company policy</text>
+    <path class="ln" d="M247 133 H 205"/>
+    <rect class="al" x="0" y="111" rx="6" width="200" height="44"/>
+    <text class="bt" x="11" y="129">Unclear or off-topic</text><text class="bs" x="11" y="144">handed to HR, never guessed</text>
+    <path class="ln" d="M350 160 V 186"/>
+    <text class="lb" x="356" y="177">what does the employee need?</text>
+    <rect class="hd" x="0" y="194" rx="5" width="700" height="21"/>
+    <text class="hdt" x="10" y="209">SAME DAY — act on it</text>
+    <rect class="bx" x="0" y="226" rx="6" width="216" height="52"/>
+    <text class="bt" x="11" y="244">Guidance only</text><text class="bs" x="11" y="259">“apply leave or regularisation</text>
+    <text class="bs" x="11" y="272">and get it approved”</text>
+    <rect class="ac" x="242" y="226" rx="6" width="216" height="52"/>
+    <text class="bt" x="253" y="244">Agent performs the action</text><text class="bs" x="253" y="259">manager approves on WhatsApp,</text>
+    <text class="bs" x="253" y="272">then it is applied in the HRMS</text>
+    <rect class="al" x="484" y="226" rx="6" width="216" height="52"/>
+    <text class="bt" x="495" y="244">Handed to HR</text><text class="bs" x="495" y="259">policy block, employee asks</text>
+    <text class="bs" x="495" y="272">for help, or write-back fails</text>
+    <path class="ln" d="M108 283 V 308"/><path class="ln" d="M350 283 V 308"/><path class="ln" d="M592 283 V 308"/>
+    <rect class="hd" x="0" y="316" rx="5" width="700" height="21"/>
+    <text class="hdt" x="10" y="331">DAY 2 — remind · DAY 3 — call</text>
+    <rect class="bx" x="0" y="348" rx="6" width="216" height="52"/>
+    <text class="bt" x="11" y="366">Is it actually done?</text><text class="bs" x="11" y="381">re-checked in the HRMS data,</text>
+    <text class="bs" x="11" y="394">not just asked again</text>
+    <path class="ln" d="M221 374 H 258"/>
+    <rect class="ac" x="263" y="348" rx="6" width="216" height="52"/>
+    <text class="bt" x="274" y="366">Day-2 reminder</text><text class="bs" x="274" y="381">wording follows what they</text>
+    <text class="bs" x="274" y="394">said on day 0</text>
+    <path class="ln" d="M484 374 H 521"/>
+    <rect class="al" x="526" y="348" rx="6" width="174" height="52"/>
+    <text class="bt" x="537" y="366">Day-3 phone call</text><text class="bs" x="537" y="381">spoken conversation,</text>
+    <text class="bs" x="537" y="394">outcome recorded</text>
+    <path class="ln" d="M108 405 V 428"/>
+    <rect class="bx" x="0" y="436" rx="6" width="700" height="42" style="fill:#F6FAFB"/>
+    <text class="bt" x="11" y="454">Case closed — with the full trail: every message, the AI's reading of it, the approval, the action's result</text>
+    <text class="bs" x="11" y="469">Closed automatically when the HRMS shows the leave or regularisation approved · or closed by HR with a reason</text>
+  </svg>
+  <figcaption>Green boxes are agent actions; amber boxes need a human. Every timing shown is a per-customer setting.</figcaption>
+</figure>
+
+<p><strong>Day 0.</strong> The platform pulls the day's attendance, translates it through that customer's mapping, and
+creates <strong>cases</strong> — one case is one employee and one date. The employee gets a single, clearly dated
+WhatsApp message with reply buttons. Three open dates means three separate conversations, never a confusing bundle.</p>
+<p><strong>Reply, discussion and action.</strong> The four standard answers from the agreed flow (<em>I was absent</em>,
+<em>I was working</em>, <em>already applied leave</em>, <em>already sent regularisation</em>) each get the correct
+instruction immediately. The employee can also ask questions, and where the customer has enabled actions the agent
+offers to do the work: “Shall I apply casual leave for 18-Aug and send it to Deepak for approval?”</p>
+<p><strong>Day 2.</strong> Before any reminder, the HRMS is re-checked. If the leave was applied and approved
+meanwhile, the case closes quietly — no nagging. Otherwise the reminder is worded for that person's situation.</p>
+<p><strong>Day 3.</strong> Cases still open are called. The call is a short spoken conversation, not a recorded
+announcement: the employee can say what happened, ask a question, or ask for HR. Outcomes route to HR with a
+recommended next step.</p>
+
+<!-- ================= 3 ================= -->
+<h2>3. Built to fit any customer</h2>
+<p class="lead">The heart of the product. Each customer's data differs; the agent's logic must not. Three kinds of
+mapping make that possible, all done by filling in a screen rather than writing code.</p>
+
+<figure>
+  <svg viewBox="0 0 700 200" width="570" role="img" aria-label="Mapping layer">
+    <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3F5866"/></marker>
+      <style>.cbx{fill:#fff;stroke:#CBDAE1}.ct{fill:#12232E;font:600 10.5px Inter,sans-serif}
+      .cs{fill:#69818F;font:400 9px Inter,sans-serif}.cm{fill:#E1EFEE;stroke:#0C737E}
+      .cc{fill:#073B5C}.cct{fill:#fff;font:700 10.5px Inter,sans-serif}.ccs{fill:#BFD9E2;font:400 9px Inter,sans-serif}
+      .cl{stroke:#3F5866;stroke-width:1.2;fill:none;marker-end:url(#ar2)}</style></defs>
+    <text class="cs" x="0" y="10">EACH CUSTOMER'S OWN DATA</text>
+    <rect class="cbx" x="0" y="16" rx="5" width="176" height="36"/>
+    <text class="ct" x="9" y="32">Customer A — TimeOffice</text><text class="cs" x="9" y="45">Full name · P|P, A|A, P|A, WO</text>
+    <rect class="cbx" x="0" y="58" rx="5" width="176" height="36"/>
+    <text class="ct" x="9" y="74">Customer B — SAP</text><text class="cs" x="9" y="87">First+Last · P, Ab, CL, SL</text>
+    <rect class="cbx" x="0" y="100" rx="5" width="176" height="36"/>
+    <text class="ct" x="9" y="116">Customer C — Excel only</text><text class="cs" x="9" y="129">Emp Name · 1, 0.5, 0, H</text>
+    <rect class="cbx" x="0" y="142" rx="5" width="176" height="36"/>
+    <text class="ct" x="9" y="158">Customer D — Darwinbox</text><text class="cs" x="9" y="171">display_name · PRESENT…</text>
+    <path class="cl" d="M181 34 H 231"/><path class="cl" d="M181 76 H 231"/>
+    <path class="cl" d="M181 118 H 231"/><path class="cl" d="M181 160 H 231"/>
+    <rect class="cm" x="236" y="16" rx="6" width="186" height="162"/>
+    <text class="ct" x="246" y="35">Mapping layer</text>
+    <text class="cs" x="246" y="53">1. Field mapping</text><text class="cs" x="246" y="66">   their columns → our fields</text>
+    <text class="cs" x="246" y="85">2. Code mapping</text><text class="cs" x="246" y="98">   their statuses → gap types</text>
+    <text class="cs" x="246" y="117">3. Policy &amp; rules</text><text class="cs" x="246" y="130">   what to chase, when, by whom</text>
+    <text class="cs" x="246" y="151">Set once per customer,</text><text class="cs" x="246" y="164">versioned and testable</text>
+    <path class="cl" d="M427 97 H 477"/>
+    <rect class="cc" x="482" y="16" rx="6" width="218" height="162"/>
+    <text class="cct" x="492" y="35">One agent engine</text>
+    <text class="ccs" x="492" y="54">Detection rules</text><text class="ccs" x="492" y="69">WhatsApp and voice conversations</text>
+    <text class="ccs" x="492" y="84">AI understanding and policy answers</text><text class="ccs" x="492" y="99">Manager approvals</text>
+    <text class="ccs" x="492" y="114">Actions into the HRMS</text><text class="ccs" x="492" y="129">Escalation and calls</text>
+    <text class="ccs" x="492" y="144">Dashboards and audit</text><text class="ccs" x="492" y="165">Identical for every customer</text>
+  </svg>
+  <figcaption>Everything customer-specific lives in the mapping layer. The engine itself never changes.</figcaption>
+</figure>
+
+<h3>3.1 Field mapping — “where is the employee's name?”</h3>
+<p>The platform needs a small set of facts. The customer's own column names are pointed at them once. Names can be
+built from several columns, and values cleaned on the way in (trim spaces, add a country code, uppercase a code).</p>
+<table class="t-code">
+  <tr><th style="width:42mm">What the platform needs</th><th style="width:17mm">Required</th><th>What customers actually have</th></tr>
+  <tr><td>employee_code</td><td>Yes</td><td><code>Employee Code</code>, <code>EmpID</code>, <code>PERNR</code>, <code>staff_no</code></td></tr>
+  <tr><td>employee_name</td><td>Yes</td><td><code>Full name</code>, or <code>First Name</code> + <code>Last Name</code>, or <code>display_name</code></td></tr>
+  <tr><td>mobile</td><td>Yes</td><td><code>Mobile number</code>, <code>Contact</code>, <code>phone_primary</code> — with or without +91</td></tr>
+  <tr><td>date</td><td>Yes</td><td>a column per day (<code>1 / 8 | Sat</code>), or one row per day (<code>att_date</code>)</td></tr>
+  <tr><td>attendance_status</td><td>Yes</td><td><code>P|A</code>, <code>Ab</code>, <code>0.5</code>, <code>PRESENT</code>, or in/out punch times</td></tr>
+  <tr><td>manager_identifier</td><td>Yes*</td><td><code>Reporting manager</code>, <code>manager_emp_code</code>, <code>L1 Manager Email</code></td></tr>
+  <tr><td>department, branch, shift, location</td><td>Optional</td><td>routing, reporting and working-hour rules</td></tr>
+  <tr><td>date_of_joining, employment_status</td><td>Optional</td><td>skip new joiners, exits, and people on long leave</td></tr>
+</table>
+<p class="footnote">* Needed for approvals. A manager's <em>name</em> cannot receive a WhatsApp — a manager mobile, or a
+manager code that resolves to one, is required. Where a customer cannot supply it, approvals fall back to a nominated
+HR approver.</p>
+
+<h3>3.2 Attendance-code mapping — “what does this code mean?”</h3>
+<p>The platform thinks in a fixed internal vocabulary (Appendix A). Each customer's codes map onto it, and the mapping
+says which meanings are a gap worth chasing, which are informational, and which close a case by themselves.</p>
+<table>
+  <tr><th style="width:26mm">Customer's code</th><th style="width:33mm">Platform meaning</th><th style="width:20mm">Chase it?</th><th>Notes</th></tr>
+  <tr><td><code>A|A</code></td><td>Absent — full day</td><td><strong>Yes</strong></td><td>Two-session format: first half | second half</td></tr>
+  <tr><td><code>P|A</code> / <code>A|P</code></td><td>Absent — half day</td><td><strong>Yes</strong></td><td>The message names the exact half</td></tr>
+  <tr><td><code>Ab</code>, <code>ABS</code>, <code>0</code></td><td>Absent — full day</td><td><strong>Yes</strong></td><td>Single-code format</td></tr>
+  <tr><td><code>0.5</code>, <code>HD</code></td><td>Absent — half day</td><td><strong>Yes</strong></td><td>Which half may come from another column</td></tr>
+  <tr><td><code>MP</code>, <code>MIS</code></td><td>Missed punch</td><td><strong>Yes</strong></td><td>Usually needs regularisation, not leave</td></tr>
+  <tr><td><code>LT</code>, <code>EG</code></td><td>Late in / early out</td><td>Customer's choice</td><td>Often chased only past a threshold</td></tr>
+  <tr><td><code>CL</code>, <code>SL</code>, <code>EL</code></td><td>Leave — approved</td><td>No</td><td>Explained; closes an open case</td></tr>
+  <tr><td><code>LWP</code>, <code>LOP</code></td><td>Leave without pay</td><td>Customer's choice</td><td>Some employers still want confirmation</td></tr>
+  <tr><td><code>CL-P</code>, <code>PEND</code></td><td>Leave — pending approval</td><td>Manager chased</td><td>The manager is the blocker, not the employee</td></tr>
+  <tr><td><code>WFH</code>, <code>OD</code>, <code>TR</code></td><td>Working elsewhere</td><td>No</td><td>Present for our purposes</td></tr>
+  <tr><td><code>WO</code>, <code>HO</code>, <code>H</code></td><td>Weekly off / holiday</td><td>Never</td><td>Excluded before anything runs</td></tr>
+  <tr><td>anything unmapped</td><td>Unknown</td><td>Never</td><td>Never messaged; reported to the admin to map</td></tr>
+</table>
+<div class="callout warn">
+  <div class="lbl">Deliberate safety rule</div>
+  An unmapped code never triggers a message. Silence is safe; guessing is not. The admin screen shows a live count of
+  unmapped codes from the last import, so gaps surface immediately.
+</div>
+
+<h3>3.3 Policy and rules — “how does this employer work?”</h3>
+<p>Per-customer settings, with sensible defaults, most also settable per department or location: daily check time and
+time zone · which meanings to chase · grace periods and thresholds · quiet hours and working days · holiday and shift
+calendars · who to exclude (new joiners, exits, long leave, named roles) · escalation timings (reminder day, call day,
+retries) · approval chain and timeouts · languages offered · which actions the agent may perform and which leave types
+it may apply · message wording and signature. Alongside these sits the <strong>policy pack</strong>: the customer's
+attendance, leave and regularisation rules in their own words, used to answer employees' questions (section 6.3).</p>
+
+<h3>3.4 The mapping studio</h3>
+<ol>
+  <li><strong>Bring a sample.</strong> Upload a real file, or connect the HRMS and pull a few days.</li>
+  <li><strong>Auto-detect.</strong> The platform lists the columns and the distinct status codes found, with counts, and
+    AI proposes what each one means. A human confirms.</li>
+  <li><strong>Fill the gaps.</strong> Anything unmapped is highlighted and must be decided before go-live.</li>
+  <li><strong>Dry run.</strong> It shows exactly who <em>would</em> have been messaged for a past date, and the exact
+    wording, with nothing sent. This is how a customer signs off the configuration.</li>
+  <li><strong>Save as a profile.</strong> Versioned with an audit trail, and clonable as the starting point for the next
+    customer on the same HRMS — which is what shortens each onboarding to a review.</li>
+</ol>
+
+<!-- ================= 4 ================= -->
+<h2>4. Functional scope by module</h2>
+<table>
+  <tr><th style="width:7mm">#</th><th style="width:38mm">Module</th><th>Capabilities</th><th style="width:16mm">Phase</th></tr>
+  <tr><td>M1</td><td><strong>Customer (tenant) management</strong></td><td>Create and configure a customer; branding; licensed headcount; test and live modes; suspend or offboard with data export</td><td><span class="pill p1">1</span></td></tr>
+  <tr><td>M2</td><td><strong>Users, roles and access</strong></td><td>Platform admin, HR admin, HR user, manager, auditor; invitations; SSO for customer staff; department scoping; access logs</td><td><span class="pill p1">1</span></td></tr>
+  <tr><td>M3</td><td><strong>Employee master</strong></td><td>Codes, mobiles, managers, department, location, shift, joining and exit dates; sync from HRMS or file; change history; consent and opt-out state</td><td><span class="pill p1">1</span></td></tr>
+  <tr><td>M4</td><td><strong>Data ingestion</strong></td><td>Manual upload; scheduled file pick-up (SFTP or Blob); HRMS API pull; read-only database access; HRMS push; per-run import report with rejects; safe re-import</td><td><span class="pill p1">1</span> <span class="pill p2">2</span></td></tr>
+  <tr><td>M5</td><td><strong>Mapping studio</strong></td><td>Field and code mapping, transformations, AI suggestions, unmapped-code alerts, versioning, profile library, dry runs against past dates</td><td><span class="pill p2">2</span></td></tr>
+  <tr><td>M6</td><td><strong>Detection engine</strong></td><td>Applies mapping and rules to create cases; calendars, shifts, grace and exclusions; one case per employee per date; never duplicates; safe re-runs; backdated corrections</td><td><span class="pill p1">1</span></td></tr>
+  <tr><td>M7</td><td><strong>Conversation engine</strong></td><td>WhatsApp send and receive; template management; buttons and menus; multi-language; 24-hour window handling; delivery receipts; retries; opt-out; full transcript per case</td><td><span class="pill p1">1</span></td></tr>
+  <tr><td>M8</td><td><strong>AI understanding and dialogue</strong></td><td>Intent and detail extraction from any reply; multilingual including Hinglish; policy questions answered from the customer's policy pack; confidence thresholds; handover instead of guessing; every decision logged</td><td><span class="pill p1">1</span> <span class="pill p3">3</span></td></tr>
+  <tr><td>M9</td><td><strong>Action engine</strong></td><td>Real HRMS work: apply leave, apply regularisation, approve, cancel, raise a ticket; manager approval loop; eligibility pre-checks; idempotent and retried; receipts; fallbacks (section 5)</td><td><span class="pill p3">3</span></td></tr>
+  <tr><td>M10</td><td><strong>Escalation and voice</strong></td><td>Day-2 reminders worded by original answer; day-3 conversational call with keypad fallback; retries and voicemail; escalation to manager, skip-level and HR; SLA clocks</td><td><span class="pill p3">3</span> <span class="pill later">Later</span></td></tr>
+  <tr><td>M11</td><td><strong>HR workspace</strong></td><td>Daily dashboard; case list with filters and search; case detail with transcript and audit; manual send, resend, close with reason, reassign; bulk actions; AI-flagged queue; exports</td><td><span class="pill p1">1</span></td></tr>
+  <tr><td>M12</td><td><strong>Manager experience</strong></td><td>Approve or reject on WhatsApp; pending-items digest; a light web view without full login; delegation while on leave</td><td><span class="pill p3">3</span></td></tr>
+  <tr><td>M13</td><td><strong>Scheduling and automation</strong></td><td>Per-customer daily run; catch-up after a failed import; quiet hours; month-end sweep; retry queues; manual run-now; run history</td><td><span class="pill p1">1</span></td></tr>
+  <tr><td>M14</td><td><strong>Reporting, audit and admin</strong></td><td>Operational and month-end reports; AI accuracy review; full audit trail; scheduled email packs; platform-wide health; usage metering for billing</td><td><span class="pill p2">2</span> <span class="pill later">Later</span></td></tr>
+</table>
+<p>The demo already covers a slice of M4, M6, M7, M8 and M11 for one customer. The product work is to make it
+multi-customer, mappable, conversational and action-capable.</p>
+
+<!-- ================= 5 ================= -->
+<h2>5. The Action Engine</h2>
+<p class="lead">The difference between a reminder tool and an agent: the employee asks, the manager approves, and the
+platform performs the action in the HRMS and proves it did.</p>
+<div class="box">
+  <p style="margin:0"><strong>Employee:</strong> taps <em>Yes, I was absent</em><br>
+  <strong>Agent:</strong> “You have 6 casual leave days available. Shall I apply casual leave for 18-Aug-2026 and send it
+  to Deepak for approval?” &nbsp;[ Yes, apply it ] [ I'll do it myself ] [ Different leave type ]<br>
+  <strong>Employee:</strong> taps <em>Yes, apply it</em><br>
+  <strong>Agent → Manager:</strong> “Ankit Panwar has requested casual leave for 18-Aug-2026. Reason: fever. Balance
+  after approval: 5 days.” &nbsp;[ Approve ] [ Reject ] [ Ask for details ]<br>
+  <strong>Manager:</strong> taps <em>Approve</em><br>
+  <strong>Agent:</strong> applies it in the HRMS, then confirms to both with the HRMS reference. Case closed.</p>
+</div>
+
+<h3>5.1 How an action is defined</h3>
+<p>Actions are definitions the platform executes, not one-off code, so new ones can be added later without redesign.
+Each has a <strong>trigger</strong> (an intent, a case state, or an HR click), <strong>inputs</strong> (date, half or
+full, leave type, reason), <strong>pre-checks</strong> (balance, backdating window, overlaps, probation, blackout
+dates), an <strong>approval</strong> step (who, in what order, with what timeout and fallback),
+<strong>execution</strong> (the connector call or a fallback route), <strong>proof</strong> (the HRMS reference stored on
+the case), <strong>failure handling</strong> and <strong>notifications</strong>. The v1 catalogue is in Appendix A.</p>
+
+<h3>5.2 Rules the engine holds itself to</h3>
+<ul>
+  <li><strong>Never act without a mandate.</strong> An explicit employee request, plus an explicit approval where
+    configured. An ambiguous reply never results in a write.</li>
+  <li><strong>Never act twice.</strong> Every action carries an idempotency key, so a retry, a duplicate WhatsApp
+    delivery or a double tap cannot create two leave requests.</li>
+  <li><strong>Check before writing.</strong> Balance, eligibility and duplicate checks run first, so the employee is told
+    why in plain language instead of a failure appearing later.</li>
+  <li><strong>Prove it.</strong> The HRMS's own reference is stored and shown. If nothing verifiable comes back, the action
+    is marked <em>unconfirmed</em> and read back on the next sync rather than assumed successful.</li>
+  <li><strong>Fail loudly, to a person.</strong> A failed write retries, then lands in an HR queue with the error and the
+    suggested fix. Never silently dropped.</li>
+</ul>
+
+<h3>5.3 When the HRMS cannot be written to</h3>
+<p>Some HRMS products have no write API, or IT will not allow one initially. The conversation and approval flow stay
+the same, ending in one of these instead: a daily <strong>approved-request file</strong> in the HRMS's import format ·
+a <strong>structured ticket or email</strong> to HR with the approval attached · an <strong>HR action queue</strong> in
+our portal where HR performs it and confirms · or <strong>guidance only</strong>, with completion verified from the next
+data sync.</p>
+
+<!-- ================= 6 ================= -->
+<h2>6. WhatsApp: a real conversation</h2>
+<p class="lead">WhatsApp is the employee's interface: no app to install, no login, no training. Beyond the buttons, the
+agent holds a genuine conversation about attendance and the employer's policies.</p>
+
+<h3>6.1 The channel mechanics</h3>
+<ul>
+  <li><strong>The first message must be a Meta-approved template.</strong> Each customer's templates are submitted and
+    tracked in the platform, with approval status visible.</li>
+  <li><strong>After the employee replies, we can talk freely for 24 hours.</strong> All discussion, offers, approvals and
+    confirmations happen inside that window; after it closes, the next contact is a template again.</li>
+  <li><strong>Meta charges per conversation,</strong> not per message (section 16). <strong>Opt-out is permanent,</strong> and
+    those employees are routed to HR instead.</li>
+  <li><strong>The sending number is the customer's own,</strong> so employees see their employer. Either the customer's Meta
+    account is connected, or — recommended for selling at scale — Talent Carriage becomes a Meta
+    <strong>Tech Provider</strong> and the customer connects their number through a short guided flow in our portal.</li>
+</ul>
+
+<h3>6.2 What the conversation can cover</h3>
+<p>The agent is a subject-matter assistant for attendance, not a general chatbot. Within that subject it can:</p>
+<table>
+  <tr><th style="width:50mm">Employee says</th><th>Agent does</th></tr>
+  <tr><td>“I was on client site that day”</td><td>Recognises a regularisation case, confirms the date and reason, offers to apply it</td></tr>
+  <tr><td>“How many leaves do I have left?”</td><td>Reads the live balance from the HRMS and answers, by leave type</td></tr>
+  <tr><td>“Till when can I regularise August?”</td><td>Answers from that employer's policy pack, quoting the actual rule</td></tr>
+  <tr><td>“No casual leave left, what now?”</td><td>Explains the employer's unpaid-leave or regularisation route, then offers to start it</td></tr>
+  <tr><td>“Mera manager chhutti pe hai”</td><td>Applies the approval fallback: alternate approver or HR, per configuration</td></tr>
+  <tr><td>“Talk to HR”</td><td>Hands the case to HR with the transcript, and tells the employee who will follow up</td></tr>
+  <tr><td>Anything outside attendance (salary, appraisal, IT)</td><td>Politely declines and points to the right HR channel. It does not improvise.</td></tr>
+</table>
+
+<h3>6.3 Where the policy answers come from</h3>
+<p>Each customer's attendance, leave and regularisation policy is loaded as a <strong>policy pack</strong> — their own
+documents, plus short question-and-answer entries HR can edit in the portal. Answers are generated <em>only</em> from
+that pack and from live HRMS data, and the portal shows HR which clause each answer came from. If the pack does not
+cover a question, the agent says so and offers HR help rather than inventing a rule.</p>
+<div class="callout">
+  <div class="lbl">To be designed in detail</div>
+  Exactly how policy content is ingested, indexed and kept current — and how much HR edits directly versus re-uploading
+  a document — is a design exercise in Phase 3. The principles above (grounded answers, visible source, no invention,
+  HR review before enabling) are fixed.
+</div>
+
+<h3>6.4 Guardrails</h3>
+<ul>
+  <li><strong>Approved wording starts every conversation;</strong> generated text only inside a live conversation, and only
+    on attendance topics.</li>
+  <li><strong>No promises the platform cannot keep:</strong> it never says leave is approved until the manager has approved
+    and the HRMS confirms. No other employee's data, no salary or payroll advice, no disciplinary opinions.</li>
+  <li><strong>Sensitive disclosures</strong> (illness, bereavement, harassment) get a short, human reply and go to HR;
+    medical detail is not probed. <strong>Abuse or distress</strong> ends the automated exchange and escalates.</li>
+  <li><strong>Every generated message is logged</strong> with the model used, and HR can review a sample before
+    conversational mode is enabled for a customer.</li>
+</ul>
+
+<!-- ================= 7 ================= -->
+<h2>7. Voice: a real conversation</h2>
+<p class="lead">On day 3, unresolved cases are called. The call is a spoken exchange driven by the same agent brain as
+WhatsApp — not a recorded announcement with a keypad menu.</p>
+
+<h3>7.1 How the call works</h3>
+<ol>
+  <li>The platform places the call through the customer's voice provider, respecting quiet hours and retry limits.</li>
+  <li>The agent introduces itself, states the pending date, and asks what happened.</li>
+  <li><strong>Speech to text</strong> transcribes the reply; the <strong>agent brain</strong> decides what to say next using
+    the case, the HRMS data and the policy pack; <strong>text to speech</strong> speaks it back.</li>
+  <li>The employee can answer naturally, ask a question (“how many leaves do I have?”), ask for a repeat, or ask for
+    HR — in which case the call is transferred or an HR callback is logged.</li>
+  <li>Where the employee prefers it or the line is poor, it falls back to <strong>keypad</strong> input (“press 1 if
+    completed, 2 if not, 3 for HR”), so an outcome is always captured.</li>
+  <li>The outcome, transcript and — where the customer enables it and the call announces it — the recording are stored
+    on the case.</li>
+</ol>
+<p>Conversation length is capped: anything unresolved after two turns goes to HR rather than looping. Target response
+time between the employee finishing a sentence and the agent replying is under two seconds.</p>
+
+<h3>7.2 Voice providers</h3>
+<p>One internal interface, so the provider can differ per customer or country:</p>
+<table>
+  <tr><th style="width:44mm">Provider</th><th>Notes</th></tr>
+  <tr><td><strong>Plivo</strong></td><td>Indian and global coverage, straightforward programmable voice with streaming audio for live conversation; competitive India rates</td></tr>
+  <tr><td><strong>Exotel</strong></td><td>Widely used by Indian HR and support teams; strong India compliance posture and local support</td></tr>
+  <tr><td><strong>Azure Communication Services</strong></td><td>Stays inside Azure and our existing billing; convenient where a customer mandates one cloud vendor</td></tr>
+  <tr><td><strong>Twilio</strong></td><td>Mature tooling; costs and Indian regulatory steps checked per customer</td></tr>
+</table>
+<p>Speech recognition and synthesis are chosen per language (section 8): Sarvam AI for Indian languages and accents,
+with Azure or the telephony provider's engines for English. Automated outbound calling in India carries consent and
+do-not-disturb obligations, so consent is captured at onboarding, calls respect quiet hours, and an employee can ask
+never to be called again.</p>
+
+<!-- ================= 8 ================= -->
+<h2>8. The AI layer and model strategy</h2>
+<p class="lead">Several models, each used where it is strongest, behind one internal interface — so a model can be
+swapped, priced or restricted per customer without touching the product.</p>
+
+<h3>8.1 Which model does what</h3>
+<table>
+  <tr><th style="width:44mm">Job</th><th style="width:42mm">Model</th><th>Why</th></tr>
+  <tr><td>Button taps, “1”–“4”, exact phrases</td><td><strong>No model — rules</strong></td><td>Exact, instant, free. Most replies never reach a model.</td></tr>
+  <tr><td>Reply classification, English and Hinglish</td><td><strong>GPT-4o mini</strong> or <strong>Claude Haiku</strong></td><td>Cheap and fast on short prompts; both evaluated on real replies and the better one set as default</td></tr>
+  <tr><td>Indian-language understanding (Hindi, Gujarati, Marathi, Tamil, Telugu, Bengali…)</td><td><strong>Sarvam AI</strong></td><td>Built for Indian languages and code-mixed text; Indian data residency; better on Indic scripts than general models</td></tr>
+  <tr><td>Policy questions and dialogue</td><td><strong>GPT-4o mini</strong> / <strong>Claude Haiku</strong>, grounded on the customer's policy pack</td><td>Needs careful reading of policy text and instruction-following inside strict guardrails</td></tr>
+  <tr><td>Speech to text on calls</td><td><strong>Sarvam AI</strong> speech recognition</td><td>Accuracy on Indian accents and languages, including mixed speech</td></tr>
+  <tr><td>Text to speech on calls</td><td><strong>Sarvam AI</strong> Indic voices; Azure or the provider for English</td><td>Natural Indic voices; English handled well by existing engines</td></tr>
+  <tr><td>Mapping suggestions, HR summaries, digests</td><td><strong>GPT-4o mini</strong> / <strong>Claude Haiku</strong></td><td>Internal helpers where cost matters more than nuance</td></tr>
+  <tr><td>HR analytics assistant <span class="pill later">Later</span></td><td>Best available at the time</td><td>Read-only questions over that customer's own case data</td></tr>
+</table>
+
+<h3>8.2 The model gateway</h3>
+<ul>
+  <li><strong>One interface, many providers.</strong> The product asks to “classify this reply” or “answer this question”;
+    the gateway picks the model based on language, task and the customer's configuration.</li>
+  <li><strong>Per-customer choice.</strong> A customer who mandates Indian-only processing can be pinned to Sarvam and an
+    Indian-region deployment; another may prefer a single vendor. No code change either way.</li>
+  <li><strong>Automatic fallback.</strong> If a provider is slow or erroring, the gateway retries on the alternate model;
+    if all fail, the case goes to HR rather than staying silent.</li>
+  <li><strong>Cost control.</strong> Rules first, short prompts, small models, cached policy answers, per-customer spend
+    caps and alerts.</li>
+  <li><strong>Evaluation before switching.</strong> A saved set of real replies and policy questions is re-run against any
+    new model or prompt, and accuracy compared, before it becomes the default.</li>
+  <li><strong>No training on customer data,</strong> contractually with every provider; only the text needed for the
+    decision is sent, never the employee database.</li>
+</ul>
+
+<h3>8.3 What the AI is not allowed to do</h3>
+<ul>
+  <li><strong>It does not decide who gets messaged.</strong> That comes from the mapping and rules — exact, reviewable logic.</li>
+  <li><strong>It does not write to the HRMS.</strong> It proposes; the action engine validates and performs.</li>
+  <li><strong>It does not invent policy or balances.</strong> Those are read from the policy pack and the HRMS.</li>
+  <li><strong>It does not guess.</strong> Below the confidence threshold it asks one clarifying question, then hands over to
+    a human with the original message attached.</li>
+</ul>
+<p>Every AI decision is logged with the message, the intent, the confidence and the model version, and is reviewable in
+a queue where HR can correct it. Corrections become test cases. Accuracy, ask-again rate and handover rate are
+reported per customer, so the automation is measured rather than assumed.</p>
+
+<!-- ================= 9 ================= -->
+<h2>9. Connecting to a customer's HRMS</h2>
+<p class="lead">Every customer's IT maturity differs. Several ways in and out, with identical behaviour whichever is used.</p>
+<table>
+  <tr><th style="width:32mm">Reading attendance</th><th>How it works</th><th style="width:26mm">Best for</th></tr>
+  <tr><td><strong>Manual upload</strong></td><td>HR uploads the register export in the portal. Available from day one.</td><td>Pilots, small employers</td></tr>
+  <tr><td><strong>Scheduled file</strong></td><td>The HRMS drops a daily file on SFTP or Azure Blob; we pick it up, import and report rejects.</td><td>Most mid-size customers</td></tr>
+  <tr><td><strong>HRMS API pull</strong></td><td>We call the HRMS API on a schedule; credentials held in Azure Key Vault.</td><td>Modern HRMS products</td></tr>
+  <tr><td><strong>Database read</strong></td><td>A read-only user or replica, queried through a mapped view.</td><td>On-premise or legacy</td></tr>
+  <tr><td><strong>HRMS push</strong></td><td>The HRMS calls our authenticated API when attendance is finalised.</td><td>Same-day speed</td></tr>
+</table>
+<p>Every import produces a report: rows read, employees matched, rows rejected with reasons, unmapped codes seen, and
+what changed since last time. Later corrections are picked up, and a case closes automatically if the correction
+explains the gap. Writing back uses the routes in section 5.3.</p>
+<p><strong>Connectors</strong> are small, standard pieces built to a fixed internal contract — <em>fetch attendance, fetch
+employees, fetch leave balance, apply leave, apply regularisation, approve, read status</em> — each declaring what its
+HRMS supports, so the agent only offers an employee what can actually be delivered. A generic file connector and a
+generic REST connector cover many customers through configuration alone; named connectors for common HRMS products are
+built as customers arrive and reused afterwards. Every connector has a sandbox mode that reads real data but writes
+nothing, and all calls are logged, rate-limited and retried, with alerts on repeated failure.</p>
+<div class="callout">
+  <div class="lbl">Practical onboarding path</div>
+  Start read-only, run in guidance-only mode for a week or two so the customer trusts the detection and messaging, then
+  enable write-back actions once their IT is comfortable.
+</div>
+
+<!-- ================= 10 ================= -->
+<h2>10. Architecture and tech stack</h2>
+<p class="lead">Prospective, and aligned with the existing Talent Carriage Azure stack so the team operates one familiar
+toolset. Choices may be refined during build; the functional scope does not depend on them.</p>
+<table>
+  <tr><th style="width:32mm">Layer</th><th style="width:48mm">Proposed technology</th><th>Why</th></tr>
+  <tr><td>Web app, portal and API</td><td><strong>Next.js (React, TypeScript)</strong> on <strong>Azure App Service</strong> (Linux), validation with <strong>Zod</strong></td><td>Same stack and deployment as the existing Talent Carriage client hub</td></tr>
+  <tr><td>Database</td><td><strong>Azure Database for PostgreSQL</strong> (Flexible Server) with <strong>Drizzle ORM</strong></td><td>Matches the existing project; strong multi-tenant isolation and audit querying</td></tr>
+  <tr><td>Background work</td><td><strong>Azure Functions</strong> (timer and queue triggers)</td><td>Daily checks, reminders, retries and syncs, independent of web traffic</td></tr>
+  <tr><td>Queues</td><td><strong>Azure Service Bus</strong></td><td>Each send, action and webhook event processed exactly once, with a dead-letter queue</td></tr>
+  <tr><td>Files</td><td><strong>Azure Blob Storage</strong></td><td>Uploaded registers, reports, policy documents, call recordings, drop folders</td></tr>
+  <tr><td>Secrets</td><td><strong>Azure Key Vault</strong></td><td>Per-customer WhatsApp tokens, HRMS credentials, model and voice keys — never in code</td></tr>
+  <tr><td>Identity</td><td><strong>Microsoft Entra ID</strong> for our staff; email or SSO for customer users</td><td>Customer IT teams expect SSO; Entra is already in use</td></tr>
+  <tr><td>AI</td><td><strong>Azure OpenAI</strong> (GPT-4o mini), <strong>Claude Haiku</strong>, <strong>Sarvam AI</strong> behind our model gateway</td><td>Right model per job, per language, per customer policy (section 8)</td></tr>
+  <tr><td>Messaging</td><td><strong>Meta WhatsApp Cloud API</strong>, Talent Carriage as Tech Provider</td><td>Official channel; embedded sign-up makes each new customer quick to connect</td></tr>
+  <tr><td>Voice</td><td><strong>Plivo</strong> or <strong>Exotel</strong> (also ACS, Twilio) with streaming audio</td><td>Live two-way conversation, India-ready, swappable per customer</td></tr>
+  <tr><td>Monitoring</td><td><strong>Azure Monitor</strong> and <strong>Application Insights</strong></td><td>Failed sends, stuck queues, connector errors and slow runs raise alerts</td></tr>
+  <tr><td>Delivery</td><td><strong>GitHub Actions</strong> → App Service deployment slots</td><td>Same pipeline style as the client hub; staging, swap, rollback</td></tr>
+  <tr><td>Edge</td><td><strong>Azure Front Door</strong> or Application Gateway with WAF</td><td>TLS, custom domains, protection for public webhook endpoints</td></tr>
+</table>
+<p><strong>One platform, many customers.</strong> Every record carries a customer identifier, enforced in the database
+with row-level security, so one customer's data cannot be reached through another's session — not merely filtered in
+application code. Credentials, configuration, mapping profiles, templates, calendars, policy packs and action
+permissions are all per customer. A large or regulated customer can be given a dedicated database without changing the
+application, and usage is metered per customer for billing and fair-use limits.</p>
+<p><strong>Environments.</strong> Development (synthetic data, sending disabled), staging (release testing and each
+customer's onboarding dry runs), production (with a per-customer test mode). Every environment has a sending switch, so
+a customer can be fully configured and verified in production before a single employee is contacted.</p>
+<p><strong>Reliability details that matter in practice.</strong> Webhook events are acknowledged instantly and processed
+from a queue, so no reply is lost during a deployment. Duplicate protection throughout: one case per employee per date,
+one message per case, one action per request, deduplicated on provider message identifiers. A missed daily run catches
+up rather than skipping a day. Sends are paced per WhatsApp number so a month-end spike does not trip Meta's rate
+limits.</p>
+
+<!-- ================= 11 ================= -->
+<h2>11. Security, privacy and compliance</h2>
+<p class="lead">The platform holds employee phone numbers, attendance records and personal reasons for absence, and is
+designed for that responsibility.</p>
+<ul>
+  <li><strong>Access.</strong> Role-based: platform admin, HR admin, HR user, manager, auditor. Managers see only their
+    team; HR users can be scoped by department or location. SSO for customer staff; enforced multi-factor
+    authentication for our staff. Our support access to customer data is time-limited, reason-logged and visible to
+    the customer.</li>
+  <li><strong>Protection.</strong> TLS in transit, platform encryption at rest, encrypted backups. Secrets only in Key
+    Vault, rotatable without downtime. Signature verification on every inbound WhatsApp webhook. Phone numbers and
+    message content masked in logs. Dependency scanning, and an external penetration test before the first production
+    customer.</li>
+  <li><strong>Privacy roles and data.</strong> The customer is the data fiduciary; Talent Carriage processes on their
+    instructions under a data processing agreement. Only the fields in section 3.1 are ingested — salary, bank and
+    identity data are never requested.</li>
+  <li><strong>Notice and consent.</strong> Onboarding includes an employee communication pack — what the agent is, what it
+    sends, how to opt out of messages and calls. Consent and opt-out states are stored per employee.</li>
+  <li><strong>Retention and residency.</strong> Configurable per customer; 24 months by default for cases, transcripts and
+    recordings, then deleted or anonymised. Offboarding produces a full export followed by deletion. Data and AI
+    processing stay in Indian regions by default, including the Indian-language models.</li>
+  <li><strong>Employee rights.</strong> Access, correction and erasure requests are supported through the customer's HR,
+    with tooling to find and export everything held about one person.</li>
+  <li><strong>Channel rules.</strong> Approved templates only to start conversations; opt-outs permanent; no marketing;
+    quiet hours on messages and calls; recording only where enabled and announced.</li>
+  <li><strong>Audit trail.</strong> Each case keeps an unalterable history: the import row that created it, every message
+    with delivery status, the AI's reading, confidence and model, each approval with who and when, each HRMS write with
+    its reference or error, and every human intervention with a reason — exportable, and usable as evidence in a
+    payroll dispute.</li>
+</ul>
+
+<!-- ================= 12 ================= -->
+<h2>12. Reporting, scale and reliability</h2>
+<h3>12.1 What HR and leadership see</h3>
+<p><strong>Daily:</strong> gaps found, messaged, replied, resolved, awaiting manager, needing HR; a work queue of unclear
+replies, failed sends, failed HRMS writes and missing mobile numbers; case search with full transcripts.
+<strong>Month-end:</strong> the unexplained-absence register payroll needs, actions completed with HRMS references, items
+pending with managers ranked by age, exports to Excel and CSV, and a scheduled email pack.
+<strong>Leadership:</strong> reply rate and time to first reply, auto-resolution rate, average time to close, actions
+performed by the agent, escalation rates, AI accuracy and handover rate, repeat-offender and department patterns, and
+estimated HR hours saved. <strong>For our own team:</strong> a console across all customers showing import health,
+volumes, failure rates, template states, connector errors and model spend.</p>
+
+<h3>12.2 Design targets</h3>
+<table>
+  <tr><th style="width:54mm">Target</th><th>Design goal</th></tr>
+  <tr><td>Customers · employees</td><td>Up to 100 active customers; 200,000 employees in total; 25,000 for a single customer</td></tr>
+  <tr><td>Daily attendance rows</td><td>Up to 500,000 processed inside the nightly window</td></tr>
+  <tr><td>Cases on a peak day</td><td>Up to 20,000 across all customers (month-end corrections)</td></tr>
+  <tr><td>WhatsApp messages per day</td><td>Up to 60,000, paced within Meta's per-number limits</td></tr>
+  <tr><td>Response time</td><td>Within 5 seconds on WhatsApp; under 2 seconds per turn on a call</td></tr>
+  <tr><td>Daily check duration</td><td>A 25,000-employee customer completes within 15 minutes</td></tr>
+  <tr><td>Availability · recovery</td><td>99.5% monthly for the portal; point-in-time restore 7–35 days; recovery point under 15 minutes, recovery time under 4 hours</td></tr>
+</table>
+<p>Nothing depends on a single machine staying up: work is queued, retried and traceable, so a failure delays a message
+rather than losing a case.</p>
+
+<!-- ================= 13 ================= -->
+<h2>13. Onboarding a new customer</h2>
+<p class="lead">Selling repeatedly depends on onboarding being routine — roughly two weeks of elapsed time per customer
+once the platform is built.</p>
+<table>
+  <tr><th style="width:17mm">Stage</th><th style="width:42mm">What happens</th><th>Who</th></tr>
+  <tr><td>Day 1–2</td><td>Kick-off and data sample: attendance export, employee list, attendance codes with meanings, holiday calendar, policy documents</td><td>Us with customer HR</td></tr>
+  <tr><td>Day 2–4</td><td>Mapping and rules: fields, codes, timings, exclusions, languages, policy pack loaded</td><td>Our onboarding team</td></tr>
+  <tr><td>Day 3–6</td><td>WhatsApp: connect the customer's number, submit templates, wait for Meta approval</td><td>Customer IT with our guidance</td></tr>
+  <tr><td>Day 4–7</td><td>Integration: agree the data route and, if in scope, the write-back route. Read-only first.</td><td>Customer IT with us</td></tr>
+  <tr><td>Day 6–8</td><td>Dry run and sign-off: run over a past month with sending off, and review exactly who would have been contacted and what they would have received</td><td>Customer HR signs off</td></tr>
+  <tr><td>Day 8–9</td><td>Pilot: one department or location, live, reviewed daily</td><td>Both</td></tr>
+  <tr><td>Day 10–12</td><td>Full go-live, employee communication issued, HR team trained</td><td>Customer HR</td></tr>
+  <tr><td>Week 3+</td><td>Enable actions and conversational policy answers once the customer is comfortable</td><td>Both</td></tr>
+</table>
+<p><strong>The customer's checklist:</strong> a sample attendance export and employee master · the full list of attendance
+codes with meanings · holiday and shift calendars per location · manager mapping with contactable numbers · a WhatsApp
+business number and Meta access · their leave and regularisation policy (types, backdating windows, approvers) · HRMS
+access, read then write · an employee communication and consent note · a named HR owner and an IT contact.</p>
+
+<!-- ================= 14 ================= -->
+<h2>14. Delivery roadmap</h2>
+<p class="lead">Five phases, each ending with something usable. Durations are indicative engineering elapsed time,
+assume the dependencies in section 15, and will be firmed up at planning.</p>
+<table>
+  <tr><th style="width:12mm">Phase</th><th style="width:36mm">Theme</th><th>Delivered</th><th style="width:19mm">Indicative</th></tr>
+  <tr><td><strong>0</strong></td><td>Demo <span class="pill p2">done</span></td><td>Single-customer proof: detection, WhatsApp question, AI reply reading, correct guidance, live dashboard</td><td>complete</td></tr>
+  <tr><td><strong>1</strong></td><td>Core platform, multi-customer</td><td>Customers, users and roles; employee master; manual and file ingestion; detection engine with calendars and exclusions; WhatsApp conversations with templates and languages; AI reply understanding; HR workspace; scheduling; audit trail; Azure environments and pipeline</td><td>8–10 weeks</td></tr>
+  <tr><td><strong>2</strong></td><td>Mapping studio and integrations</td><td>Field and code mapping with AI suggestions and versioning; dry-run sign-off tooling; generic file, REST and database connectors; scheduled imports with reject reporting; import health monitoring; operational reports and exports</td><td>6–8 weeks</td></tr>
+  <tr><td><strong>3</strong></td><td>Actions, approvals and dialogue</td><td>Action engine with pre-checks, idempotency and receipts; manager approval on WhatsApp with delegation and timeouts; apply and approve leave and regularisation; fallback write-back routes; policy pack and grounded policy answers; day-2 reminder logic</td><td>8–10 weeks</td></tr>
+  <tr><td><strong>4</strong></td><td>Conversational voice and depth</td><td>Day-3 calls with live speech conversation (Sarvam speech models, Plivo or Exotel), keypad fallback, transfer to HR, retries; escalation chains and SLA clocks; email and SMS fallbacks; manager digests; month-end and leadership analytics; AI accuracy tooling</td><td>8–10 weeks</td></tr>
+  <tr><td><strong>5</strong></td><td>Commercial readiness and scale</td><td>Usage metering and billing exports; white-labelling; named HRMS connectors and a profile library; self-service onboarding; performance hardening and penetration-test remediation</td><td>6–8 weeks</td></tr>
+</table>
+<p><strong>First revenue-ready release:</strong> end of Phase 2, with guidance-only messaging on real customer data. Phase
+3 turns it from a chaser into an agent; Phase 4 adds the voice conversation. Phases can overlap where the team allows,
+and the order can change if a first customer's needs demand it — for example bringing a specific HRMS connector
+forward. Each phase ends with working software behind per-customer switches, a demo on real sample data, updated
+documentation, and automated tests for the checks that matter (no duplicate messages, no message from an unmapped code,
+no action without approval).</p>
+
+<!-- ================= 15 ================= -->
+<h2>15. Assumptions, exclusions and risks</h2>
+<h3>15.1 Assumptions and dependencies</h3>
+<p>Employees have WhatsApp on a mobile number the employer holds and may use for work · attendance data is available at
+least daily and is reasonably accurate (the agent explains gaps, it does not fix bad data) · each customer can state
+their attendance codes, leave types and approvers, and provide their policy in writing · managers are contactable on
+WhatsApp · customers accept WhatsApp, voice and AI usage charges as pass-through or bundled · India-first for launch:
+Indian numbers, Indian leave conventions, English, Hindi and Gujarati first.
+<strong>Outside our control:</strong> Meta template approvals, number verification and policy changes · the HRMS
+vendor's API and how fast access is granted · the customer's IT and HR providing samples, credentials, calendars and
+the employee communication · voice provider account approval and Indian calling clearances · model provider
+availability and pricing.</p>
+
+<h3>15.2 Explicitly out of scope</h3>
+<p>Replacing the HRMS or becoming the system of record · payroll processing or statutory filings · biometric devices and
+access-control hardware · shift rostering and workforce planning · performance management or disciplinary automation,
+and any decision affecting a person's employment (the agent gathers and records; people decide) · recruitment and
+unrelated HR workflows · a native employee mobile app (WhatsApp is the interface by design) · general HR chatbot duties
+beyond attendance, leave and regularisation.</p>
+
+<h3>15.3 Risks and how we handle them</h3>
+<table>
+  <tr><th style="width:48mm">Risk</th><th>Handling</th></tr>
+  <tr><td>WhatsApp template rejected, or Meta policy changes</td><td>Factual utility-category wording per customer; template status tracked; alternates pre-drafted; email and SMS fallback so a case never stalls</td></tr>
+  <tr><td>Customer's HRMS has no write API</td><td>Four fallback routes (5.3); valuable in guidance-only mode; actions enabled when access allows</td></tr>
+  <tr><td>Wrong person messaged through a mapping error</td><td>Unmapped codes never message; mandatory dry-run sign-off; pilot on one department; per-customer sending switch; every send traceable to its import row</td></tr>
+  <tr><td>AI misreads a reply, or answers a policy question wrongly</td><td>Buttons and numbers bypass AI; confidence thresholds with handover; answers grounded in the policy pack with the source shown; HR reviews samples before conversational mode is enabled; accuracy reported</td></tr>
+  <tr><td>Voice quality on poor lines or heavy accents</td><td>Indian-language speech models; keypad fallback always available; two-turn limit then HR; transcripts reviewed during the pilot</td></tr>
+  <tr><td>Employees find it intrusive</td><td>One message per gap, never broadcasts; quiet hours; clear opt-out; employee communication at launch; wording approved by the customer</td></tr>
+  <tr><td>Managers ignore approval requests</td><td>Reminder, then timeout escalation to skip-level or HR; delegation while on leave; pending-with-manager reporting</td></tr>
+  <tr><td>Bad or late attendance data</td><td>Import validation with reject reporting; catch-up runs; corrections close cases automatically; alerts when an expected import does not arrive</td></tr>
+  <tr><td>Cost surprises from messaging, calls or AI</td><td>Per-customer metering and caps; rules-first classification; small models; cached policy answers; spike alerts</td></tr>
+  <tr><td>Scope creep from each new customer's wishes</td><td>Customer-specific behaviour belongs in configuration, never in code; genuinely new needs become catalogued actions or connectors every customer can use</td></tr>
+</table>
+
+<!-- ================= 16 ================= -->
+<h2>16. Running costs and pricing levers</h2>
+<table>
+  <tr><th style="width:42mm">Cost driver</th><th>Behaviour</th></tr>
+  <tr><td><strong>WhatsApp conversations</strong> (Meta)</td><td>Charged per conversation, not per message, at Meta's country and category rates. Scales with the number of attendance gaps, not headcount. Follow-ups inside 24 hours are free — the flow is designed around that.</td></tr>
+  <tr><td><strong>Voice calls</strong></td><td>Per minute (Plivo or Exotel), plus speech recognition and synthesis per minute. Only for cases still unresolved on day 3 — a small fraction of cases.</td></tr>
+  <tr><td><strong>AI models</strong></td><td>Only for replies that are not buttons or numbers, and for policy questions. Small models, short prompts, cached answers: a fraction of a rupee per interaction at current rates.</td></tr>
+  <tr><td><strong>Azure</strong></td><td>App Service, PostgreSQL, Functions, Service Bus, Blob, Key Vault, monitoring. Largely fixed, shared across customers, stepping up with volume.</td></tr>
+  <tr><td><strong>Onboarding effort</strong></td><td>People time for mapping, integration and sign-off. Falls sharply once a profile exists for a given HRMS.</td></tr>
+  <tr><td><strong>Support and success</strong></td><td>Monitoring health, connector breakages after customer HRMS upgrades, template and policy changes.</td></tr>
+</table>
+<p><strong>Pricing models this supports:</strong> per employee per month, tiered by headcount, with messaging bundled
+under fair use or passed through · platform fee plus metered usage · per resolved case, which ties most closely to value
+and makes a strong pilot offer · plus a one-time onboarding fee, and separate pricing for named HRMS connectors that
+need new development. The platform meters everything needed for any of these from Phase 5, and reports volumes per
+customer from Phase 2, so pricing decisions rest on real numbers.</p>
+
+<!-- ================= APPENDIX A ================= -->
+<h2>Appendix A — Attendance model and action catalogue</h2>
+<h3>A.1 Canonical attendance meanings</h3>
+<p>The fixed internal vocabulary every customer's codes map into, so the engine and reports stay consistent: present ·
+absent full day · absent first half · absent second half · absent half-day unspecified · missed or incomplete punch ·
+short hours · late in / early out · leave approved · leave pending approval · leave rejected · leave without pay · on
+duty, work from home, travel, training · compensatory off · weekly off · holiday · optional holiday · suspension · long
+leave · not employed on that date · unknown (unmapped). <strong>Chased by default:</strong> the absence, half-day and
+missed-punch meanings. <strong>Never chased:</strong> weekly off, holiday, not-employed, unknown.
+<strong>Configurable:</strong> short hours, lateness, leave without pay. <strong>Leave pending approval</strong> chases
+the manager rather than the employee.</p>
+
+<h3>A.2 Action catalogue v1</h3>
+<table>
+  <tr><th style="width:36mm">Action</th><th style="width:38mm">Pre-checks</th><th>Recorded</th></tr>
+  <tr><td>Apply leave</td><td>Type allowed; balance available; inside the backdating window; no overlap; employee active on that date</td><td>HRMS reference, type, dates, approver, approval time</td></tr>
+  <tr><td>Apply regularisation</td><td>Date eligible; monthly limit not exceeded; reason captured</td><td>HRMS reference, date, reason, approver</td></tr>
+  <tr><td>Apply unpaid leave</td><td>Paid balance exhausted or explicit employee choice; HR approval where configured</td><td>HRMS reference, days, approvals</td></tr>
+  <tr><td>Approve / reject leave or regularisation</td><td>Approver authorised for that employee; request still pending</td><td>Decision, who, when, any note</td></tr>
+  <tr><td>Cancel or correct a request</td><td>Cancellable; inside the allowed window</td><td>Cancellation reference, reason</td></tr>
+  <tr><td>Raise HR ticket</td><td>Category available; description captured</td><td>Ticket reference, assignee</td></tr>
+  <tr><td>Nudge manager</td><td>Pending beyond configured hours; nudge limit not exceeded</td><td>Nudge count, channel, timestamps</td></tr>
+  <tr><td>Close case with reason</td><td>HR permission</td><td>Reason, user, timestamp</td></tr>
+</table>
+<p>Later candidates, following the same pattern: shift-change requests, compensatory-off claims, work-from-home
+requests, document upload, overtime confirmation.</p>
+
+<!-- ================= APPENDIX B ================= -->
+<h2>Appendix B — Message and conversation catalogue</h2>
+<p>Wording from the agreed flowchart, adaptable per customer within WhatsApp's template rules. Braces are filled per
+employee.</p>
+
+<h4>Stage 1 — the question (template)</h4>
+<div class="box"><p style="margin:0">Hi {employee_name}, our attendance record shows you are marked absent on
+{absent_date}. Please confirm the reason by choosing one option below.<br>
+<em>Buttons:</em> 1. Yes, I was absent · 2. No, I was working · 3. I have already applied leave · 4. I have already sent a
+regularisation request</p></div>
+
+<h4>Stage 1 — the replies</h4>
+<table>
+  <tr><th style="width:32mm">Employee says</th><th>Agent replies</th></tr>
+  <tr><td>1 — I was absent</td><td>Please apply leave if leave balance is available. If not, follow the HR process for unpaid leave or regularisation and get it approved by your manager. <em>(With actions on: offers to apply it.)</em></td></tr>
+  <tr><td>2 — I was working</td><td>Please apply attendance regularisation for {absent_date} and get it approved by your manager. <em>(With actions on: offers to apply it.)</em></td></tr>
+  <tr><td>3 — Already applied leave</td><td>Please ask your manager to approve your leave for {absent_date}. <em>(With actions on: nudges the manager.)</em></td></tr>
+  <tr><td>4 — Already sent regularisation</td><td>Please ask your manager to approve your regularisation request for {absent_date}. <em>(With actions on: nudges the manager.)</em></td></tr>
+  <tr><td>A question</td><td>Answered from the policy pack and live HRMS data (section 6.2), then back to the pending action</td></tr>
+  <tr><td>Unclear</td><td>One clarifying question; if still unclear, handed to HR and the employee is told a colleague will follow up</td></tr>
+</table>
+
+<h4>Stage 2 — the day-2 reminder (template, worded by the original answer)</h4>
+<table>
+  <tr><th style="width:32mm">Original answer</th><th>Reminder</th></tr>
+  <tr><td>Absent / unpaid leave</td><td>Reminder: have you completed the leave or unpaid leave process for {absent_date} and got it approved by your manager? <em>[ Done ] [ Not done ] [ Need help ]</em></td></tr>
+  <tr><td>Regularisation</td><td>Reminder: have you submitted regularisation for {absent_date} and got it approved by your manager? <em>[ Done ] [ Not done ] [ Need help ]</em></td></tr>
+  <tr><td>Already applied leave</td><td>Reminder: has your manager approved your leave for {absent_date}? <em>[ Approved ] [ Not approved ] [ Need help ]</em></td></tr>
+  <tr><td>Already sent regularisation</td><td>Reminder: has your manager approved your regularisation request for {absent_date}? <em>[ Approved ] [ Not approved ] [ Need help ]</em></td></tr>
+  <tr><td>Never replied</td><td>The original question is sent again</td></tr>
+</table>
+
+<h4>Stage 3 — the day-3 call (spoken, not a recording)</h4>
+<div class="box"><p style="margin:0"><strong>Agent:</strong> “Hello {employee_name}, this is an automated HR assistant from
+{company}. Your attendance action for {absent_date} is still pending. Have you completed the leave or regularisation
+process?”<br>
+<strong>Employee:</strong> “I applied leave yesterday but my manager hasn't approved it.”<br>
+<strong>Agent:</strong> “Thank you. I can see the request pending with {manager_name}. I'll remind them today and update
+HR. Anything else about your attendance?”<br>
+<em>Keypad fallback:</em> press 1 if completed, 2 if not, 3 to be contacted by HR.</p></div>
+<p>Outcomes: completed → verified against the HRMS and closed · not completed → HR escalation · needs help → HR
+follow-up · no answer → retry, then HR escalation.</p>
+
+<h4>Manager messages (with actions enabled)</h4>
+<table>
+  <tr><th style="width:32mm">Situation</th><th>Message</th></tr>
+  <tr><td>Approval request</td><td>{employee_name} has requested {action} for {date}. Reason: {reason}. <em>[ Approve ] [ Reject ] [ Ask for details ]</em></td></tr>
+  <tr><td>Nudge</td><td>Reminder: {employee_name}'s {action} for {date} is waiting for your approval.</td></tr>
+  <tr><td>Daily digest</td><td>{n} attendance items are pending with you. Reply to see them one by one.</td></tr>
+</table>
+
+<div class="callout" style="margin-top:6mm">
+  <div class="lbl">Next step</div>
+  Review this scope and mark anything to add, remove or re-sequence — particularly the action catalogue (A.2), the
+  escalation timings, the default model per language, and which HRMS products the first customers use, since that
+  decides which connectors are built first. On sign-off, Phase 1 planning begins with a detailed schedule and a fixed
+  definition of done per module.
+</div>
+<p class="footnote">Prepared by Talent Carriage Management Pvt Ltd · AI Attendance Agent product scope · Version 1.0 ·
+23 September 2026. Technical choices marked prospective may change during implementation without altering the
+functional scope.</p>
+
+</body>
+</html>
