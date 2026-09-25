@@ -5,7 +5,7 @@ import { caseDetail } from '@/lib/queries';
 import { actionLabel, caseDateLabel, formatTime, meaningLabel, replyLabel, statusDisplay } from '@/lib/display';
 import { OPTIONS, OPTION_NUMBERS } from '@/lib/conversation/flow';
 import { env } from '@/lib/env';
-import { closeCase, flagForHr, simulateReply } from '@/app/actions';
+import { closeCase, flagForHr, resetCase, simulateReply } from '@/app/actions';
 
 export default async function CaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -206,6 +206,12 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                 <input type="hidden" name="caseId" value={caseRow.id} />
                 <button className="btn small" type="submit">
                   Flag for HR
+                </button>
+              </form>
+              <form action={resetCase}>
+                <input type="hidden" name="caseId" value={caseRow.id} />
+                <button className="btn small" type="submit" title="Clears the conversation and makes this an unasked case again">
+                  Reset case
                 </button>
               </form>
             </div>

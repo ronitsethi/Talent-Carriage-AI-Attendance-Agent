@@ -45,7 +45,10 @@ async function main() {
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' });
   // A reused browser profile may still be signed in, in which case /login
   // redirects away and there is no form to fill.
-  if (page.url().includes('/login')) {
+  // A server redirect can still leave /login in the URL for a moment, so look
+  // for the form itself rather than trusting the address.
+  const needsLogin = await page.waitForSelector('#email', { timeout: 3000 }).then(() => true, () => false);
+  if (needsLogin) {
     await page.type('#email', process.env.DEMO_EMAIL ?? 'admin@talentcarriage.test');
     await page.type('#password', process.env.DEMO_PASSWORD ?? 'attendance123');
     await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle2' }), page.click('button[type="submit"]')]);

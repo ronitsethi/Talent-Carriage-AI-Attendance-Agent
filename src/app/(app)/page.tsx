@@ -5,15 +5,19 @@ import { availableDates, dashboardStats, latestCaseDate, listCases, tenantSummar
 import { capabilities, env } from '@/lib/env';
 import { models } from '@/lib/models/gateway';
 import { caseDateLabel, formatTime, statusDisplay } from '@/lib/display';
-import { runCheck, runFollowUps } from '@/app/actions';
+import { resetAllCases, runCheck, runFollowUps } from '@/app/actions';
 
-export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ date?: string }> }) {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ date?: string; from?: string; to?: string }>;
+}) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) return <p style={{ paddingTop: 40 }}>No customer has been set up yet.</p>;
 
-  const [{ tenant, settings }, stats, dates, withCases, { date }] = await Promise.all([
+  const [{ tenant, settings }, stats, dates, withCases, { date, from, to }] = await Promise.all([
     tenantSummary(tenantId),
     dashboardStats(tenantId),
     availableDates(tenantId),
@@ -24,9 +28,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // Default to the day that already has cases, so the dashboard opens on
   // something worth looking at rather than an empty future date.
   const selectedDate = date ?? withCases ?? dates[0] ?? new Date().toISOString().slice(0, 10);
-  const [attention, todaysCases] = await Promise.all([
+  // The check runs over a range; a single day is simply the same date twice.
+  const rangeFrom = from ?? selectedDate;
+  const rangeTo = to ?? selectedDate;
+  const [attention, rangeCases] = await Promise.all([
     listCases(tenantId, { status: 'attention', limit: 8 }),
-    listCases(tenantId, { date: selectedDate, limit: 8 }),
+    listCases(tenantId, { from: rangeFrom, to: rangeTo, status: 'all', limit: 10 }),
   ]);
 
   const caps = capabilities();
@@ -99,17 +106,28 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             </div>
             <div className="card">
               <form action={runCheck} className="row">
-                <div className="field" style={{ minWidth: 200 }}>
-                  <label htmlFor="date">Attendance date</label>
-                  <input className="input" type="date" id="date" name="date" defaultValue={selectedDate} />
+                <div className="field" style={{ minWidth: 165 }}>
+                  <label htmlFor="from">From date</label>
+                  <input className="input" type="date" id="from" name="from" defaultValue={rangeFrom} />
+                </div>
+                <div className="field" style={{ minWidth: 165 }}>
+                  <label htmlFor="to">To date</label>
+                  <input className="input" type="date" id="to" name="to" defaultValue={rangeTo} />
                 </div>
                 <button className="btn primary" type="submit">
                   Run check &amp; send
                 </button>
-                <Link className="btn" href={`/cases?date=${selectedDate}`}>
-                  View that date
+                <Link className="btn" href={`/preview?from=${rangeFrom}&to=${rangeTo}`}>
+                  Preview first
+                </Link>
+                <Link className="btn" href={`/cases?from=${rangeFrom}&to=${rangeTo}&status=all`}>
+                  View these dates
                 </Link>
               </form>
+              <p className="hint" style={{ padding: '0 20px 14px' }}>
+                Leave both dates the same to check one day. Re-running a range is safe: a date that already has a case
+                is left alone.
+              </p>
               {stats.queued ? (
                 <div className="notice info" style={{ marginBottom: 14 }}>
                   {stats.queued} case{stats.queued === 1 ? '' : 's'} held back by the outstanding-question cap. Each is
@@ -165,8 +183,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
           <section className="section">
             <div className="section-head">
-              <h2>{selectedDate}</h2>
-              <span className="hint">Cases for the selected date</span>
+              <h2>{rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} → ${rangeTo}`}</h2>
+              <span className="hint">Cases in the selected range</span>
             </div>
             <div className="card table-scroll">
               <table className="data">
@@ -180,14 +198,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
                   </tr>
                 </thead>
                 <tbody>
-                  {todaysCases.length ? (
-                    todaysCases.map((row) => {
+                  {rangeCases.length ? (
+                    rangeCases.map((row) => {
                       const display = statusDisplay(row.status);
                       return (
                         <tr key={row.id}>
                           <td>
                             <div className="employee">{row.employeeName}</div>
-                            <div className="sub">{row.employeeCode}</div>
+                            <div className="sub">
+                              {row.employeeCode} · {row.attDate}
+                            </div>
                           </td>
                           <td>
                             <span className="pill idle">{row.rawStatus ?? row.meaning}</span>
@@ -207,7 +227,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
                   ) : (
                     <tr>
                       <td className="empty" colSpan={5}>
-                        No cases for {selectedDate}. Run the check above.
+                        No cases in this range. Run the check above.
                       </td>
                     </tr>
                   )}
@@ -238,6 +258,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               <button className="btn" type="submit">
                 Send due day-{settings?.followUpAfterDays ?? 2} reminders
               </button>
+            </form>
+            <form action={resetAllCases} style={{ marginTop: 8 }}>
+              <button className="btn" type="submit">
+                Reset all cases
+              </button>
+              <p className="hint" style={{ marginTop: 6 }}>
+                Clears every case and conversation for this customer. Employees and attendance stay.
+              </p>
             </form>
           </section>
 

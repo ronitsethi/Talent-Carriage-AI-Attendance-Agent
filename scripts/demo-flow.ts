@@ -26,7 +26,10 @@ async function main() {
   const page = await browser.newPage();
 
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' });
-  if (page.url().includes('/login')) {
+  // A server redirect can still leave /login in the URL for a moment, so look
+  // for the form itself rather than trusting the address.
+  const needsLogin = await page.waitForSelector('#email', { timeout: 3000 }).then(() => true, () => false);
+  if (needsLogin) {
     await page.type('#email', 'admin@talentcarriage.test');
     await page.type('#password', 'attendance123');
     await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle2' }), page.click('button[type="submit"]')]);

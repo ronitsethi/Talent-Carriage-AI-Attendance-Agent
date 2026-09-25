@@ -14,22 +14,22 @@ const FILTERS = [
 export default async function CasesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; status?: string; q?: string }>;
+  searchParams: Promise<{ date?: string; from?: string; to?: string; status?: string; q?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) return <p style={{ paddingTop: 40 }}>No customer selected.</p>;
 
-  const { date, status, q } = await searchParams;
+  const { date, from, to, status, q } = await searchParams;
   const [rows, dates] = await Promise.all([
-    listCases(tenantId, { date, status: status ?? 'open', search: q }),
+    listCases(tenantId, { date, from, to, status: status ?? 'open', search: q }),
     availableDates(tenantId),
   ]);
 
   const query = (next: Record<string, string | undefined>) => {
     const params = new URLSearchParams();
-    const merged = { date, status: status ?? 'open', q, ...next };
+    const merged = { from, to, status: status ?? 'open', q, ...next };
     for (const [key, value] of Object.entries(merged)) if (value) params.set(key, value);
     return `/cases?${params.toString()}`;
   };
@@ -45,15 +45,12 @@ export default async function CasesPage({
       <div className="card" style={{ marginTop: 18 }}>
         <form className="row" method="get">
           <div className="field" style={{ minWidth: 150 }}>
-            <label htmlFor="date">Date</label>
-            <select className="input" id="date" name="date" defaultValue={date ?? ''}>
-              <option value="">All dates</option>
-              {dates.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+            <label htmlFor="from">From</label>
+            <input className="input" type="date" id="from" name="from" defaultValue={from ?? date ?? ''} />
+          </div>
+          <div className="field" style={{ minWidth: 150 }}>
+            <label htmlFor="to">To</label>
+            <input className="input" type="date" id="to" name="to" defaultValue={to ?? date ?? ''} />
           </div>
           <div className="field" style={{ minWidth: 150 }}>
             <label htmlFor="status">Status</label>

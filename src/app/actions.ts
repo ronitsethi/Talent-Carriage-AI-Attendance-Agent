@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { and, eq } from 'drizzle-orm';
 import { withTenant } from '@/db';
-import { cases, employees, tenantSettings } from '@/db/schema';
+import { actions, approvals, cases, conversations, employees, messages, tenantSettings } from '@/db/schema';
 import type { InboundMessage } from '@/lib/channels/types';
 import { handleInbound } from '@/lib/conversation/engine';
 import { selectionId, type OptionNumber } from '@/lib/conversation/flow';
@@ -15,6 +15,7 @@ import { importAttendanceFile } from '@/lib/mapping/import';
 import { buildContext } from '@/lib/runtime';
 import { canManageSettings, getActiveTenantId, getSession, setActiveTenant, signOut } from '@/lib/auth';
 import { env } from '@/lib/env';
+import { datesInRange } from '@/lib/dates';
 
 async function requireTenant() {
   const session = await getSession();
@@ -24,40 +25,57 @@ async function requireTenant() {
   return { session, tenantId };
 }
 
-/** Who would be contacted for a date. Sends nothing. */
-export async function previewCheck(_prev: unknown, formData: FormData) {
+function readRange(formData: FormData): string[] {
+  const from = String(formData.get('from') ?? formData.get('date') ?? '');
+  const to = String(formData.get('to') ?? '') || from;
+  return datesInRange(from, to);
+}
+
+/** Who would be contacted over a range. Sends nothing. */
+export async function previewCheck(formData: FormData) {
   const { tenantId } = await requireTenant();
-  const date = String(formData.get('date') ?? '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Choose a date' };
+  const dates = readRange(formData);
+  if (!dates.length) return { error: 'Choose a valid date range' };
 
   return withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
-    const { gaps, skipped } = await findGaps(tx, tenantId, date, ctx.settings);
-    return {
-      date,
-      skipped,
-      gaps: gaps.map((g) => ({
-        name: g.fullName,
-        code: g.empCode,
-        mobile: g.mobileE164,
-        meaning: g.meaning,
-        raw: g.rawStatus,
-        alreadyOpen: Boolean(g.existingCaseId),
-      })),
-    };
+    const rows = [];
+    for (const date of dates) {
+      const { gaps } = await findGaps(tx, tenantId, date, ctx.settings);
+      for (const gap of gaps) {
+        rows.push({
+          date,
+          name: gap.fullName,
+          code: gap.empCode,
+          mobile: gap.mobileE164,
+          meaning: gap.meaning,
+          raw: gap.rawStatus,
+          alreadyOpen: Boolean(gap.existingCaseId),
+        });
+      }
+    }
+    return { dates, rows };
   });
 }
 
-/** The daily check, run by hand. */
+/**
+ * The daily check, run by hand over one date or a range.
+ *
+ * Running a range is exactly the same as running each day in turn: one case per
+ * employee per date, and a date that already has a case is left alone. So a
+ * range can be re-run safely, and only genuinely new dates are messaged about.
+ */
 export async function runCheck(formData: FormData) {
   const { tenantId } = await requireTenant();
-  const date = String(formData.get('date') ?? '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  const dates = readRange(formData);
+  if (!dates.length) return;
 
   await withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
-    await closeCasesExplainedByData(tx, tenantId, date);
-    await runDailyCheck(ctx, { date, trigger: 'manual' });
+    for (const date of dates) {
+      await closeCasesExplainedByData(tx, tenantId, date);
+      await runDailyCheck(ctx, { date, trigger: 'manual' });
+    }
   });
   revalidatePath('/');
   revalidatePath('/cases');
@@ -204,6 +222,83 @@ export async function importAttendance(formData: FormData) {
   });
   revalidatePath('/mapping');
   revalidatePath('/');
+}
+
+/**
+ * Puts one case back to the start: its conversation is removed and it becomes a
+ * fresh, unasked case. Used to re-run a demo, or to start again after a wrong
+ * number or a mistaken reply.
+ */
+export async function resetCase(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const caseId = String(formData.get('caseId') ?? '');
+
+  await withTenant(tenantId, async (tx) => {
+    const target = await tx.query.cases.findFirst({
+      where: and(eq(cases.tenantId, tenantId), eq(cases.id, caseId)),
+    });
+    if (!target) return;
+
+    await tx.delete(messages).where(eq(messages.caseId, caseId));
+    await tx.delete(actions).where(eq(actions.caseId, caseId));
+    await tx
+      .update(cases)
+      .set({
+        status: 'queued',
+        askedAt: null,
+        firstMessageId: null,
+        answeredAt: null,
+        replyOption: null,
+        replyIntent: null,
+        replyText: null,
+        aiUsed: false,
+        followUpDueAt: null,
+        followUpSentAt: null,
+        followUpReply: null,
+        callDueAt: null,
+        callAttempts: 0,
+        resolvedAt: null,
+        closeReason: null,
+        needsHrReason: null,
+        error: null,
+        context: {},
+        updatedAt: new Date(),
+      })
+      .where(eq(cases.id, caseId));
+
+    // The employee may now be mid-conversation about a case that no longer
+    // exists, so clear the pointer rather than leaving it dangling.
+    await tx
+      .update(conversations)
+      .set({ activeCaseId: null })
+      .where(and(eq(conversations.employeeId, target.employeeId), eq(conversations.activeCaseId, caseId)));
+  });
+
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath('/cases');
+  revalidatePath('/');
+}
+
+/**
+ * Clears every case, conversation and action for this customer, leaving the
+ * employees and attendance in place. The way to run the demo again from a clean
+ * start without re-importing anything.
+ */
+export async function resetAllCases() {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Not allowed');
+
+  await withTenant(tenantId, async (tx) => {
+    // Order matters: approvals and messages point at actions and cases.
+    await tx.delete(approvals).where(eq(approvals.tenantId, tenantId));
+    await tx.delete(actions).where(eq(actions.tenantId, tenantId));
+    await tx.delete(messages).where(eq(messages.tenantId, tenantId));
+    await tx.delete(conversations).where(eq(conversations.tenantId, tenantId));
+    await tx.delete(cases).where(eq(cases.tenantId, tenantId));
+  });
+
+  revalidatePath('/');
+  revalidatePath('/cases');
 }
 
 export async function switchTenant(formData: FormData) {

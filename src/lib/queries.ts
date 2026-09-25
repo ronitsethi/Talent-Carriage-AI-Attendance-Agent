@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
 import {
   actions,
@@ -39,11 +39,15 @@ export type CaseListItem = {
 
 export async function listCases(
   tenantId: string,
-  filters: { date?: string; status?: string; search?: string; limit?: number } = {},
+  filters: { date?: string; from?: string; to?: string; status?: string; search?: string; limit?: number } = {},
 ): Promise<CaseListItem[]> {
   return withTenant(tenantId, async (tx) => {
     const conditions = [eq(cases.tenantId, tenantId)];
-    if (filters.date) conditions.push(eq(cases.attDate, filters.date));
+    // A single date is just a range of one, so callers can pass either.
+    const from = filters.from ?? filters.date;
+    const to = filters.to ?? filters.date;
+    if (from) conditions.push(gte(cases.attDate, from));
+    if (to) conditions.push(lte(cases.attDate, to));
     if (filters.status === 'open') {
       conditions.push(inArray(cases.status, ['queued', 'asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval']));
     } else if (filters.status === 'attention') {
