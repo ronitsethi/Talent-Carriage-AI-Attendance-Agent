@@ -33,7 +33,7 @@ CREATE TABLE "tenant_settings" (
 	"tenant_id" uuid PRIMARY KEY NOT NULL,
 	"timezone" text DEFAULT 'Asia/Kolkata' NOT NULL,
 	"check_time" time DEFAULT '10:30' NOT NULL,
-	"scheduler_enabled" boolean DEFAULT false NOT NULL,
+	"operating_mode" text DEFAULT 'manual' NOT NULL,
 	"sending_enabled" boolean DEFAULT false NOT NULL,
 	"chase_meanings" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"late_grace_minutes" integer DEFAULT 15 NOT NULL,

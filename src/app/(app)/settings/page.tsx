@@ -43,10 +43,17 @@ export default async function SettingsPage() {
                   <input className="input" type="time" id="quietHoursEnd" name="quietHoursEnd" defaultValue={settings.quietHoursEnd.slice(0, 5)} />
                 </div>
               </div>
-              <label style={{ display: 'block', marginTop: 12, fontWeight: 600 }}>
-                <input type="checkbox" name="schedulerEnabled" defaultChecked={settings.schedulerEnabled} /> Run the
-                check automatically every day
-              </label>
+              <div className="field" style={{ marginTop: 14, maxWidth: 420 }}>
+                <label htmlFor="operatingMode">How the agent runs</label>
+                <select className="input" id="operatingMode" name="operatingMode" defaultValue={settings.operatingMode}>
+                  <option value="manual">Manual — HR starts every check and reminder</option>
+                  <option value="automatic">Automatic — the agent runs the daily check itself</option>
+                </select>
+                <p className="hint" style={{ marginTop: 6 }}>
+                  Manual is the default, so a newly configured customer can never message anyone by surprise. In
+                  automatic mode the daily check runs at the time above, and due reminders go out on their own.
+                </p>
+              </div>
               <label style={{ display: 'block', marginTop: 8, fontWeight: 600 }}>
                 <input type="checkbox" name="sendingEnabled" defaultChecked={settings.sendingEnabled} /> Allow messages
                 to be sent at all

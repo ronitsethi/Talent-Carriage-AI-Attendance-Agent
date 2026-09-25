@@ -30,7 +30,7 @@ export default async function AdminPage() {
               <th>Awaiting reply</th>
               <th>Needs HR</th>
               <th>Sending</th>
-              <th>Daily check</th>
+              <th>Mode</th>
               <th>Actions</th>
               <th>Cap</th>
             </tr>
@@ -48,7 +48,14 @@ export default async function AdminPage() {
                 <td>{tenant.attention ? <span className="pill call">{tenant.attention}</span> : '0'}</td>
                 <td>{tenant.sendingEnabled ? <span className="pill done">On</span> : <span className="pill idle">Off</span>}</td>
                 <td className="nowrap">
-                  {tenant.schedulerEnabled ? `${tenant.checkTime?.slice(0, 5)}` : <span className="sub">manual</span>}
+                  {tenant.operatingMode === 'automatic' ? (
+                    <>
+                      <span className="pill done">Automatic</span>
+                      <div className="sub">{tenant.checkTime?.slice(0, 5)}</div>
+                    </>
+                  ) : (
+                    <span className="pill idle">Manual</span>
+                  )}
                 </td>
                 <td>{tenant.actionsEnabled ? <span className="pill done">On</span> : <span className="pill idle">Off</span>}</td>
                 <td>{tenant.cap ? tenant.cap : <span className="sub">none</span>}</td>

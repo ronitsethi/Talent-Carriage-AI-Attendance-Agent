@@ -39,9 +39,16 @@ export const tenantSettings = pgTable('tenant_settings', {
     .references(() => tenants.id, { onDelete: 'cascade' }),
 
   timezone: text('timezone').notNull().default('Asia/Kolkata'),
-  /** When the daily check runs, in the tenant's timezone. */
+  /** When the daily check runs, in the tenant's timezone. Automatic mode only. */
   checkTime: time('check_time').notNull().default('10:30'),
-  schedulerEnabled: boolean('scheduler_enabled').notNull().default(false),
+  /**
+   * manual    - nothing happens on its own: HR runs the check, sends reminders
+   *             and decides when anything goes out. This is the default, so a
+   *             newly configured customer can never message anyone by surprise.
+   * automatic - the agent runs the daily check at `checkTime` and sends due
+   *             reminders by itself.
+   */
+  operatingMode: text('operating_mode').notNull().default('manual'),
   /** Master switch: false means cases are created but nothing is ever delivered. */
   sendingEnabled: boolean('sending_enabled').notNull().default(false),
 

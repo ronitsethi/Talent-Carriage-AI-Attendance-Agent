@@ -81,8 +81,10 @@ export default async function DashboardPage({
           <span className={`flag ${settings?.actionsEnabled ? 'ok' : 'idle'}`}>
             {settings?.actionsEnabled ? '✓ Actions enabled' : 'Guidance only'}
           </span>
-          <span className={`flag ${settings?.schedulerEnabled ? 'ok' : 'idle'}`}>
-            {settings?.schedulerEnabled ? `✓ Daily check at ${settings.checkTime.slice(0, 5)}` : 'Daily check off'}
+          <span className={`flag ${settings?.operatingMode === 'automatic' ? 'ok' : 'idle'}`}>
+            {settings?.operatingMode === 'automatic'
+              ? `✓ Automatic · daily check at ${settings.checkTime.slice(0, 5)}`
+              : 'Manual · HR runs the check'}
           </span>
           <span className="flag idle">{stats.employees} employees</span>
         </div>

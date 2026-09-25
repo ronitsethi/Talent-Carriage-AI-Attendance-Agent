@@ -263,7 +263,7 @@ export async function platformOverview() {
         slug: tenants.slug,
         status: tenants.status,
         sendingEnabled: tenantSettings.sendingEnabled,
-        schedulerEnabled: tenantSettings.schedulerEnabled,
+        operatingMode: tenantSettings.operatingMode,
         actionsEnabled: tenantSettings.actionsEnabled,
         checkTime: tenantSettings.checkTime,
         cap: tenantSettings.maxOutstandingQuestions,

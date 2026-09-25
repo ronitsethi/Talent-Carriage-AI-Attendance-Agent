@@ -1,5 +1,5 @@
 {
-  "id": "fb03d4da-1a9a-4644-ad74-91cd7229ff6a",
+  "id": "f1c23d2a-41bd-4fc3-8dea-8f7ed4ce81e7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -148,12 +148,12 @@
           "notNull": true,
           "default": "'10:30'"
         },
-        "scheduler_enabled": {
-          "name": "scheduler_enabled",
-          "type": "boolean",
+        "operating_mode": {
+          "name": "operating_mode",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": false
+          "default": "'manual'"
         },
         "sending_enabled": {
           "name": "sending_enabled",

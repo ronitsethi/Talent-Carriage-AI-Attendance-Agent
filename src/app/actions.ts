@@ -188,7 +188,7 @@ export async function updateSettings(formData: FormData) {
       .update(tenantSettings)
       .set({
         checkTime: String(formData.get('checkTime') ?? '10:30'),
-        schedulerEnabled: bool('schedulerEnabled'),
+        operatingMode: formData.get('operatingMode') === 'automatic' ? 'automatic' : 'manual',
         sendingEnabled: bool('sendingEnabled'),
         actionsEnabled: bool('actionsEnabled'),
         sendBacklogSummary: bool('sendBacklogSummary'),

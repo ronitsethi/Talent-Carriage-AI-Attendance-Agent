@@ -43,7 +43,7 @@ const TENANTS: SeedTenant[] = [
     slug: 'dpod-lifestyle',
     name: 'DPOD Lifestyle',
     preset: 'timeoffice_two_session',
-    settings: { actionsEnabled: true, allowedActions: ['apply_leave', 'apply_regularisation'], schedulerEnabled: true },
+    settings: { actionsEnabled: true, allowedActions: ['apply_leave', 'apply_regularisation'] },
     file: () => fs.readFileSync(DEMO_FILE),
     runDates: ['2026-08-17', '2026-08-18', '2026-08-19', '2026-08-20'],
   },
@@ -121,6 +121,12 @@ async function ensureTenant(seed: SeedTenant) {
         `${Object.keys(result.report.unmappedCodes).length ? `, unmapped: ${Object.keys(result.report.unmappedCodes).join(', ')}` : ''}`,
     );
 
+    // Customers start in manual mode, so the seed leaves the cases to you:
+    // run the check from the portal, or set SEED_RUN_CHECKS=true to prefill.
+    if (process.env.SEED_RUN_CHECKS !== 'true') {
+      console.log(`  no cases created - run the check from the portal for ${seed.runDates.join(', ')}`);
+      return;
+    }
     const ctx = await buildContext(tx, tenantId);
     for (const date of seed.runDates) {
       const run = await runDailyCheck(ctx, { date, trigger: 'manual' });

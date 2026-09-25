@@ -18,7 +18,7 @@ export async function scheduleDueWork(at = new Date()) {
         status: tenants.status,
         timezone: tenantSettings.timezone,
         checkTime: tenantSettings.checkTime,
-        schedulerEnabled: tenantSettings.schedulerEnabled,
+        operatingMode: tenantSettings.operatingMode,
       })
       .from(tenants)
       .innerJoin(tenantSettings, eq(tenantSettings.tenantId, tenants.id)),
@@ -28,6 +28,9 @@ export async function scheduleDueWork(at = new Date()) {
 
   for (const tenant of rows) {
     if (tenant.status !== 'active') continue;
+    // Manual customers are driven entirely from the portal; the scheduler leaves
+    // them alone, including their reminders.
+    if (tenant.operatingMode !== 'automatic') continue;
 
     const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: tenant.timezone }).format(at);
     const localTime = new Intl.DateTimeFormat('en-GB', {
@@ -37,7 +40,7 @@ export async function scheduleDueWork(at = new Date()) {
       hour12: false,
     }).format(at);
 
-    if (tenant.schedulerEnabled && localTime >= tenant.checkTime.slice(0, 5)) {
+    if (localTime >= tenant.checkTime.slice(0, 5)) {
       const job = await enqueue(
         'daily_check',
         { date: localDate, trigger: 'schedule' },
