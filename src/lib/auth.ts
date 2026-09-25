@@ -9,6 +9,7 @@ import { env } from './env';
 const COOKIE = 'tc_session';
 const MAX_AGE_SECONDS = 60 * 60 * 12;
 const secret = new TextEncoder().encode(env.AUTH_SECRET);
+const UUID = /^[0-9a-f-]{36}$/i;
 
 export type Session = {
   userId: string;
@@ -82,8 +83,16 @@ export async function getSession(): Promise<Session | null> {
  */
 export async function getActiveTenantId(session: Session): Promise<string | null> {
   if (session.tenantId) return session.tenantId;
+
   const chosen = (await cookies()).get('tc_tenant')?.value;
-  if (chosen) return chosen;
+  if (chosen && UUID.test(chosen)) {
+    // The cookie can outlive the customer it names - a database rebuild, or a
+    // customer removed - so it is checked rather than trusted. Without this the
+    // page fails with "Unknown tenant" instead of quietly moving on.
+    const exists = await withPlatformScope((tx) => tx.query.tenants.findFirst({ where: eq(tenants.id, chosen) }));
+    if (exists) return chosen;
+  }
+
   const first = await withPlatformScope((tx) => tx.query.tenants.findFirst({ where: eq(tenants.status, 'active') }));
   return first?.id ?? null;
 }
