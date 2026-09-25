@@ -1,19 +1,26 @@
 # dependencies
 node_modules/
+demo/node_modules/
 
 # secrets - never commit
 .env
 .env.local
+.env*.local
 API.txt
+
+# next.js
+.next/
+next-env.d.ts
+*.tsbuildinfo
 
 # Excel lock files
 ~$*
 
-# build artifacts (rebuild with: zip -qr ... / python3 scripts/build-scope.py)
+# build artifacts (rebuild: python3 scripts/build-scope.py)
 *.zip
 
 # macOS
 .DS_Store
 
-# unpacked copy of the distribution zip (duplicate of this folder)
+# unpacked copy of the demo distribution zip
 /Talent-Carriage-Attendance-Agent/

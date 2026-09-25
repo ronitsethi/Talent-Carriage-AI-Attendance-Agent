@@ -1,16 +1,16 @@
-name: tc-attendance-platform
+name: talentcarriageaiattendanceagent
 
 services:
   db:
     image: postgres:16-alpine
-    container_name: tc-attendance-db
+    container_name: attendance-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: attendance
       POSTGRES_PASSWORD: attendance
-      POSTGRES_DB: tc_attendance
+      POSTGRES_DB: attendance
     ports:
-      - "5434:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

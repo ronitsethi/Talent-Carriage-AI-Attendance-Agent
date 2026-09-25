@@ -4,7 +4,7 @@ A web app for HR. It checks one day's attendance, sends a WhatsApp message to ev
 marked **absent or half-day**, understands their reply (with AI for free-text replies), and sends
 back the right instructions automatically.
 
-This is the **demo version**. It covers the first stage of `Workflow.svg` only (first message → reply → system reply).
+This is the **demo version**. It covers the first stage of `../Workflow.svg` only (first message → reply → system reply).
 It does **not** include the 2-day follow-up, reminders, phone calls or HR escalation.
 
 ---
@@ -487,7 +487,7 @@ Times in the database are stored in UTC; the dashboard shows local time.
 
 ## 12. Messages sent to employees
 
-All texts are in `src/flow.js` (from `Workflow.svg`). The system replies can be edited freely (restart after editing).
+All texts are in `src/flow.js` (from `../Workflow.svg`). The system replies can be edited freely (restart after editing).
 The first message is the Meta template (edit it in WhatsApp Manager).
 
 | When | Message |
@@ -574,6 +574,6 @@ src/classifier.js         Reply → option 1–4 (rules, then OpenAI)
 src/flow.js               All message texts (from Workflow.svg)
 src/scheduler.js          Daily automatic check + 48h "No reply"
 public/index.html, app.js Dashboard
-Workflow.svg              Full process flowchart (this demo implements the first stage)
+../Workflow.svg              Full process flowchart (this demo implements the first stage)
 DEMO_Attendance_data_v1.0.xlsx  Sample attendance data (August 2026)
 ```

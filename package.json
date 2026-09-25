@@ -1,24 +1,48 @@
 {
-  "name": "talent-carriage-attendance-agent",
+  "name": "tc-attendance-platform",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
+  "description": "Talent Carriage AI Attendance Agent - multi-tenant platform",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "seed": "node scripts/seed.js",
-    "db:up": "docker compose up -d --wait"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:up": "docker compose up -d --wait",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:reset": "tsx src/db/reset.ts",
+    "db:seed": "tsx src/db/seed/index.ts",
+    "worker": "tsx src/lib/jobs/worker.ts",
+    "mock-hrms": "tsx tools/mock-hrms/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "dotenv": "^18.0.1",
-    "express": "^5.2.1",
-    "multer": "^2.4.0",
-    "node-cron": "^4.6.0",
-    "openai": "^7.19.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.3",
+    "jose": "^6.2.12",
+    "next": "^16.2.10",
+    "openai": "^6.49.0",
     "pg": "^8.23.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.19.43",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
   }
 }
