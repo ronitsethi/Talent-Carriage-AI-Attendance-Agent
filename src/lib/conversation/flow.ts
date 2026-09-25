@@ -253,3 +253,120 @@ export function buildOptionList(args: {
     footer: 'Reply with 1, 2, 3 or 4 if you prefer',
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Actions: offering to do the work, and asking the manager
+ * ------------------------------------------------------------------ */
+
+export type OfferChoice = 'accept' | 'self' | 'other_type';
+
+export function offerSelectionId(caseId: string, choice: OfferChoice): string {
+  return `offer:${caseId}:${choice}`;
+}
+
+export function parseOfferSelectionId(value: string | undefined | null): { caseId: string; choice: OfferChoice } | null {
+  const match = /^offer:([0-9a-f-]{36}):(accept|self|other_type)$/i.exec(value ?? '');
+  if (!match) return null;
+  return { caseId: match[1]!, choice: match[2] as OfferChoice };
+}
+
+export function leaveTypeSelectionId(caseId: string, leaveType: string): string {
+  return `ltype:${caseId}:${leaveType}`;
+}
+
+export function parseLeaveTypeSelectionId(value: string | undefined | null): { caseId: string; leaveType: string } | null {
+  const match = /^ltype:([0-9a-f-]{36}):([A-Za-z0-9_-]{1,20})$/i.exec(value ?? '');
+  if (!match) return null;
+  return { caseId: match[1]!, leaveType: match[2]! };
+}
+
+export type ApprovalChoice = 'approve' | 'reject' | 'details';
+
+export function approvalSelectionId(approvalId: string, choice: ApprovalChoice): string {
+  return `appr:${approvalId}:${choice}`;
+}
+
+export function parseApprovalSelectionId(
+  value: string | undefined | null,
+): { approvalId: string; choice: ApprovalChoice } | null {
+  const match = /^appr:([0-9a-f-]{36}):(approve|reject|details)$/i.exec(value ?? '');
+  if (!match) return null;
+  return { approvalId: match[1]!, choice: match[2] as ApprovalChoice };
+}
+
+/** What the agent offers to do, in the employee's own terms. */
+export const actionLabels = {
+  apply_leave: 'leave',
+  apply_regularisation: 'attendance regularisation',
+  apply_unpaid_leave: 'unpaid leave',
+} as const;
+
+export function offerLeaveMessage(label: string, leaveType: string, balanceDays: number): string {
+  return `You have ${balanceDays} day(s) of ${leaveType} available. Shall I apply ${leaveType} for ${label} and send it to your manager for approval?`;
+}
+
+export function offerRegularisationMessage(label: string): string {
+  return `Shall I apply attendance regularisation for ${label} and send it to your manager for approval?`;
+}
+
+export function offerDeclinedMessage(): string {
+  return 'No problem - please apply it yourself in the HRMS and ask your manager to approve it.';
+}
+
+export function actionSubmittedMessage(what: string, label: string, managerName: string | null): string {
+  const who = managerName ? ` to ${managerName}` : ' to your manager';
+  return `Done. Your ${what} for ${label} has been submitted and sent${who} for approval.`;
+}
+
+export function actionApprovedMessage(what: string, label: string, reference: string | null): string {
+  const ref = reference ? ` Reference: ${reference}.` : '';
+  return `Your ${what} for ${label} has been approved.${ref}`;
+}
+
+export function actionRejectedMessage(what: string, label: string, note?: string | null): string {
+  const because = note ? ` Reason: ${note}.` : '';
+  return `Your ${what} for ${label} was not approved.${because} Please speak to your manager or HR.`;
+}
+
+export function actionFailedMessage(what: string, label: string): string {
+  return `I could not complete your ${what} for ${label} automatically. HR has been notified and will sort it out.`;
+}
+
+export function preCheckFailedMessage(reason: string): string {
+  return `I could not do that for you: ${reason}. Please follow the HR process and ask your manager to approve it.`;
+}
+
+export function managerDecisionAck(decision: 'approved' | 'rejected', employeeName: string, label: string): string {
+  return decision === 'approved'
+    ? `Approved. ${employeeName}'s request for ${label} has been recorded.`
+    : `Recorded as not approved. ${employeeName} has been informed.`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Day-2 follow-up, which applies only to dates the employee answered
+ * ------------------------------------------------------------------ */
+
+export type FollowUpChoice = 'done' | 'not_done' | 'help';
+
+export function followUpSelectionId(caseId: string, choice: FollowUpChoice): string {
+  return `fu:${caseId}:${choice}`;
+}
+
+export function parseFollowUpSelectionId(
+  value: string | undefined | null,
+): { caseId: string; choice: FollowUpChoice } | null {
+  const match = /^fu:([0-9a-f-]{36}):(done|not_done|help)$/i.exec(value ?? '');
+  if (!match) return null;
+  return { caseId: match[1]!, choice: match[2] as FollowUpChoice };
+}
+
+export function followUpAcknowledgement(choice: FollowUpChoice, label: string): string {
+  switch (choice) {
+    case 'done':
+      return `Thank you. I will confirm ${label} against the HRMS record and close it.`;
+    case 'not_done':
+      return `Thank you for telling me. Please complete it for ${label} as soon as you can - HR has been informed.`;
+    case 'help':
+      return 'I have asked HR to contact you and help with this.';
+  }
+}

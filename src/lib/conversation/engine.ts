@@ -26,12 +26,43 @@ import {
   optOutConfirmation,
   systemReply,
   parseSelectionId,
+  parseApprovalSelectionId,
+  parseFollowUpSelectionId,
+  parseOfferSelectionId,
   type OptionNumber,
 } from './flow';
 
 export type TenantSettings = typeof tenantSettings.$inferSelect;
 export type CaseRow = typeof cases.$inferSelect;
 export type EmployeeRow = typeof employees.$inferSelect;
+
+/**
+ * The engine never imports the action engine: actions plug in here instead.
+ * That keeps the conversation layer independent, and lets a tenant run with
+ * actions switched off simply by leaving the hooks unset.
+ */
+export type EngineHooks = {
+  /** Returns true when an offer was made, so the backlog chain waits its turn. */
+  onAnswered?(ctx: EngineContext, caseRow: CaseRow, employee: EmployeeRow, option: OptionNumber): Promise<boolean>;
+  onOfferResponse?(
+    ctx: EngineContext,
+    caseRow: CaseRow,
+    employee: EmployeeRow,
+    choice: 'accept' | 'self' | 'other_type',
+  ): Promise<void>;
+  onApprovalDecision?(
+    ctx: EngineContext,
+    approvalId: string,
+    choice: 'approve' | 'reject' | 'details',
+    approver: EmployeeRow,
+  ): Promise<void>;
+  onFollowUpResponse?(
+    ctx: EngineContext,
+    caseRow: CaseRow,
+    employee: EmployeeRow,
+    choice: 'done' | 'not_done' | 'help',
+  ): Promise<void>;
+};
 
 export type EngineContext = {
   tx: Db;
@@ -40,6 +71,7 @@ export type EngineContext = {
   channel: MessageChannel;
   companyName: string;
   template: { name: string; language: string; buttonCount: number };
+  hooks?: EngineHooks;
   now?: () => Date;
 };
 
@@ -236,9 +268,33 @@ export async function askCase(
   return { sent: true as const, ...sent, viaTemplate: !useSession };
 }
 
-async function sendText(ctx: EngineContext, employee: EmployeeRow, body: string, caseId?: string | null) {
+/** Plain text inside the 24-hour window. */
+export async function sendPlainText(
+  ctx: EngineContext,
+  employee: EmployeeRow,
+  body: string,
+  caseId?: string | null,
+) {
   return deliver(ctx, employee, { kind: 'text', to: employee.mobileE164!, body }, { caseId, kind: 'text', body });
 }
+
+/** Up to three reply buttons: offers, approvals and the day-2 follow-up. */
+export async function sendButtons(
+  ctx: EngineContext,
+  employee: EmployeeRow,
+  body: string,
+  buttons: { id: string; title: string }[],
+  caseId?: string | null,
+) {
+  return deliver(
+    ctx,
+    employee,
+    { kind: 'buttons', to: employee.mobileE164!, body, buttons },
+    { caseId, kind: 'interactive', body },
+  );
+}
+
+const sendText = sendPlainText;
 
 /* ------------------------------------------------------------------ *
  * The backlog chain
@@ -368,6 +424,53 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     .set({ lastInboundAt: inbound.receivedAt, windowExpiresAt: expires, updatedAt: now(ctx) })
     .where(eq(conversations.id, conversation.id));
 
+  // A manager approving, or an employee answering an offer: both name their own
+  // record in the payload, so they are routed before any case matching happens.
+  const approval = parseApprovalSelectionId(inbound.selectionId);
+  if (approval && ctx.hooks?.onApprovalDecision) {
+    await ctx.hooks.onApprovalDecision(ctx, approval.approvalId, approval.choice, employee);
+    return {
+      handled: true,
+      caseId: null,
+      classification: { intent: 'other', option: null, confidence: 1, source: 'rules' },
+      action: 'logged',
+    };
+  }
+
+  const followUp = parseFollowUpSelectionId(inbound.selectionId);
+  if (followUp && ctx.hooks?.onFollowUpResponse) {
+    const followUpCase = await ctx.tx.query.cases.findFirst({
+      where: and(eq(cases.id, followUp.caseId), eq(cases.employeeId, employee.id)),
+    });
+    if (followUpCase) {
+      await ctx.tx.update(messages).set({ caseId: followUpCase.id }).where(eq(messages.id, inboundRow.id));
+      await ctx.hooks.onFollowUpResponse(ctx, followUpCase, employee, followUp.choice);
+      return {
+        handled: true,
+        caseId: followUpCase.id,
+        classification: { intent: 'other', option: null, confidence: 1, source: 'rules' },
+        action: 'answered',
+      };
+    }
+  }
+
+  const offer = parseOfferSelectionId(inbound.selectionId);
+  if (offer && ctx.hooks?.onOfferResponse) {
+    const offerCase = await ctx.tx.query.cases.findFirst({
+      where: and(eq(cases.id, offer.caseId), eq(cases.employeeId, employee.id)),
+    });
+    if (offerCase) {
+      await ctx.tx.update(messages).set({ caseId: offerCase.id }).where(eq(messages.id, inboundRow.id));
+      await ctx.hooks.onOfferResponse(ctx, offerCase, employee, offer.choice);
+      return {
+        handled: true,
+        caseId: offerCase.id,
+        classification: { intent: 'other', option: null, confidence: 1, source: 'rules' },
+        action: 'answered',
+      };
+    }
+  }
+
   const target = await resolveCase(ctx, employee.id, inbound, conversation.activeCaseId);
   if (target.caseRow) {
     await ctx.tx.update(messages).set({ caseId: target.caseRow.id }).where(eq(messages.id, inboundRow.id));
@@ -381,8 +484,8 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
       confidence: 1,
       source: 'rules',
     };
-    await applyAnswer(ctx, target.caseRow, employee, target.option);
-    await chainNextPending(ctx, employee, target.caseRow.id);
+    const outcome = await applyAnswer(ctx, target.caseRow, employee, target.option);
+    if (!outcome.offered) await chainNextPending(ctx, employee, target.caseRow.id);
     return { handled: true, caseId: target.caseRow.id, classification, action: 'answered' };
   }
 
@@ -431,8 +534,8 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
   }
 
   if (classification.option) {
-    await applyAnswer(ctx, target.caseRow, employee, classification.option, classification);
-    await chainNextPending(ctx, employee, target.caseRow.id);
+    const outcome = await applyAnswer(ctx, target.caseRow, employee, classification.option, classification);
+    if (!outcome.offered) await chainNextPending(ctx, employee, target.caseRow.id);
     return { handled: true, caseId: target.caseRow.id, classification, action: 'answered' };
   }
 
@@ -563,6 +666,14 @@ export async function applyAnswer(
     .where(eq(cases.id, caseRow.id));
 
   await sendText(ctx, employee, systemReply(option, label), caseRow.id);
+
+  // With actions enabled, the agent now offers to do the work. While that offer
+  // is open the backlog stays quiet, so the two conversations never overlap.
+  if (ctx.hooks?.onAnswered) {
+    const updated = await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseRow.id) });
+    return { offered: await ctx.hooks.onAnswered(ctx, updated ?? caseRow, employee, option) };
+  }
+  return { offered: false };
 }
 
 async function markCasesNeedHr(ctx: EngineContext, employeeId: string, reason: string) {
