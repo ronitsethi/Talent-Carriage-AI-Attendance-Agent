@@ -6,6 +6,7 @@ import { capabilities, env } from '@/lib/env';
 import { models } from '@/lib/models/gateway';
 import { caseDateLabel, meaningLabel, statusDisplay } from '@/lib/display';
 import { contactSelected, resetAllCases, runFollowUps, setChannelFromRow, setModeFromRow } from '@/app/actions';
+import { SelectAll } from './select-all';
 
 export default async function DashboardPage({
   searchParams,
@@ -128,7 +129,9 @@ export default async function DashboardPage({
           <table className="data">
             <thead>
               <tr>
-                <th style={{ width: 34 }} />
+                <th style={{ width: 34 }}>
+                  <SelectAll initiallyChecked={notYetContacted.length === flagged.length && flagged.length > 0} />
+                </th>
                 <th>Employee</th>
                 <th>Date</th>
                 <th>Attendance</th>
