@@ -6,7 +6,7 @@ import { capabilities, env } from '@/lib/env';
 import { models } from '@/lib/models/gateway';
 import { caseDateLabel, meaningLabel, statusDisplay } from '@/lib/display';
 import { contactSelected, resetAllCases, runFollowUps, setChannelFromRow, setModeFromRow } from '@/app/actions';
-import { SelectAll } from './select-all';
+import { RowCheckbox, SelectAll, SelectionProvider } from './selection';
 
 export default async function DashboardPage({
   searchParams,
@@ -33,6 +33,13 @@ export default async function DashboardPage({
 
   const flagged = await flaggedInRange(tenantId, rangeFrom, rangeTo);
   const notYetContacted = flagged.filter((row) => !row.caseId);
+  // Anyone not yet contacted starts ticked. The signature changes whenever the
+  // table does, which resets the selection to those defaults.
+  const selectionRows = flagged.map((row) => ({
+    value: `${row.employeeId}|${row.attDate}`,
+    selected: !row.caseId,
+  }));
+  const selectionKey = selectionRows.map((row) => `${row.value}:${row.selected ? 1 : 0}`).join(',');
   const caps = capabilities();
   const providers = models.status().filter((p) => p.available && p.provider !== 'stub');
 
@@ -118,6 +125,7 @@ export default async function DashboardPage({
         valid HTML, so each button names its own action and its own value.
       */}
       <form action={contactSelected}>
+        <SelectionProvider key={selectionKey} rows={selectionRows}>
         <div className="section-head" style={{ marginTop: 22 }}>
           <h2>{rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} → ${rangeTo}`}</h2>
           <button className="btn primary" type="submit">
@@ -130,10 +138,7 @@ export default async function DashboardPage({
             <thead>
               <tr>
                 <th style={{ width: 34 }}>
-                  <SelectAll
-                    initiallyChecked={notYetContacted.length === flagged.length && flagged.length > 0}
-                    signature={`${rangeFrom}|${rangeTo}|${flagged.length}|${notYetContacted.length}`}
-                  />
+                  <SelectAll />
                 </th>
                 <th>Employee</th>
                 <th>Date</th>
@@ -154,7 +159,7 @@ export default async function DashboardPage({
                       <td>
                         {/* Already-contacted dates start unticked, so pressing
                             Contact never repeats a message or a call. */}
-                        <input type="checkbox" name="target" value={key} defaultChecked={!row.caseId} />
+                        <RowCheckbox value={key} />
                       </td>
                       <td>
                         <div className="employee">{row.employeeName}</div>
@@ -227,6 +232,7 @@ export default async function DashboardPage({
             </tbody>
           </table>
         </div>
+        </SelectionProvider>
       </form>
 
       <div className="layout" style={{ marginTop: 22 }}>
