@@ -5,7 +5,9 @@ import { withPlatformScope } from '@/db';
 import { attendanceDays, employees, tenants, tenantSettings } from '@/db/schema';
 import { FakeChannel } from '@/lib/channels/fake';
 import type { InboundMessage } from '@/lib/channels/types';
-import type { EngineContext, TenantSettings } from '@/lib/conversation/engine';
+import type { TenantSettings } from '@/lib/conversation/engine';
+import { FakeVoiceProvider } from '@/lib/voice/fake';
+import type { FullContext } from '@/lib/runtime';
 import type { Meaning } from '@/lib/mapping/meanings';
 
 export type Scenario = {
@@ -13,7 +15,9 @@ export type Scenario = {
   employeeId: string;
   mobile: string;
   channel: FakeChannel;
-  context: (tx: Db) => EngineContext;
+  /** The fake phone line, for scenarios that put an employee on Call. */
+  voice: FakeVoiceProvider;
+  context: (tx: Db) => FullContext;
   cleanup: () => Promise<void>;
 };
 
@@ -23,6 +27,7 @@ export async function makeScenario(
   employeeOverrides: Partial<typeof employees.$inferInsert> = {},
 ): Promise<Scenario> {
   const channel = new FakeChannel();
+  const voice = new FakeVoiceProvider();
   const slug = `t-${randomUUID().slice(0, 8)}`;
   const mobile = `9190000${String(Math.floor(Math.random() * 90000) + 10000)}`;
 
@@ -58,11 +63,15 @@ export async function makeScenario(
     employeeId,
     mobile,
     channel,
+    voice,
     context: (tx: Db) => ({
       tx,
       tenantId,
       settings,
       channel,
+      voice,
+      baseUrl: 'http://localhost:3000',
+      hrms: null,
       companyName: 'Test Co',
       template: { name: 'attendance_absent_check', language: 'en', buttonCount: 4 },
     }),

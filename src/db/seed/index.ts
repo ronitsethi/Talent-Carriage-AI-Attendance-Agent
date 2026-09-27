@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { closeDb, withPlatformScope, withTenant, type Db } from '@/db';
 import {
   codeMappings,
+  employees,
   mappingProfiles,
   tenantChannels,
   tenants,
@@ -15,7 +16,7 @@ import { importAttendanceFile } from '@/lib/mapping/import';
 import { presetByKey, type MappingPreset } from '@/lib/mapping/presets';
 import { runDailyCheck } from '@/lib/detection/run';
 import { buildContext } from '@/lib/runtime';
-import { buildNumericWorkbook, buildRowPerDayWorkbook, generatePeople } from './generate';
+import { buildAbsentMonthWorkbook, buildNumericWorkbook, buildRowPerDayWorkbook, generatePeople } from './generate';
 
 /**
  * Three customers whose attendance data looks nothing alike, so the mapping
@@ -33,12 +34,40 @@ type SeedTenant = {
   name: string;
   preset: string;
   settings?: Partial<typeof tenantSettings.$inferInsert>;
+  /** Applied to every employee this seed imports. */
+  employeeDefaults?: { preferredChannel?: string; operatingMode?: string };
   file: () => Buffer;
   /** Dates to run the daily check for, so the dashboard has something in it. */
   runDates: string[];
 };
 
 const TENANTS: SeedTenant[] = [
+  {
+    // The company used for live testing: one employee, absent all September,
+    // set to Call so the phone flow can be demonstrated end to end.
+    slug: 'demo-industries',
+    name: 'Demo Industries',
+    preset: 'single_code_row_per_day',
+    settings: {
+      defaultChannel: 'voice',
+      callerId: '+912269871077',
+      sendingEnabled: true,
+      operatingMode: 'manual',
+      contactLagDays: 1,
+    },
+    employeeDefaults: { preferredChannel: 'voice', operatingMode: 'manual' },
+    file: () =>
+      buildAbsentMonthWorkbook({
+        code: 'DI-1001',
+        firstName: 'Aryan',
+        lastName: 'Jain',
+        mobile: '9718290560',
+        department: 'Operations',
+        month: '2026-09',
+        days: 30,
+      }),
+    runDates: ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25'],
+  },
   {
     slug: 'dpod-lifestyle',
     name: 'DPOD Lifestyle',
@@ -114,8 +143,12 @@ async function ensureTenant(seed: SeedTenant) {
   await withTenant(tenantId, async (tx) => {
     const result = await importAttendanceFile(tx, tenantId, seed.file(), {
       source: 'seed',
-      filename: `${seed.slug}-august.xlsx`,
+      filename: `${seed.slug}.xlsx`,
     });
+
+    if (seed.employeeDefaults) {
+      await tx.update(employees).set(seed.employeeDefaults).where(eq(employees.tenantId, tenantId));
+    }
     console.log(
       `- ${seed.name}: ${result.report.employeesCreated} employees, ${result.report.daysImported} days` +
         `${Object.keys(result.report.unmappedCodes).length ? `, unmapped: ${Object.keys(result.report.unmappedCodes).join(', ')}` : ''}`,

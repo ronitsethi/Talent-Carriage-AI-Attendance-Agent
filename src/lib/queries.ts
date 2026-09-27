@@ -4,6 +4,7 @@ import {
   actions,
   approvals,
   attendanceDays,
+  calls,
   cases,
   codeMappings,
   conversations,
@@ -20,6 +21,10 @@ import {
 
 export type CaseListItem = {
   id: string;
+  employeeId: string;
+  channel: string;
+  preferredChannel: string;
+  operatingMode: string | null;
   attDate: string;
   meaning: string;
   rawStatus: string | null;
@@ -62,6 +67,10 @@ export async function listCases(
     return tx
       .select({
         id: cases.id,
+        employeeId: cases.employeeId,
+        channel: cases.channel,
+        preferredChannel: employees.preferredChannel,
+        operatingMode: employees.operatingMode,
         attDate: cases.attDate,
         meaning: cases.meaning,
         rawStatus: cases.rawStatus,
@@ -202,6 +211,13 @@ export async function caseDetail(tenantId: string, caseId: string) {
           .orderBy(desc(approvals.requestedAt))
       : [];
 
+    const caseCalls = await tx
+      .select()
+      .from(calls)
+      .where(eq(calls.employeeId, row.employee.id))
+      .orderBy(desc(calls.id))
+      .limit(10);
+
     const manager = row.employee.managerEmployeeId
       ? await tx.query.employees.findFirst({ where: eq(employees.id, row.employee.managerEmployeeId) })
       : null;
@@ -218,7 +234,7 @@ export async function caseDetail(tenantId: string, caseId: string) {
       )
       .orderBy(asc(cases.attDate));
 
-    return { ...row, transcript, actions: caseActions, approvals: caseApprovals, manager, otherPending };
+    return { ...row, transcript, calls: caseCalls, actions: caseActions, approvals: caseApprovals, manager, otherPending };
   });
 }
 

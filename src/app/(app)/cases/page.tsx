@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
 import { availableDates, listCases } from '@/lib/queries';
 import { actionLabel, caseDateLabel, formatTime, replyLabel, statusDisplay } from '@/lib/display';
+import { contactNow, setEmployeeChannel, setEmployeeMode } from '@/app/actions';
 
 const FILTERS = [
   { key: 'open', label: 'Open' },
@@ -94,7 +95,8 @@ export default async function CasesPage({
               <th>Absent date</th>
               <th>Status</th>
               <th>Reply → action</th>
-              <th>Last activity</th>
+              <th>Contact by</th>
+              <th>Mode</th>
               <th />
             </tr>
           </thead>
@@ -132,18 +134,61 @@ export default async function CasesPage({
                         <span className="sub">—</span>
                       )}
                     </td>
-                    <td className="nowrap sub">{formatTime(row.answeredAt ?? row.askedAt)}</td>
                     <td className="nowrap">
-                      <Link className="btn small" href={`/cases/${row.id}`}>
-                        Open
-                      </Link>
+                      <div className="switch-group">
+                        {(['whatsapp', 'voice'] as const).map((option) => (
+                          <form key={option} action={setEmployeeChannel}>
+                            <input type="hidden" name="employeeId" value={row.employeeId} />
+                            <input type="hidden" name="channel" value={option} />
+                            <button
+                              type="submit"
+                              className={`switch-option ${row.preferredChannel === option ? 'on' : ''}`}
+                              title={`Contact ${row.employeeName} by ${option === 'voice' ? 'call' : 'WhatsApp'}`}
+                            >
+                              {option === 'voice' ? 'Call' : 'WhatsApp'}
+                            </button>
+                          </form>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="nowrap">
+                      <div className="switch-group">
+                        {(['manual', 'automatic'] as const).map((option) => (
+                          <form key={option} action={setEmployeeMode}>
+                            <input type="hidden" name="employeeId" value={row.employeeId} />
+                            <input type="hidden" name="mode" value={option} />
+                            <button
+                              type="submit"
+                              className={`switch-option ${(row.operatingMode ?? 'manual') === option ? 'on' : ''}`}
+                            >
+                              {option === 'automatic' ? 'Auto' : 'Manual'}
+                            </button>
+                          </form>
+                        ))}
+                      </div>
+                      <div className="sub">{formatTime(row.answeredAt ?? row.askedAt)}</div>
+                    </td>
+                    <td className="nowrap">
+                      <div className="btn-row">
+                        {['queued', 'failed'].includes(row.status) ? (
+                          <form action={contactNow}>
+                            <input type="hidden" name="caseId" value={row.id} />
+                            <button className="btn small primary" type="submit">
+                              {row.preferredChannel === 'voice' ? 'Call now' : 'Send now'}
+                            </button>
+                          </form>
+                        ) : null}
+                        <Link className="btn small" href={`/cases/${row.id}`}>
+                          Open
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 );
               })
             ) : (
               <tr>
-                <td className="empty" colSpan={6}>
+                <td className="empty" colSpan={8}>
                   No cases match that filter.
                 </td>
               </tr>

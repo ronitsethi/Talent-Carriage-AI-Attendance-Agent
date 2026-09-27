@@ -1,5 +1,5 @@
 import { boolean, date, index, integer, jsonb, pgTable, smallint, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import { attendanceMeaning, caseStatus, replyIntent } from './enums';
+import { attendanceMeaning, caseStatus, channel, replyIntent } from './enums';
 import { employees } from './employees';
 import { imports } from './mapping';
 import { tenants } from './tenants';
@@ -27,6 +27,10 @@ export const cases = pgTable(
     meaning: attendanceMeaning('meaning').notNull(),
     rawStatus: text('raw_status'),
     status: caseStatus('status').notNull().default('queued'),
+
+    /** The channel this case was asked on, and the one its follow-up will use. */
+    channel: channel('channel').notNull().default('whatsapp'),
+    followUpChannel: channel('follow_up_channel'),
 
     /** Detected, and whether it has been asked yet (cap may hold it back). */
     detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),

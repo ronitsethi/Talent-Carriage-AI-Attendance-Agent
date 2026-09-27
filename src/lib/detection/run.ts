@@ -3,9 +3,12 @@ import type { Db } from '@/db';
 import { attendanceDays, cases, detectionRuns, employees } from '@/db/schema';
 import { CHASED_BY_DEFAULT, OPTIONALLY_CHASED } from '@/db/schema/enums';
 import { explainsAbsence, shouldChase, type Meaning } from '@/lib/mapping/meanings';
-import { askCase, capAllows, outstandingCount, type EngineContext, type TenantSettings } from '@/lib/conversation/engine';
+import { capAllows, outstandingCount, type EngineContext, type TenantSettings } from '@/lib/conversation/engine';
+import { contactCase } from '@/lib/contact';
+import type { FullContext } from '@/lib/runtime';
 
 export type Gap = {
+  preferredChannel: string;
   employeeId: string;
   empCode: string;
   fullName: string;
@@ -21,6 +24,7 @@ export type Gap = {
 
 export type SkipReason =
   | 'not_working_day'
+  | 'manual_employee'
   | 'excluded_department'
   | 'excluded_employee'
   | 'new_joiner'
@@ -48,6 +52,7 @@ export async function findGaps(
   tenantId: string,
   date: string,
   settings: TenantSettings,
+  opts?: { automaticOnly?: boolean },
 ): Promise<{ gaps: Gap[]; skipped: Record<string, number> }> {
   const meanings = chasedMeanings(settings);
   const rows = await tx
@@ -61,6 +66,8 @@ export async function findGaps(
       dateOfJoining: employees.dateOfJoining,
       exitDate: employees.exitDate,
       optOut: employees.whatsappOptOut,
+      operatingMode: employees.operatingMode,
+      preferredChannel: employees.preferredChannel,
       attDate: attendanceDays.attDate,
       meaning: attendanceDays.meaning,
       rawStatus: attendanceDays.rawStatus,
@@ -94,6 +101,11 @@ export async function findGaps(
       skip('not_working_day');
       continue;
     }
+    // An employee set to manual is only ever contacted when HR runs a check.
+    if (opts?.automaticOnly && (row.operatingMode ?? settings.operatingMode) !== 'automatic') {
+      skip('manual_employee');
+      continue;
+    }
     if (!shouldChase(row.meaning as Meaning, { tenantChaseMeanings: settings.chaseMeanings ?? [] })) {
       continue;
     }
@@ -121,6 +133,7 @@ export async function findGaps(
     if (row.optOut) skip('opted_out');
 
     gaps.push({
+      preferredChannel: row.preferredChannel,
       employeeId: row.employeeId,
       empCode: row.empCode,
       fullName: row.fullName,
@@ -168,8 +181,23 @@ export type DailyCheckResult = {
  * default of 0 every gap is asked as it is found, so a long absence becomes a
  * chain of dated questions that simply wait for the employee.
  */
-export async function runDailyCheck(ctx: EngineContext, opts: DailyCheckOptions): Promise<DailyCheckResult> {
-  const { gaps, skipped } = await findGaps(ctx.tx, ctx.tenantId, opts.date, ctx.settings);
+/**
+ * The date an automatic run should look at.
+ *
+ * Contact happens the day after the absence: attendance for a day is not final
+ * until the day has ended, so a run on the 22nd chases the 21st.
+ */
+export function contactDateFor(settings: TenantSettings, at = new Date()): string {
+  const local = new Intl.DateTimeFormat('en-CA', { timeZone: settings.timezone }).format(at);
+  const day = new Date(`${local}T00:00:00Z`);
+  day.setUTCDate(day.getUTCDate() - settings.contactLagDays);
+  return day.toISOString().slice(0, 10);
+}
+
+export async function runDailyCheck(ctx: FullContext, opts: DailyCheckOptions): Promise<DailyCheckResult> {
+  const { gaps, skipped } = await findGaps(ctx.tx, ctx.tenantId, opts.date, ctx.settings, {
+    automaticOnly: opts.trigger === 'schedule',
+  });
 
   const result: DailyCheckResult = {
     runId: null,
@@ -234,11 +262,11 @@ export async function runDailyCheck(ctx: EngineContext, opts: DailyCheckOptions)
     const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, gap.employeeId) });
     if (!employee) continue;
 
-    const sent = await askCase(ctx, caseRow, employee);
-    if (sent.sent) result.messagesSent++;
+    const contacted = await contactCase(ctx, caseRow, employee);
+    if (contacted.contacted) result.messagesSent++;
     else {
       result.casesQueued++;
-      result.blocked.push({ employee: gap.fullName, reason: sent.reason });
+      result.blocked.push({ employee: gap.fullName, reason: contacted.reason });
     }
   }
 

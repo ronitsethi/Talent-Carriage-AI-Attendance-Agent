@@ -44,6 +44,8 @@ const schema = z.object({
   PLIVO_AUTH_ID: z.string().optional(),
   PLIVO_AUTH_TOKEN: z.string().optional(),
   PLIVO_FROM_NUMBER: z.string().optional(),
+  /** Where calls to the Plivo number are forwarded, e.g. for Meta's verification call. */
+  PLIVO_FORWARD_NUMBER: z.string().optional(),
 
   // HRMS
   HRMS_CONNECTOR: z.enum(['mock', 'file', 'rest', 'none']).default('mock'),

@@ -86,6 +86,18 @@ export const tenantSettings = pgTable('tenant_settings', {
   approvalTimeoutHours: integer('approval_timeout_hours').notNull().default(24),
   approvalEscalatesTo: text('approval_escalates_to').notNull().default('hr'), // hr | skip_level | none
 
+  /** Channel used for employees with no explicit preference. */
+  defaultChannel: text('default_channel').notNull().default('whatsapp'),
+  /**
+   * How many days after the absence the agent makes contact. 1 means an absence
+   * on the 21st is chased on the 22nd - attendance for a day is not final until
+   * the day has ended, and some customers' data lands a day later still.
+   */
+  contactLagDays: integer('contact_lag_days').notNull().default(1),
+  /** Stop a single call running forever; 0 means keep going until cleared. */
+  maxDatesPerCall: integer('max_dates_per_call').notNull().default(0),
+  /** The number calls are placed from, in full international form. */
+  callerId: text('caller_id'),
   defaultLanguage: text('default_language').notNull().default('en'),
   languages: jsonb('languages').$type<string[]>().notNull().default(['en']),
 

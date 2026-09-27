@@ -636,14 +636,16 @@ async function resolveCase(
   return { caseRow: oldest ?? null, option: null };
 }
 
-/** Records the answer, sends the matching guidance, and starts the escalation clocks. */
-export async function applyAnswer(
+/**
+ * Records the answer and starts the escalation clocks. Delivery is the caller's
+ * job, because the guidance is spoken on a call and written on WhatsApp.
+ */
+export async function recordAnswer(
   ctx: EngineContext,
   caseRow: CaseRow,
-  employee: EmployeeRow,
   option: OptionNumber,
   classification?: Classification,
-) {
+): Promise<{ label: string; guidance: string }> {
   const at = now(ctx);
   const label = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
   const followUpDue = new Date(at.getTime() + ctx.settings.followUpAfterDays * 86_400_000);
@@ -665,7 +667,19 @@ export async function applyAnswer(
     })
     .where(eq(cases.id, caseRow.id));
 
-  await sendText(ctx, employee, systemReply(option, label), caseRow.id);
+  return { label, guidance: systemReply(option, label) };
+}
+
+/** Records the answer and sends the guidance on WhatsApp. */
+export async function applyAnswer(
+  ctx: EngineContext,
+  caseRow: CaseRow,
+  employee: EmployeeRow,
+  option: OptionNumber,
+  classification?: Classification,
+) {
+  const { guidance } = await recordAnswer(ctx, caseRow, option, classification);
+  await sendText(ctx, employee, guidance, caseRow.id);
 
   // With actions enabled, the agent now offers to do the work. While that offer
   // is open the backlog stays quiet, so the two conversations never overlap.

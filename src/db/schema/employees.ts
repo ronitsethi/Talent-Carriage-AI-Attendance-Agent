@@ -46,6 +46,20 @@ export const employees = pgTable(
     employmentStatus: text('employment_status'),
 
     language: text('language'),
+    /**
+     * How this person is contacted: 'whatsapp' or 'voice'. Set per employee in
+     * the portal, and copied onto each case so a later change never rewrites
+     * the history of how someone was actually reached.
+     */
+    preferredChannel: text('preferred_channel').notNull().default('whatsapp'),
+    /** Channel for the day-2 follow-up; falls back to preferredChannel. */
+    followUpChannel: text('follow_up_channel'),
+    /**
+     * 'manual'    - this person is only contacted when HR runs a check
+     * 'automatic' - the daily run contacts them on its own
+     * null        - follow the customer's default
+     */
+    operatingMode: text('operating_mode'),
     whatsappOptOut: boolean('whatsapp_opt_out').notNull().default(false),
     callOptOut: boolean('call_opt_out').notNull().default(false),
     consentAt: timestamp('consent_at', { withTimezone: true }),

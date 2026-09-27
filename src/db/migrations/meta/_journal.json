@@ -8,6 +8,27 @@
       "when": 1790319526636,
       "tag": "0000_overconfident_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790440459496,
+      "tag": "0001_add_channel_choice",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790483024608,
+      "tag": "0002_employee_mode_and_lag",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790483181269,
+      "tag": "0003_caller_id",
+      "breakpoints": true
     }
   ]
 }

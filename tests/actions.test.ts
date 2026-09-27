@@ -2,12 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
 import { actions, approvals, cases, employees } from '@/db/schema';
-import {
-  handleApprovalDecision,
-  handleOfferResponse,
-  offerAction,
-  type ActionContext,
-} from '@/lib/actions/engine';
+import { handleApprovalDecision, handleOfferResponse, offerAction, type ActionContext } from '@/lib/actions/engine';
+import type { FullContext } from '@/lib/runtime';
 import { handleInbound } from '@/lib/conversation/engine';
 import { approvalSelectionId, offerSelectionId, selectionId } from '@/lib/conversation/flow';
 import { MockHrms } from '@/lib/hrms/mock';
@@ -59,7 +55,7 @@ async function setup(opts: { capabilities?: HrmsCapability[]; balances?: Record<
   hrms.seed({ employeeCode: 'E-1', balances: opts.balances ?? { CL: 6, SL: 4, LWP: 999 } });
   hrms.seed({ employeeCode: 'M-1' });
 
-  const context = (tx: Db): ActionContext => ({
+  const context = (tx: Db): FullContext => ({
     ...scenario.context(tx),
     hrms,
     hooks: {
@@ -270,7 +266,7 @@ describe('the HRMS refusing', () => {
       await tx.update(employees).set({ managerEmployeeId: manager!.id }).where(eq(employees.id, scenario.employeeId));
     });
 
-    const context = (tx: Db): ActionContext => ({
+    const context = (tx: Db): FullContext => ({
       ...scenario.context(tx),
       hrms,
       hooks: {

@@ -35,7 +35,8 @@ async function setupFourAbsences(settings = {}) {
       DATES.map((date) => ({ date, meaning: 'absent_full' as const, raw: 'A|A' })),
     );
     for (const date of DATES) {
-      await runDailyCheck(scenario.context(tx), { date, trigger: 'schedule' });
+      // Manual is the default mode, so these runs are the HR-triggered kind.
+      await runDailyCheck(scenario.context(tx), { date, trigger: 'manual' });
     }
   });
 }
@@ -60,7 +61,7 @@ describe('one question per absent date, and no reminders', () => {
     await withTenant(scenario.tenantId, async (tx) => {
       // Re-running the check, as the scheduler would each day, must add nothing.
       for (const date of DATES) {
-        const result = await runDailyCheck(scenario.context(tx), { date, trigger: 'schedule' });
+        const result = await runDailyCheck(scenario.context(tx), { date, trigger: 'manual' });
         expect(result.casesCreated).toBe(0);
         expect(result.messagesSent).toBe(0);
       }
@@ -293,7 +294,7 @@ describe('guards before anything is sent', () => {
         { date: '2026-08-22', meaning: 'leave_approved', raw: 'CL' },
       ]);
       for (const date of ['2026-08-15', '2026-08-16', '2026-08-21', '2026-08-22']) {
-        const result = await runDailyCheck(scenario.context(tx), { date, trigger: 'schedule' });
+        const result = await runDailyCheck(scenario.context(tx), { date, trigger: 'manual' });
         expect(result.casesCreated, `${date} should not create a case`).toBe(0);
       }
     });

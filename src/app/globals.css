@@ -123,6 +123,15 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .pill.call { background: var(--danger-bg); color: var(--danger-text); }
 .pill.idle { background: #eef2f4; color: #5a6b75; }
 
+/* ---------- two-state switches (channel, mode) ---------- */
+.switch-group { display: inline-flex; border: 1.5px solid var(--border); border-radius: 8px; overflow: hidden; }
+.switch-group form { display: inline-flex; }
+.switch-option { border: none; background: var(--surface); color: var(--faint); padding: 5px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.switch-option + .switch-option { border-left: 1px solid var(--border-soft); }
+.switch-group form + form .switch-option { border-left: 1px solid var(--border-soft); }
+.switch-option:hover { color: var(--accent); }
+.switch-option.on { background: var(--accent); color: #fff; }
+
 /* ---------- chat ---------- */
 .chat { display: flex; flex-direction: column-reverse; gap: 8px; max-height: 460px; overflow: auto; background: #efeae2; border-radius: 12px; padding: 12px; }
 .bubble { max-width: 86%; padding: 8px 11px; border-radius: 10px; font-size: 13.5px; white-space: pre-line; box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08); }

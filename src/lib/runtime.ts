@@ -8,6 +8,10 @@ import { handleApprovalDecision, handleOfferResponse, offerAction, type ActionCo
 import { handleFollowUpResponse } from '@/lib/conversation/followup';
 import { MockHrms } from '@/lib/hrms/mock';
 import type { HrmsConnector } from '@/lib/hrms/types';
+import { FakeVoiceProvider } from '@/lib/voice/fake';
+import { PlivoVoiceProvider } from '@/lib/voice/plivo';
+import type { VoiceProvider } from '@/lib/voice/types';
+import type { VoiceContext } from '@/lib/voice/session';
 import { env } from '@/lib/env';
 
 /**
@@ -17,6 +21,7 @@ import { env } from '@/lib/env';
  */
 
 const fakeChannels = new Map<string, FakeChannel>();
+const fakeVoice = new Map<string, FakeVoiceProvider>();
 const mockHrmsByTenant = new Map<string, MockHrms>();
 
 /** The fake channel for a tenant, so the simulator screen can read its history. */
@@ -56,6 +61,24 @@ async function resolveChannel(tx: Db, tenantId: string): Promise<MessageChannel>
   return fakeChannelFor(tenantId);
 }
 
+/** The fake phone line for a tenant, so tests and the portal can inspect it. */
+export function fakeVoiceFor(tenantId: string): FakeVoiceProvider {
+  let provider = fakeVoice.get(tenantId);
+  if (!provider) {
+    provider = new FakeVoiceProvider();
+    fakeVoice.set(tenantId, provider);
+  }
+  return provider;
+}
+
+function resolveVoice(tenantId: string): VoiceProvider {
+  const configured = env.PLIVO_AUTH_ID && env.PLIVO_AUTH_TOKEN;
+  if (!env.DRY_RUN && env.VOICE_PROVIDER === 'plivo' && configured) {
+    return new PlivoVoiceProvider({ authId: env.PLIVO_AUTH_ID!, authToken: env.PLIVO_AUTH_TOKEN! });
+  }
+  return fakeVoiceFor(tenantId);
+}
+
 async function resolveHrms(tx: Db, tenantId: string): Promise<HrmsConnector | null> {
   switch (env.HRMS_CONNECTOR) {
     case 'mock':
@@ -69,7 +92,9 @@ async function resolveHrms(tx: Db, tenantId: string): Promise<HrmsConnector | nu
   }
 }
 
-export async function buildContext(tx: Db, tenantId: string): Promise<ActionContext> {
+export type FullContext = ActionContext & VoiceContext;
+
+export async function buildContext(tx: Db, tenantId: string): Promise<FullContext> {
   const tenant = await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
   if (!tenant) throw new Error(`Unknown tenant ${tenantId}`);
   const settings = await tx.query.tenantSettings.findFirst({ where: eq(tenantSettings.tenantId, tenantId) });
@@ -85,6 +110,8 @@ export async function buildContext(tx: Db, tenantId: string): Promise<ActionCont
     tenantId,
     settings,
     channel: await resolveChannel(tx, tenantId),
+    voice: resolveVoice(tenantId),
+    baseUrl: env.APP_BASE_URL,
     companyName: tenant.name,
     template: {
       name: templateConfig.templateName ?? 'attendance_absent_check',

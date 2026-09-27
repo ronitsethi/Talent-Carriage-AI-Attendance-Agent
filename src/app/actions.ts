@@ -3,9 +3,9 @@
 import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { withTenant } from '@/db';
-import { actions, approvals, cases, conversations, employees, messages, tenantSettings } from '@/db/schema';
+import { actions, approvals, calls, cases, conversations, employees, messages, tenantSettings } from '@/db/schema';
 import type { InboundMessage } from '@/lib/channels/types';
 import { handleInbound } from '@/lib/conversation/engine';
 import { selectionId, type OptionNumber } from '@/lib/conversation/flow';
@@ -13,6 +13,8 @@ import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { closeCasesExplainedByData, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { importAttendanceFile } from '@/lib/mapping/import';
 import { buildContext } from '@/lib/runtime';
+import { contactCaseById } from '@/lib/contact';
+import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { canManageSettings, getActiveTenantId, getSession, setActiveTenant, signOut } from '@/lib/auth';
 import { env } from '@/lib/env';
 import { datesInRange } from '@/lib/dates';
@@ -298,6 +300,94 @@ export async function resetAllCases() {
   });
 
   revalidatePath('/');
+  revalidatePath('/cases');
+}
+
+/** The per-employee WhatsApp / Call switch shown on every flagged employee. */
+export async function setEmployeeChannel(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const employeeId = String(formData.get('employeeId') ?? '');
+  const channel = formData.get('channel') === 'voice' ? 'voice' : 'whatsapp';
+
+  await withTenant(tenantId, (tx) =>
+    tx
+      .update(employees)
+      .set({ preferredChannel: channel, updatedAt: new Date() })
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.id, employeeId))),
+  );
+  revalidatePath('/cases');
+  revalidatePath('/');
+}
+
+/** The per-employee Auto / Manual switch. */
+export async function setEmployeeMode(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const employeeId = String(formData.get('employeeId') ?? '');
+  const mode = formData.get('mode') === 'automatic' ? 'automatic' : 'manual';
+
+  await withTenant(tenantId, (tx) =>
+    tx
+      .update(employees)
+      .set({ operatingMode: mode, updatedAt: new Date() })
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.id, employeeId))),
+  );
+  revalidatePath('/cases');
+  revalidatePath('/');
+}
+
+/**
+ * Contacts one employee about one date now, on whichever channel they are set
+ * to. This is the button HR uses in manual mode.
+ */
+export async function contactNow(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const caseId = String(formData.get('caseId') ?? '');
+
+  await withTenant(tenantId, async (tx) => {
+    const ctx = await buildContext(tx, tenantId);
+    await contactCaseById(ctx, caseId);
+  });
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath('/cases');
+  revalidatePath('/');
+}
+
+/**
+ * Plays out a call turn without a phone, so the flow can be demonstrated in dry
+ * run exactly as the WhatsApp simulator does.
+ */
+export async function simulateCallAnswer(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  if (!env.DRY_RUN) throw new Error('Call simulation is only available in dry run');
+
+  const caseId = String(formData.get('caseId') ?? '');
+  const digits = String(formData.get('digits') ?? '');
+  const speech = String(formData.get('speech') ?? '').trim();
+
+  await withTenant(tenantId, async (tx) => {
+    const ctx = await buildContext(tx, tenantId);
+    const caseRow = await tx.query.cases.findFirst({ where: eq(cases.id, caseId) });
+    if (!caseRow) return;
+
+    // Use the live call for this case, or start one so there is something to answer.
+    let call = await tx.query.calls.findFirst({
+      where: and(eq(calls.caseId, caseId), inArray(calls.status, ['queued', 'ringing', 'in_progress', 'simulated'])),
+      orderBy: desc(calls.id),
+    });
+    if (!call) {
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, caseRow.employeeId) });
+      if (!employee) return;
+      const placed = await placeCaseCall(ctx, caseRow, employee);
+      if (!placed.placed) return;
+      call = await tx.query.calls.findFirst({ where: eq(calls.id, placed.callId) });
+    }
+    if (!call) return;
+
+    if (call.status !== 'in_progress') await openingTurn(ctx, call.id);
+    await handleTurn(ctx, call.id, caseId, { digits: digits || undefined, speech: speech || undefined });
+  });
+
+  revalidatePath(`/cases/${caseId}`);
   revalidatePath('/cases');
 }
 

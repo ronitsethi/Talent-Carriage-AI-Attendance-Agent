@@ -154,3 +154,39 @@ function sheetToBuffer(sheets: Record<string, Record<string, string>[]>): Buffer
   }
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }
+
+
+/**
+ * The demo company: one employee, absent every working day of a month.
+ *
+ * Built in the long format (one row per employee per day) because that is the
+ * shape a customer's CSV or database export usually has.
+ */
+export function buildAbsentMonthWorkbook(person: {
+  code: string;
+  firstName: string;
+  lastName: string;
+  mobile: string;
+  department: string;
+  month: string;
+  days: number;
+}): Buffer {
+  const rows: Record<string, string>[] = [];
+  for (let day = 1; day <= person.days; day++) {
+    const iso = `${person.month}-${String(day).padStart(2, '0')}`;
+    const weekday = new Date(`${iso}T00:00:00Z`).getUTCDay();
+    const weekend = weekday === 0 || weekday === 6;
+    const [y, m, d] = iso.split('-');
+    rows.push({
+      EmpID: person.code,
+      'First Name': person.firstName,
+      'Last Name': person.lastName,
+      Contact: person.mobile,
+      Dept: person.department,
+      'Manager Emp ID': '',
+      Date: `${d}-${m}-${y}`,
+      Status: weekend ? 'WO' : 'Ab',
+    });
+  }
+  return sheetToBuffer({ Attendance: rows });
+}
