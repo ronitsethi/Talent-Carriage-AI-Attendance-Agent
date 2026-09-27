@@ -40,7 +40,7 @@ export default async function PreviewPage({
         <h1>Preview</h1>
         <p>
           {rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} to ${rangeTo}`} · {rows.length} gap
-          {rows.length === 1 ? '' : 's'} found, {fresh.length} would be messaged. Nothing has been sent.
+          {rows.length === 1 ? '' : 's'} found, {fresh.length} would be contacted. Nothing has been sent or called.
         </p>
       </section>
 
@@ -73,7 +73,8 @@ export default async function PreviewPage({
               <th>Employee</th>
               <th>Attendance</th>
               <th>Number</th>
-              <th>Would send</th>
+              <th>Contact by</th>
+              <th>Would contact</th>
             </tr>
           </thead>
           <tbody>
@@ -91,6 +92,9 @@ export default async function PreviewPage({
                   </td>
                   <td className="nowrap">{row.mobile ? `+${row.mobile}` : <span className="pill call">No number</span>}</td>
                   <td>
+                    <span className="pill idle">{row.channel === 'voice' ? 'Call' : 'WhatsApp'}</span>
+                  </td>
+                  <td>
                     {row.alreadyOpen ? (
                       <span className="pill idle">Already open</span>
                     ) : row.mobile ? (
@@ -103,7 +107,7 @@ export default async function PreviewPage({
               ))
             ) : (
               <tr>
-                <td className="empty" colSpan={5}>
+                <td className="empty" colSpan={6}>
                   Nobody has an attendance gap in this range.
                 </td>
               </tr>
@@ -117,7 +121,7 @@ export default async function PreviewPage({
           <input type="hidden" name="from" value={rangeFrom} />
           <input type="hidden" name="to" value={rangeTo} />
           <button className="btn primary" type="submit">
-            Send to these {fresh.length} employee{fresh.length === 1 ? '' : 's'}
+            Contact {fresh.length} {fresh.length === 1 ? 'person' : 'people'} now
           </button>
         </form>
       ) : null}

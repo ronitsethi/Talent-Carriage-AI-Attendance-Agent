@@ -5,7 +5,7 @@ import { availableDates, dashboardStats, latestCaseDate, listCases, tenantSummar
 import { capabilities, env } from '@/lib/env';
 import { models } from '@/lib/models/gateway';
 import { caseDateLabel, formatTime, statusDisplay } from '@/lib/display';
-import { resetAllCases, runCheck, runFollowUps } from '@/app/actions';
+import { resetAllCases, runFollowUps } from '@/app/actions';
 
 export default async function DashboardPage({
   searchParams,
@@ -107,7 +107,9 @@ export default async function DashboardPage({
               <span className="hint">One case per employee per date · re-running never messages twice</span>
             </div>
             <div className="card">
-              <form action={runCheck} className="row">
+              {/* One button. It always shows who would be contacted before
+                  anything goes out, so there is no way to send by accident. */}
+              <form className="row" method="get" action="/preview">
                 <div className="field" style={{ minWidth: 165 }}>
                   <label htmlFor="from">From date</label>
                   <input className="input" type="date" id="from" name="from" defaultValue={rangeFrom} />
@@ -117,18 +119,12 @@ export default async function DashboardPage({
                   <input className="input" type="date" id="to" name="to" defaultValue={rangeTo} />
                 </div>
                 <button className="btn primary" type="submit">
-                  Run check &amp; send
+                  Check attendance
                 </button>
-                <Link className="btn" href={`/preview?from=${rangeFrom}&to=${rangeTo}`}>
-                  Preview first
-                </Link>
-                <Link className="btn" href={`/cases?from=${rangeFrom}&to=${rangeTo}&status=all`}>
-                  View these dates
-                </Link>
               </form>
               <p className="hint" style={{ padding: '0 20px 14px' }}>
-                Leave both dates the same to check one day. Re-running a range is safe: a date that already has a case
-                is left alone.
+                Shows who is absent in that range and who would be contacted. Nothing is sent until you confirm on the
+                next screen. Leave both dates the same to check a single day.
               </p>
               {stats.queued ? (
                 <div className="notice info" style={{ marginBottom: 14 }}>

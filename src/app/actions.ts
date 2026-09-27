@@ -52,6 +52,7 @@ export async function previewCheck(formData: FormData) {
           mobile: gap.mobileE164,
           meaning: gap.meaning,
           raw: gap.rawStatus,
+          channel: gap.preferredChannel,
           alreadyOpen: Boolean(gap.existingCaseId),
         });
       }

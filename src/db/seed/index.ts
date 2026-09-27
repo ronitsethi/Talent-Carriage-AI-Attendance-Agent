@@ -16,7 +16,7 @@ import { importAttendanceFile } from '@/lib/mapping/import';
 import { presetByKey, type MappingPreset } from '@/lib/mapping/presets';
 import { runDailyCheck } from '@/lib/detection/run';
 import { buildContext } from '@/lib/runtime';
-import { buildAbsentMonthWorkbook, buildNumericWorkbook, buildRowPerDayWorkbook, generatePeople } from './generate';
+import { buildNumericWorkbook, buildRowPerDayWorkbook, generatePeople } from './generate';
 
 /**
  * Three customers whose attendance data looks nothing alike, so the mapping
@@ -36,6 +36,7 @@ type SeedTenant = {
   settings?: Partial<typeof tenantSettings.$inferInsert>;
   /** Applied to every employee this seed imports. */
   employeeDefaults?: { preferredChannel?: string; operatingMode?: string };
+  filename?: string;
   file: () => Buffer;
   /** Dates to run the daily check for, so the dashboard has something in it. */
   runDates: string[];
@@ -48,6 +49,7 @@ const TENANTS: SeedTenant[] = [
     slug: 'demo-industries',
     name: 'Demo Industries',
     preset: 'single_code_row_per_day',
+    filename: 'demo-industries-september-2026.csv',
     settings: {
       defaultChannel: 'voice',
       callerId: '+912269871077',
@@ -56,16 +58,8 @@ const TENANTS: SeedTenant[] = [
       contactLagDays: 1,
     },
     employeeDefaults: { preferredChannel: 'voice', operatingMode: 'manual' },
-    file: () =>
-      buildAbsentMonthWorkbook({
-        code: 'DI-1001',
-        firstName: 'Aryan',
-        lastName: 'Jain',
-        mobile: '9718290560',
-        department: 'Operations',
-        month: '2026-09',
-        days: 30,
-      }),
+    // A real CSV on disk, exactly as a customer would hand it over.
+    file: () => fs.readFileSync(path.join(process.cwd(), 'demo-data', 'demo-industries-september-2026.csv')),
     runDates: ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25'],
   },
   {
@@ -143,7 +137,7 @@ async function ensureTenant(seed: SeedTenant) {
   await withTenant(tenantId, async (tx) => {
     const result = await importAttendanceFile(tx, tenantId, seed.file(), {
       source: 'seed',
-      filename: `${seed.slug}.xlsx`,
+      filename: seed.filename ?? `${seed.slug}.xlsx`,
     });
 
     if (seed.employeeDefaults) {
