@@ -13,7 +13,7 @@ import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { closeCasesExplainedByData, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { importAttendanceFile } from '@/lib/mapping/import';
 import { buildContext } from '@/lib/runtime';
-import { contactCase, contactCaseById } from '@/lib/contact';
+import { channelFor, contactCase, contactCaseById } from '@/lib/contact';
 import { ensureCase } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { canManageSettings, getActiveTenantId, getSession, setActiveTenant, signOut } from '@/lib/auth';
@@ -352,13 +352,35 @@ export async function contactSelected(formData: FormData) {
 
   await withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
+
+    // Group by person: ticking five dates for someone on Call must ring them
+    // once, not five times. The call sweeps the backlog by itself.
+    const byEmployee = new Map<string, string[]>();
     for (const target of targets) {
       const [employeeId, date] = target.split('|');
       if (!employeeId || !date) continue;
-      const caseRow = await ensureCase(tx, tenantId, employeeId, date);
-      if (!caseRow) continue;
+      byEmployee.set(employeeId, [...(byEmployee.get(employeeId) ?? []), date]);
+    }
+
+    for (const [employeeId, dates] of byEmployee) {
       const employee = await tx.query.employees.findFirst({ where: eq(employees.id, employeeId) });
-      if (employee) await contactCase(ctx, caseRow, employee);
+      if (!employee) continue;
+
+      // Every ticked date becomes a case, whether or not it is asked right now.
+      const created = [];
+      for (const date of dates.sort()) {
+        const caseRow = await ensureCase(tx, tenantId, employeeId, date);
+        if (caseRow) created.push(caseRow);
+      }
+      if (!created.length) continue;
+
+      if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') {
+        // One call, about the most recent date; the older ones follow inside it.
+        await contactCase(ctx, created[created.length - 1]!, employee);
+      } else {
+        // WhatsApp stacks in a chat, so each date gets its own message.
+        for (const caseRow of created) await contactCase(ctx, caseRow, employee);
+      }
     }
   });
 

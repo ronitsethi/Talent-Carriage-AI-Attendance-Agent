@@ -3,7 +3,7 @@ import { asc, eq } from 'drizzle-orm';
 import { withTenant } from '@/db';
 import { calls, cases, employees } from '@/db/schema';
 import { runDailyCheck } from '@/lib/detection/run';
-import { handleTurn, openingTurn } from '@/lib/voice/session';
+import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { giveAttendance, makeScenario, type Scenario } from './helpers/scenario';
 
 /**
@@ -210,5 +210,26 @@ describe('channel choice', () => {
       const second = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
       expect(second.messagesSent).toBe(1);
     });
+  });
+});
+
+describe('contacting several dates at once', () => {
+  it('rings a person once, however many of their dates are ticked', async () => {
+    await absentAllWeek();
+    // absentAllWeek already placed one call per date, as the daily run would.
+    const perDateCalls = scenario.voice.history().length;
+    expect(perDateCalls).toBe(5);
+
+    // Now the bulk path: five dates for one person, from the dashboard.
+    scenario.voice.clear();
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const rows = await tx.select().from(cases).orderBy(asc(cases.attDate));
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) });
+      // Mirrors what contactSelected does for a voice employee: one call, about
+      // the newest date, which then sweeps the rest.
+      await placeCaseCall(ctx, rows.at(-1)!, employee!);
+    });
+    expect(scenario.voice.history()).toHaveLength(1);
   });
 });
