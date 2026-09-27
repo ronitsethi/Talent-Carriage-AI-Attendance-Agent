@@ -84,6 +84,8 @@ export async function placeCaseCall(ctx: VoiceContext, caseRow: CaseRow, employe
       from,
       answerUrl: `${ctx.baseUrl}/api/voice/answer?call=${call!.id}`,
       statusUrl: `${ctx.baseUrl}/api/voice/status?call=${call!.id}`,
+      // 30 seconds is about five rings, which is easy to miss on a mobile.
+      ringTimeoutSeconds: 45,
       caseId: caseRow.id,
     });
 
