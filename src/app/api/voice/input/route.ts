@@ -18,6 +18,13 @@ export async function POST(request: Request) {
   const digits = String(form.get('Digits') ?? '').trim();
   const speech = String(form.get('Speech') ?? '').trim();
 
+  // Worth a line in the log: when a call goes quiet, the first thing to know is
+  // whether the keypad press reached us at all.
+  console.log(
+    `[voice] input call=${callId} case=${caseId} type=${String(form.get('InputType') ?? '-')} ` +
+      `digits=${digits || '-'} speech=${speech || '-'} confidence=${String(form.get('SpeechConfidenceScore') ?? '-')}`,
+  );
+
   const turn = await withCallContext(callId, async (ctx) =>
     handleTurn(ctx, callId, caseId, { digits: digits || undefined, speech: speech || undefined }),
   ).catch((error) => {
@@ -30,6 +37,7 @@ export async function POST(request: Request) {
   return xmlResponse(
     promptXml({
       speak: turn.speak,
+      intro: turn.intro,
       actionUrl: `${env.APP_BASE_URL}/api/voice/input?call=${callId}&case=${turn.nextCaseId}`,
     }),
   );

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { finishCall, recordNoAnswer } from '@/lib/voice/session';
+import { closeAnsweredCall, recordNoAnswer } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
 
 /**
@@ -18,7 +18,10 @@ export async function POST(request: Request) {
   await withCallContext(callId, async (ctx) => {
     const answered = duration > 0 && callStatus !== 'no-answer' && callStatus !== 'busy';
     if (answered) {
-      await finishCall(ctx, callId, 'completed_confirmed', { durationSeconds: duration });
+      // The conversation itself decides the outcome, and by now it usually has.
+      // Picking up and saying nothing is not a confirmation, so a call that
+      // reached no answer is recorded as exactly that.
+      await closeAnsweredCall(ctx, callId, duration);
     } else {
       await recordNoAnswer(ctx, callId, callStatus === 'busy' ? 'busy' : 'no_answer');
     }

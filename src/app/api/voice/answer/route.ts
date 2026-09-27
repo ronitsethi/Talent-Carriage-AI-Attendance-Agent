@@ -17,6 +17,7 @@ async function handle(request: Request) {
   return xmlResponse(
     promptXml({
       speak: turn.speak,
+      intro: turn.intro,
       actionUrl: `${env.APP_BASE_URL}/api/voice/input?call=${callId}&case=${turn.nextCaseId}`,
     }),
   );

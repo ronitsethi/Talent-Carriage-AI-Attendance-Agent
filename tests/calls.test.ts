@@ -1,10 +1,36 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { asc, eq } from 'drizzle-orm';
-import { withTenant } from '@/db';
+import { asc, desc, eq } from 'drizzle-orm';
+import { withTenant, type Db } from '@/db';
 import { calls, cases, employees } from '@/db/schema';
 import { runDailyCheck } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
+import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { giveAttendance, makeScenario, type Scenario } from './helpers/scenario';
+
+/**
+ * Everything the caller hears in one turn.
+ *
+ * A turn is delivered in two pieces - what is said before the question, then
+ * the question itself - so that a long preamble never eats into the seconds the
+ * employee has to press a key. The employee hears one sentence either way.
+ */
+const heard = (turn: { intro?: string; speak: string }) => [turn.intro, turn.speak].filter(Boolean).join(' ');
+
+/**
+ * The call placed about one date.
+ *
+ * Rows come back from Postgres in no particular order, so a call has to be
+ * asked for by what it is about rather than by where it happens to sit.
+ */
+async function callAbout(tx: Db, attDate: string) {
+  const caseRow = await tx.query.cases.findFirst({ where: eq(cases.attDate, attDate) });
+  const rows = await tx
+    .select()
+    .from(calls)
+    .where(eq(calls.caseId, caseRow!.id))
+    .orderBy(desc(calls.attempt));
+  return rows[0]!;
+}
 
 /**
  * The agreed call behaviour, in the customer's own words:
@@ -85,19 +111,19 @@ describe('the call that is finally answered', () => {
         .select()
         .from(calls)
         .orderBy(asc(calls.attempt), asc(calls.id));
-      const latest = (await tx.select().from(calls)).at(-1)!;
+      const latest = await callAbout(tx, '2026-09-25');
       expect(call).toBeDefined();
 
       const opening = await openingTurn(ctx, latest.id);
-      expect(opening.speak).toContain('5 days of attendance still to be confirmed');
-      expect(opening.speak).toContain('25 September');
+      expect(heard(opening)).toContain('5 days of attendance still to be confirmed');
+      expect(heard(opening)).toContain('25 September');
       expect(opening.done).toBe(false);
 
       // Answer 25 September with "1 - I was absent".
       const afterFirst = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
-      expect(afterFirst.speak).toContain('Please apply leave for 25 September');
-      expect(afterFirst.speak).toContain('4 more days pending');
-      expect(afterFirst.speak).toContain('21 September'); // oldest next
+      expect(heard(afterFirst)).toContain('Please apply leave for 25 September');
+      expect(heard(afterFirst)).toContain('4 more days pending');
+      expect(heard(afterFirst)).toContain('21 September'); // oldest next
       expect(afterFirst.done).toBe(false);
 
       // Work through the rest in the same call.
@@ -124,7 +150,7 @@ describe('the call that is finally answered', () => {
 
     await withTenant(scenario.tenantId, async (tx) => {
       const ctx = scenario.context(tx);
-      const latest = (await tx.select().from(calls)).at(-1)!;
+      const latest = await callAbout(tx, '2026-09-25');
       const opening = await openingTurn(ctx, latest.id);
 
       // No key pressed; they just said it. Handled by the same classifier that
@@ -132,7 +158,7 @@ describe('the call that is finally answered', () => {
       const turn = await handleTurn(ctx, latest.id, opening.nextCaseId!, { speech: 'no I was working that day' });
       const answered = await tx.query.cases.findFirst({ where: eq(cases.id, opening.nextCaseId!) });
       expect(answered!.replyOption).toBe(2);
-      expect(turn.speak).toContain('regularisation');
+      expect(heard(turn)).toContain('regularisation');
     });
   });
 
@@ -141,12 +167,12 @@ describe('the call that is finally answered', () => {
 
     await withTenant(scenario.tenantId, async (tx) => {
       const ctx = scenario.context(tx);
-      const latest = (await tx.select().from(calls)).at(-1)!;
+      const latest = await callAbout(tx, '2026-09-25');
       const opening = await openingTurn(ctx, latest.id);
 
       const first = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '9' });
       expect(first.retry).toBe(true);
-      expect(first.speak).toContain('did not catch that');
+      expect(heard(first)).toContain('did not catch that');
 
       const second = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '' });
       expect(second.done).toBe(true);
@@ -159,7 +185,7 @@ describe('the call that is finally answered', () => {
 
     await withTenant(scenario.tenantId, async (tx) => {
       const ctx = scenario.context(tx);
-      const latest = (await tx.select().from(calls)).at(-1)!;
+      const latest = await callAbout(tx, '2026-09-25');
       const opening = await openingTurn(ctx, latest.id);
       await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
 
@@ -231,5 +257,163 @@ describe('contacting several dates at once', () => {
       await placeCaseCall(ctx, rows.at(-1)!, employee!);
     });
     expect(scenario.voice.history()).toHaveLength(1);
+  });
+});
+
+/**
+ * The day-2 reminder, on the phone.
+ *
+ *   "I tried calling followup but the call is still the exact same instead of
+ *    what is supposed to be said at step 2 based on step 1 call reply."
+ *
+ * A second call must ask about the *action* the employee was given, not repeat
+ * the question they have already answered.
+ */
+describe('the follow-up call', () => {
+  async function answeredWeek() {
+    await absentAllWeek();
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const latest = await callAbout(tx, '2026-09-25');
+      const opening = await openingTurn(ctx, latest.id);
+      let turn = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
+      while (!turn.done && turn.nextCaseId) {
+        turn = await handleTurn(ctx, latest.id, turn.nextCaseId, { digits: '2' });
+      }
+    });
+    scenario.voice.clear();
+  }
+
+  it('asks about the action given last time, not the absence again', async () => {
+    await answeredWeek();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) });
+      const [oldest] = await tx.select().from(cases).orderBy(asc(cases.attDate));
+
+      const placed = await placeCaseCall(ctx, oldest!, employee!);
+      expect(placed.placed).toBe(true);
+
+      const call = await tx.query.calls.findFirst({ where: eq(calls.id, placed.callId!) });
+      expect(call!.purpose, 'an answered date is past its first question').toBe('follow_up');
+
+      const opening = await openingTurn(ctx, placed.callId!);
+      const said = heard(opening);
+      expect(said).toContain('Last time');
+      expect(said).toContain('21 September');
+      expect(said).not.toContain('Press 1 if you were absent');
+      expect(said).toContain('Press 1 if it is done');
+    });
+  });
+
+  it('leaves the answered date answered, rather than asking it all over again', async () => {
+    await answeredWeek();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) });
+      const [oldest] = await tx.select().from(cases).orderBy(asc(cases.attDate));
+      await placeCaseCall(ctx, oldest!, employee!);
+
+      const after = await tx.query.cases.findFirst({ where: eq(cases.id, oldest!.id) });
+      expect(after!.status).toBe('answered');
+      expect(after!.replyOption).toBe(2);
+    });
+  });
+
+  it('sweeps the other dates in the same call, like the first one does', async () => {
+    await answeredWeek();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) });
+      const [oldest] = await tx.select().from(cases).orderBy(asc(cases.attDate));
+      const placed = await placeCaseCall(ctx, oldest!, employee!);
+      const opening = await openingTurn(ctx, placed.callId!);
+      const checked: string[] = [];
+      let turn = await handleTurn(ctx, placed.callId!, opening.nextCaseId!, { digits: '1' });
+      checked.push(oldest!.attDate);
+      while (!turn.done && turn.nextCaseId) {
+        const current = await tx.query.cases.findFirst({ where: eq(cases.id, turn.nextCaseId) });
+        checked.push(current!.attDate);
+        turn = await handleTurn(ctx, placed.callId!, turn.nextCaseId, { digits: '1' });
+      }
+
+      expect(checked).toEqual(DATES);
+      expect(heard(turn)).toContain('That is everything');
+
+      const rows = await tx.select().from(cases);
+      expect(rows.every((r) => r.status === 'resolved')).toBe(true);
+      expect(rows.every((r) => r.followUpReply === 'done')).toBe(true);
+    });
+  });
+
+  it('records "not done yet" and keeps the case open', async () => {
+    await answeredWeek();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) });
+      const [oldest] = await tx.select().from(cases).orderBy(asc(cases.attDate));
+      const placed = await placeCaseCall(ctx, oldest!, employee!);
+      const opening = await openingTurn(ctx, placed.callId!);
+      await handleTurn(ctx, placed.callId!, opening.nextCaseId!, { digits: '2' });
+
+      const after = await tx.query.cases.findFirst({ where: eq(cases.id, oldest!.id) });
+      expect(after!.followUpReply).toBe('not_done');
+      expect(after!.status, 'still open, because the action is still outstanding').toBe('answered');
+    });
+  });
+
+  it('hands over to HR when they ask for help, and stops calling', async () => {
+    await answeredWeek();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) });
+      const [oldest] = await tx.select().from(cases).orderBy(asc(cases.attDate));
+      const placed = await placeCaseCall(ctx, oldest!, employee!);
+      const opening = await openingTurn(ctx, placed.callId!);
+      const turn = await handleTurn(ctx, placed.callId!, opening.nextCaseId!, { digits: '3' });
+
+      expect(turn.done).toBe(true);
+      const after = await tx.query.cases.findFirst({ where: eq(cases.id, oldest!.id) });
+      expect(after!.status).toBe('needs_hr');
+    });
+  });
+
+  it('understands "not yet" spoken instead of pressed', async () => {
+    await answeredWeek();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) });
+      const [oldest] = await tx.select().from(cases).orderBy(asc(cases.attDate));
+      const placed = await placeCaseCall(ctx, oldest!, employee!);
+      const opening = await openingTurn(ctx, placed.callId!);
+      await handleTurn(ctx, placed.callId!, opening.nextCaseId!, { speech: 'no not yet' });
+
+      const after = await tx.query.cases.findFirst({ where: eq(cases.id, oldest!.id) });
+      expect(after!.followUpReply).toBe('not_done');
+    });
+  });
+
+  it('rings a voice employee once when their reminders fall due', async () => {
+    await answeredWeek();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      // Two days on, every date is due its reminder.
+      const result = await sendDueFollowUps(ctx, new Date(Date.now() + 3 * 86_400_000));
+
+      expect(result.due).toBe(5);
+      expect(result.called, 'one call, not one per date').toBe(1);
+      expect(result.sent, 'nothing on WhatsApp for someone set to Call').toBe(0);
+      expect(scenario.voice.history()).toHaveLength(1);
+
+      const call = await callAbout(tx, '2026-09-21');
+      expect(call.purpose).toBe('follow_up');
+    });
   });
 });

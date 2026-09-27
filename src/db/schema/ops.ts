@@ -134,6 +134,12 @@ export const calls = pgTable(
       .references(() => employees.id, { onDelete: 'cascade' }),
 
     provider: text('provider').notNull(), // plivo | exotel | acs | fake
+    /**
+     * What this call is for. A first contact asks about the absence itself; a
+     * follow-up asks whether the action the employee was given has been done.
+     * Without it, calling someone back would just re-ask the same question.
+     */
+    purpose: text('purpose').notNull().default('first_contact'), // first_contact | follow_up
     providerCallId: text('provider_call_id'),
     fromNumber: text('from_number'),
     toNumber: text('to_number'),

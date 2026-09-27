@@ -1,8 +1,12 @@
 import { eq } from 'drizzle-orm';
 import { cases, employees } from '@/db/schema';
 import { askCase, type CaseRow, type EmployeeRow } from '@/lib/conversation/engine';
-import { placeCaseCall } from '@/lib/voice/session';
+import { channelFor } from '@/lib/channel';
+import { callPurposeFor, placeCaseCall, type CallPurpose } from '@/lib/voice/session';
+import { sendFollowUpMessage } from '@/lib/conversation/followup';
 import type { FullContext } from '@/lib/runtime';
+
+export { channelFor };
 
 /**
  * Contacts an employee about one date, on whichever channel they are set to.
@@ -12,13 +16,8 @@ import type { FullContext } from '@/lib/runtime';
  * swept - is identical.
  */
 export type ContactResult =
-  | { contacted: true; channel: 'whatsapp' | 'voice'; simulated?: boolean }
-  | { contacted: false; channel: 'whatsapp' | 'voice'; reason: string };
-
-export function channelFor(employee: EmployeeRow, fallback: string): 'whatsapp' | 'voice' {
-  const choice = employee.preferredChannel || fallback;
-  return choice === 'voice' ? 'voice' : 'whatsapp';
-}
+  | { contacted: true; channel: 'whatsapp' | 'voice'; purpose: CallPurpose; simulated?: boolean }
+  | { contacted: false; channel: 'whatsapp' | 'voice'; purpose: CallPurpose; reason: string };
 
 export async function contactCase(
   ctx: FullContext,
@@ -34,17 +33,27 @@ export async function contactCase(
     caseRow = { ...caseRow, channel };
   }
 
+  // A date that has already been answered is past its first question. Contacting
+  // that person again means the day-2 reminder - "have you applied the leave
+  // yet?" - not the same question a second time.
+  const purpose = callPurposeFor(caseRow);
+
   if (channel === 'voice') {
-    const result = await placeCaseCall(ctx, caseRow, employee);
+    const result = await placeCaseCall(ctx, caseRow, employee, purpose);
     return result.placed
-      ? { contacted: true, channel, simulated: result.simulated }
-      : { contacted: false, channel, reason: result.reason };
+      ? { contacted: true, channel, purpose, simulated: result.simulated }
+      : { contacted: false, channel, purpose, reason: result.reason };
+  }
+
+  if (purpose === 'follow_up') {
+    await sendFollowUpMessage(ctx, caseRow, employee);
+    return { contacted: true, channel, purpose };
   }
 
   const result = await askCase(ctx, caseRow, employee);
   return result.sent
-    ? { contacted: true, channel, simulated: result.simulated }
-    : { contacted: false, channel, reason: result.reason };
+    ? { contacted: true, channel, purpose, simulated: result.simulated }
+    : { contacted: false, channel, purpose, reason: result.reason };
 }
 
 /** Looks up the employee and contacts them, for callers that only hold a case. */

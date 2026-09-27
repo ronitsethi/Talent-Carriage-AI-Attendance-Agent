@@ -10,22 +10,72 @@ const escape = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export type PromptOptions = {
+  /** The question. Kept short, because this is what the caller answers. */
   speak: string;
+  /**
+   * Anything said before the question. It is played *outside* GetInput, so a
+   * greeting or a backlog summary never counts against the seconds the employee
+   * has to press a key - `executionTimeout` covers the whole element, nested
+   * speech included.
+   */
+  intro?: string;
   actionUrl: string;
   /** Voice and language Plivo speaks and listens in. */
   language?: string;
   timeoutSeconds?: number;
 };
 
-export function promptXml({ speak, actionUrl, language = 'en-IN', timeoutSeconds = 12 }: PromptOptions): string {
+/** Plivo allows 5-60 seconds; the default of 15 is short for a spoken menu. */
+const DEFAULT_TIMEOUT = 20;
+
+export function promptXml({
+  speak,
+  intro,
+  actionUrl,
+  language = 'en-IN',
+  timeoutSeconds = DEFAULT_TIMEOUT,
+}: PromptOptions): string {
+  const timeout = Math.min(60, Math.max(5, Math.round(timeoutSeconds)));
+
   return xml(
-    `  <GetInput action="${escape(actionUrl)}" method="POST" inputType="dtmf speech" numDigits="1" ` +
-      `language="${language}" speechModel="command_and_search" executionTimeout="${timeoutSeconds}" retries="1" ` +
-      `hints="absent,working,leave,regularisation,one,two,three,four">\n` +
-      `    <Speak language="${language}">${escape(speak)}</Speak>\n` +
-      `  </GetInput>\n` +
-      // Reached only when nothing at all was entered or said.
+    [
+      intro ? `  <Speak language="${language}">${escape(intro)}</Speak>` : null,
+      getInput(speak, actionUrl, language, timeout),
+      // Reached only when nothing at all was entered or said: Plivo falls
+      // through to the next element rather than calling the action URL. One
+      // short second chance beats hanging up on someone who was still reaching
+      // for the keypad.
+      getInput(`Sorry, we did not hear anything. ${optionsFrom(speak)}`, actionUrl, language, timeout),
       `  <Speak language="${language}">We did not receive a response. We will contact you again. Goodbye.</Speak>`,
+      '  <Hangup/>',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  );
+}
+
+/**
+ * The keys, without the context that came before them.
+ *
+ * A second pass does not need to explain the date again - the caller has just
+ * heard it - so the re-ask keeps only the "Press N ..." sentences. If a prompt
+ * ever has none, the whole thing is repeated rather than nothing at all.
+ */
+function optionsFrom(speak: string): string {
+  const options = speak
+    .split(/(?<=\.)\s+/)
+    .filter((sentence) => sentence.startsWith('Press '));
+  return options.length ? options.join(' ') : speak;
+}
+
+function getInput(speak: string, actionUrl: string, language: string, timeout: number): string {
+  return (
+    `  <GetInput action="${escape(actionUrl)}" method="POST" inputType="dtmf speech" numDigits="1" ` +
+    `language="${language}" speechModel="command_and_search" executionTimeout="${timeout}" ` +
+    `digitEndTimeout="2" speechEndTimeout="2" retries="1" ` +
+    `hints="absent,working,leave,regularisation,done,not done,help,one,two,three,four">\n` +
+    `    <Speak language="${language}">${escape(speak)}</Speak>\n` +
+    `  </GetInput>`
   );
 }
 

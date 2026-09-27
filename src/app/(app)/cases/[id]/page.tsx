@@ -6,6 +6,7 @@ import { actionLabel, caseDateLabel, formatTime, meaningLabel, replyLabel, statu
 import { OPTIONS, OPTION_NUMBERS } from '@/lib/conversation/flow';
 import { env } from '@/lib/env';
 import { closeCase, contactNow, flagForHr, resetCase, simulateCallAnswer, simulateReply } from '@/app/actions';
+import { callPurposeFor } from '@/lib/voice/session';
 
 export default async function CaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -19,6 +20,9 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
 
   const { caseRow, employee, transcript, calls, actions, approvals, manager, otherPending } = detail;
   const onCall = caseRow.channel === 'voice' || employee.preferredChannel === 'voice';
+  // Contacting someone about a date they have already answered means the day-2
+  // reminder, so the button should not promise to ask the first question again.
+  const reminder = callPurposeFor(caseRow) === 'follow_up';
   const liveCall = calls.find((c) => ['queued', 'ringing', 'in_progress', 'simulated'].includes(c.status));
   // For a voice case the call transcript *is* the conversation.
   const callTurns = calls.flatMap((c) => c.transcript ?? []).sort((a, b) => a.at.localeCompare(b.at));
@@ -242,7 +246,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               <form action={contactNow}>
                 <input type="hidden" name="caseId" value={caseRow.id} />
                 <button className="btn small primary" type="submit">
-                  {onCall ? 'Call now' : 'Send now'}
+                  {reminder ? (onCall ? 'Call about the action' : 'Send the reminder') : onCall ? 'Call now' : 'Send now'}
                 </button>
               </form>
               <form action={closeCase}>
