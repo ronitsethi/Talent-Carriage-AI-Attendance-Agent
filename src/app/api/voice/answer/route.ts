@@ -7,7 +7,10 @@ import { env } from '@/lib/env';
 async function handle(request: Request) {
   const callId = new URL(request.url).searchParams.get('call') ?? '';
 
-  const turn = await withCallContext(callId, async (ctx) => openingTurn(ctx, callId));
+  const turn = await withCallContext(callId, async (ctx) => openingTurn(ctx, callId)).catch((error) => {
+    console.error('[voice] answer failed:', error);
+    return null;
+  });
   if (!turn) return xmlResponse(speakAndHangupXml('Sorry, this call is no longer valid. Goodbye.'));
   if (turn.done || !turn.nextCaseId) return xmlResponse(speakAndHangupXml(turn.speak));
 

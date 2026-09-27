@@ -20,7 +20,10 @@ export async function POST(request: Request) {
 
   const turn = await withCallContext(callId, async (ctx) =>
     handleTurn(ctx, callId, caseId, { digits: digits || undefined, speech: speech || undefined }),
-  );
+  ).catch((error) => {
+    console.error('[voice] input failed:', error);
+    return null;
+  });
   if (!turn) return xmlResponse(speakAndHangupXml('Sorry, this call is no longer valid. Goodbye.'));
   if (turn.done || !turn.nextCaseId) return xmlResponse(speakAndHangupXml(turn.speak));
 
