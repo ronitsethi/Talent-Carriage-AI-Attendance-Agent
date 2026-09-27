@@ -130,7 +130,10 @@ export default async function DashboardPage({
             <thead>
               <tr>
                 <th style={{ width: 34 }}>
-                  <SelectAll initiallyChecked={notYetContacted.length === flagged.length && flagged.length > 0} />
+                  <SelectAll
+                    initiallyChecked={notYetContacted.length === flagged.length && flagged.length > 0}
+                    signature={`${rangeFrom}|${rangeTo}|${flagged.length}|${notYetContacted.length}`}
+                  />
                 </th>
                 <th>Employee</th>
                 <th>Date</th>

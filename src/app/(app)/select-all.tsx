@@ -8,7 +8,7 @@ import { useEffect, useRef } from 'react';
  * It also reflects the rows - ticked when all are, cleared when none are, and
  * half-filled in between - so it never claims a state the table does not have.
  */
-export function SelectAll({ initiallyChecked }: { initiallyChecked: boolean }) {
+export function SelectAll({ initiallyChecked, signature }: { initiallyChecked: boolean; signature: string }) {
   const ref = useRef<HTMLInputElement>(null);
 
   const rowBoxes = (): HTMLInputElement[] => {
@@ -24,12 +24,16 @@ export function SelectAll({ initiallyChecked }: { initiallyChecked: boolean }) {
     ref.current.indeterminate = checked > 0 && checked < boxes.length;
   };
 
+  // A tick box is uncontrolled, so it keeps whatever the user last did to it -
+  // including across a change of date range, where the rows are replaced but
+  // this element is not. `signature` changes with the table, which forces the
+  // header to be read back from the rows instead of showing a stale state.
   useEffect(() => {
     reflectRows();
     const boxes = rowBoxes();
     boxes.forEach((box) => box.addEventListener('change', reflectRows));
     return () => boxes.forEach((box) => box.removeEventListener('change', reflectRows));
-  });
+  }, [signature]);
 
   return (
     <input
