@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
+import { chasedMeanings } from '@/lib/detection/run';
 import {
   actions,
   approvals,
@@ -315,6 +316,66 @@ export async function listTenantsForSwitcher() {
   return withPlatformScope((tx) =>
     tx.select({ id: tenants.id, name: tenants.name, slug: tenants.slug }).from(tenants).orderBy(asc(tenants.name)),
   );
+}
+
+export type FlaggedRow = {
+  employeeId: string;
+  employeeName: string;
+  employeeCode: string;
+  department: string | null;
+  mobile: string | null;
+  attDate: string;
+  meaning: string;
+  rawStatus: string | null;
+  preferredChannel: string;
+  operatingMode: string | null;
+  caseId: string | null;
+  caseStatus: string | null;
+};
+
+/**
+ * Everyone with an attendance gap in a date range, with their case if one
+ * exists. This is what the dashboard shows: the people, their switches, and
+ * whether they have been contacted yet.
+ */
+export async function flaggedInRange(tenantId: string, from: string, to: string): Promise<FlaggedRow[]> {
+  const { settings } = await tenantSummary(tenantId);
+  if (!settings) return [];
+
+  return withTenant(tenantId, async (tx) => {
+    const meanings = chasedMeanings(settings);
+    const rows = await tx
+      .select({
+        employeeId: employees.id,
+        employeeName: employees.fullName,
+        employeeCode: employees.empCode,
+        department: employees.department,
+        mobile: employees.mobileE164,
+        preferredChannel: employees.preferredChannel,
+        operatingMode: employees.operatingMode,
+        attDate: attendanceDays.attDate,
+        meaning: attendanceDays.meaning,
+        rawStatus: attendanceDays.rawStatus,
+        isWorkingDay: attendanceDays.isWorkingDay,
+        caseId: cases.id,
+        caseStatus: cases.status,
+      })
+      .from(attendanceDays)
+      .innerJoin(employees, eq(employees.id, attendanceDays.employeeId))
+      .leftJoin(cases, and(eq(cases.employeeId, employees.id), eq(cases.attDate, attendanceDays.attDate)))
+      .where(
+        and(
+          eq(attendanceDays.tenantId, tenantId),
+          gte(attendanceDays.attDate, from),
+          lte(attendanceDays.attDate, to),
+          inArray(attendanceDays.meaning, meanings),
+        ),
+      )
+      .orderBy(desc(attendanceDays.attDate), asc(employees.fullName))
+      .limit(500);
+
+    return rows.filter((r) => r.isWorkingDay).map(({ isWorkingDay, ...row }) => row);
+  });
 }
 
 /** The most recent date that already has cases, for a useful default view. */

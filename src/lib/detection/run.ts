@@ -285,6 +285,48 @@ export async function runDailyCheck(ctx: FullContext, opts: DailyCheckOptions): 
 }
 
 /**
+ * The case for one employee and date, created from the attendance record if it
+ * does not exist yet. Used when HR contacts someone straight from the dashboard,
+ * before any check has run.
+ */
+export async function ensureCase(tx: Db, tenantId: string, employeeId: string, date: string) {
+  const existing = await tx.query.cases.findFirst({
+    where: and(eq(cases.tenantId, tenantId), eq(cases.employeeId, employeeId), eq(cases.attDate, date)),
+  });
+  if (existing) return existing;
+
+  const day = await tx.query.attendanceDays.findFirst({
+    where: and(
+      eq(attendanceDays.tenantId, tenantId),
+      eq(attendanceDays.employeeId, employeeId),
+      eq(attendanceDays.attDate, date),
+    ),
+  });
+  if (!day) return null;
+
+  const inserted = await tx
+    .insert(cases)
+    .values({
+      tenantId,
+      employeeId,
+      attDate: date,
+      meaning: day.meaning,
+      rawStatus: day.rawStatus,
+      status: 'queued',
+    })
+    .onConflictDoNothing({ target: [cases.tenantId, cases.employeeId, cases.attDate] })
+    .returning();
+
+  return (
+    inserted[0] ??
+    (await tx.query.cases.findFirst({
+      where: and(eq(cases.tenantId, tenantId), eq(cases.employeeId, employeeId), eq(cases.attDate, date)),
+    })) ??
+    null
+  );
+}
+
+/**
  * Closes cases that later data explains by itself.
  *
  * If a corrected register shows the day as approved leave, or the employee

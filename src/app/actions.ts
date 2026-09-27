@@ -13,7 +13,8 @@ import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { closeCasesExplainedByData, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { importAttendanceFile } from '@/lib/mapping/import';
 import { buildContext } from '@/lib/runtime';
-import { contactCaseById } from '@/lib/contact';
+import { contactCase, contactCaseById } from '@/lib/contact';
+import { ensureCase } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { canManageSettings, getActiveTenantId, getSession, setActiveTenant, signOut } from '@/lib/auth';
 import { env } from '@/lib/env';
@@ -298,6 +299,67 @@ export async function resetAllCases() {
     await tx.delete(messages).where(eq(messages.tenantId, tenantId));
     await tx.delete(conversations).where(eq(conversations.tenantId, tenantId));
     await tx.delete(cases).where(eq(cases.tenantId, tenantId));
+  });
+
+  revalidatePath('/');
+  revalidatePath('/cases');
+}
+
+/**
+ * The dashboard puts the switches and the bulk-contact button in one form,
+ * because nested forms are not valid HTML. The switches therefore carry their
+ * arguments through `.bind()` rather than through a button's name and value -
+ * React reserves that name for its own action id, and using it silently breaks
+ * the button.
+ */
+export async function setChannelFromRow(employeeId: string, channel: string) {
+  if (!employeeId) return;
+  const { tenantId } = await requireTenant();
+  await withTenant(tenantId, (tx) =>
+    tx
+      .update(employees)
+      .set({ preferredChannel: channel === 'voice' ? 'voice' : 'whatsapp', updatedAt: new Date() })
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.id, employeeId))),
+  );
+  revalidatePath('/');
+  revalidatePath('/cases');
+}
+
+export async function setModeFromRow(employeeId: string, mode: string) {
+  if (!employeeId) return;
+  const { tenantId } = await requireTenant();
+  await withTenant(tenantId, (tx) =>
+    tx
+      .update(employees)
+      .set({ operatingMode: mode === 'automatic' ? 'automatic' : 'manual', updatedAt: new Date() })
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.id, employeeId))),
+  );
+  revalidatePath('/');
+  revalidatePath('/cases');
+}
+
+/**
+ * Contacts everyone ticked on the dashboard, each on their own channel.
+ *
+ * A row may not have a case yet - it is simply an absent day - so the case is
+ * created first. The unique key on (employee, date) means a double click or two
+ * people pressing at once still produces one case and one contact.
+ */
+export async function contactSelected(formData: FormData) {
+  const targets = formData.getAll('target').map(String).filter(Boolean);
+  if (!targets.length) return;
+  const { tenantId } = await requireTenant();
+
+  await withTenant(tenantId, async (tx) => {
+    const ctx = await buildContext(tx, tenantId);
+    for (const target of targets) {
+      const [employeeId, date] = target.split('|');
+      if (!employeeId || !date) continue;
+      const caseRow = await ensureCase(tx, tenantId, employeeId, date);
+      if (!caseRow) continue;
+      const employee = await tx.query.employees.findFirst({ where: eq(employees.id, employeeId) });
+      if (employee) await contactCase(ctx, caseRow, employee);
+    }
   });
 
   revalidatePath('/');
