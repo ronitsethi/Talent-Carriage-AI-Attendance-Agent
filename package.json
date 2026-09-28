@@ -16,7 +16,9 @@
     "worker": "tsx src/lib/jobs/worker.ts",
     "mock-hrms": "tsx tools/mock-hrms/server.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:code": "tsx scripts/verification-code.ts",
+    "verify:check": "tsx scripts/verify-preflight.ts"
   },
   "engines": {
     "node": ">=20"

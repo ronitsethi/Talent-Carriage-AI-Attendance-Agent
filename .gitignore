@@ -25,3 +25,4 @@ next-env.d.ts
 # unpacked copy of the demo distribution zip
 /Talent-Carriage-Attendance-Agent/
 /tmp/
+recordings/
