@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "verify:code": "tsx scripts/verification-code.ts",
     "verify:check": "tsx scripts/verify-preflight.ts",
-    "voices": "tsx scripts/voices.ts"
+    "voices": "tsx scripts/voices.ts",
+    "tunnel": "bash scripts/retunnel.sh"
   },
   "engines": {
     "node": ">=20"
