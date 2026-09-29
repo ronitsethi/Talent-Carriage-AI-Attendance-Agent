@@ -67,6 +67,27 @@ class TurnApi:
     async def opening(self) -> Turn:
         return await self._post({})
 
+    async def check(self) -> None:
+        """
+        Proves the platform is reachable before the phone is answered.
+
+        The worker reads APP_BASE_URL once, at startup. Move the tunnel and
+        restart the web app but not this, and every call connects, greets
+        nobody and hangs up - which looks like a broken agent rather than a
+        stale address.
+        """
+        async with self._http.post(
+            f"{APP_BASE_URL}/api/agent/turn",
+            json={"callId": "00000000-0000-0000-0000-000000000000"},
+            headers={"x-agent-token": AGENT_API_TOKEN},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as response:
+            # 404 is the right answer for a call that does not exist. Anything
+            # else - 403 from a dead tunnel, 401 from a stale token - means this
+            # worker cannot do its job.
+            if response.status not in (200, 404):
+                raise RuntimeError(f"{APP_BASE_URL} answered {response.status}; check APP_BASE_URL and AGENT_API_TOKEN")
+
     async def answer(self, case_id: str, speech: str) -> Turn:
         return await self._post({"caseId": case_id, "speech": speech})
 
@@ -173,7 +194,7 @@ async def entrypoint(ctx: JobContext) -> None:
         log.warning("room %s is not an attendance call; leaving it alone", ctx.room.name)
         return
 
-    log.info("joining call %s", call_id)
+    log.info("joining call %s, reporting to %s", call_id, APP_BASE_URL)
 
     # `session.start()` returns once the agent is running, not when the call
     # ends, so this must not be closed in a `finally` around it - that shut the
@@ -186,6 +207,12 @@ async def entrypoint(ctx: JobContext) -> None:
         await http.close()
 
     ctx.add_shutdown_callback(on_shutdown)
+
+    try:
+        await api_client.check()
+    except Exception as problem:
+        log.error("cannot reach the platform: %s", problem)
+        raise
 
     # The customer chooses the voice in the portal. Falling back to the
     # configured default keeps the call working if that lookup fails, because a
