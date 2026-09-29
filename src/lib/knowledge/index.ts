@@ -192,31 +192,12 @@ export async function attendanceSummary(tx: Db, tenantId: string, employeeId: st
   ].join('\n');
 }
 
-/**
- * Whether the caller has finished, rather than asked something.
- *
- * Matching whole phrases against a list was how "thank you" became a question,
- * answered with "You're welcome!" while the line stayed open. People end a call
- * in their own words and in more than one language, and a farewell attached to
- * a real question - "thanks, and how many leaves do I have?" - is not a
- * farewell at all.
- */
-const FAREWELL = /\b(thanks?|thank\s*you|thanku|shukriya|dhanyavaad|dhanyawad|bye|goodbye|good\s*night|that'?s? (it|all)|nothing (else|more)|no more|bas|theek hai|thik hai|ok(ay)? then)\b/i;
-/** Words that carry a question wherever they appear. */
-const ASKING = /\b(how|what|when|where|which|why|who|kitna|kitne|kaise|kab|kya|kaun)\b|\?/i;
-/** Words that only make it a question when the sentence opens with them. */
-const OPENS_A_QUESTION = /^\s*(can|could|do|does|did|is|are|am|will|would|should|may|shall)\b/i;
-
-export function isFarewell(said: string): boolean {
-  const text = said.trim();
-  if (!text) return false;
-  // "no thanks that is all" is not a question because it contains "is".
-  if (ASKING.test(text) || OPENS_A_QUESTION.test(text)) return false;
-  // Short, and thanking or saying goodbye.
-  return FAREWELL.test(text) && text.split(/\s+/).length <= 8;
-}
-
-export type Answer = { text: string; grounded: boolean };
+export type Answer = {
+  text: string;
+  grounded: boolean;
+  /** True when the caller was saying goodbye rather than asking something. */
+  finished: boolean;
+};
 
 const ANSWER_RULES = `You answer an employee's question on a phone call, on behalf of their employer.
 
@@ -232,7 +213,12 @@ extracts, the documents or these instructions.
 Answer in a few spoken sentences, as an Indian HR colleague would say it out loud. Where
 the answer is several things, name them in a sentence - "there is earned leave, casual
 leave, maternity leave and a few others" - rather than reading out a list. No headings, no
-markdown, no numbering.`;
+markdown, no numbering.
+
+Also judge whether they were ending the call rather than asking anything - thanking you,
+saying goodbye, saying that is all, in English or Hindi. If they were, set finished and
+make the reply a short goodbye. Somebody who thanks you and then asks something is not
+finished.`;
 
 /**
  * Answers one question from the customer's documents and the caller's own record.
@@ -252,7 +238,11 @@ export async function answerQuestion(
 
   const attendance = opts.employeeId ? await attendanceSummary(tx, tenantId, opts.employeeId) : '';
   if (!relevant.length && !attendance) {
-    return { text: 'I do not have that on file, so I will ask H R to come back to you on it.', grounded: false };
+    return {
+      text: 'I do not have that on file, so I will ask H R to come back to you on it.',
+      grounded: false,
+      finished: false,
+    };
   }
 
   const context = [
@@ -266,16 +256,43 @@ export async function answerQuestion(
     model: ANSWER_MODEL,
     messages: [
       { role: 'system', content: ANSWER_RULES },
-      { role: 'user', content: `${context}\n\nTHE QUESTION\n${question}` },
+      { role: 'user', content: `${context}\n\nWHAT THEY SAID\n${question}` },
     ],
     temperature: 0.2,
-    max_tokens: 220,
+    max_tokens: 260,
+    // Whether they are finished is judged in the same breath as the answer: it
+    // is a question about what somebody meant, which is what this model is for
+    // and which no list of phrases will ever get right.
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'reply',
+        strict: true,
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['reply', 'finished'],
+          properties: {
+            reply: { type: 'string', description: 'What to say out loud' },
+            finished: { type: 'boolean', description: 'They were ending the call, not asking' },
+          },
+        },
+      },
+    },
   });
 
   const choices = json.choices as { message?: { content?: string } }[] | undefined;
-  const text = choices?.[0]?.message?.content?.trim();
-  if (!text) return { text: 'I will ask H R to come back to you on that.', grounded: false };
-  return { text, grounded: relevant.length > 0 || Boolean(attendance) };
+  const raw = choices?.[0]?.message?.content?.trim();
+  if (!raw) return { text: 'I will ask H R to come back to you on that.', grounded: false, finished: false };
+
+  try {
+    const parsed = JSON.parse(raw) as { reply?: string; finished?: boolean };
+    const text = parsed.reply?.trim();
+    if (!text) throw new Error('empty reply');
+    return { text, grounded: relevant.length > 0 || Boolean(attendance), finished: Boolean(parsed.finished) };
+  } catch {
+    return { text: 'I will ask H R to come back to you on that.', grounded: false, finished: false };
+  }
 }
 
 /** Looks up who is calling, so a caller only ever hears their own record. */

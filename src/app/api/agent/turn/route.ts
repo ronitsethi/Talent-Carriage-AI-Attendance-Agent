@@ -4,7 +4,7 @@ import { calls, cases, employees, tenants, tenantSettings } from '@/db/schema';
 import { closeAnsweredCall, handleTurn, openingTurn } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
 import { withPlatformScope, withTenant } from '@/db';
-import { answerQuestion, employeeByNumber, isFarewell } from '@/lib/knowledge';
+import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
 import { env } from '@/lib/env';
 
 /**
@@ -88,18 +88,6 @@ export async function POST(request: Request) {
             };
           }
 
-          // They have finished rather than asked something. Said here, not in
-          // the worker, because this is where the words are understood.
-          if (isFarewell(question)) {
-            return {
-              say: 'Glad to help. Goodbye.',
-              known: true,
-              voice: settings?.agentVoice ?? 'ritu',
-              pace: Number(settings?.agentVoicePace ?? 0.95),
-              done: true,
-            };
-          }
-
           const reply = await answerQuestion(t, tenant.id, question, {
             employeeId: employee.id,
             employeeName: employee.fullName,
@@ -109,7 +97,9 @@ export async function POST(request: Request) {
             known: true,
             voice: settings?.agentVoice ?? 'ritu',
             pace: Number(settings?.agentVoicePace ?? 0.95),
-            done: false,
+            // The model decides whether they were saying goodbye; it judged the
+            // words, which no list of phrases can.
+            done: reply.finished,
           };
         });
         if (answer) return answer;
