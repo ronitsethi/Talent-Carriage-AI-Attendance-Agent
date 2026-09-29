@@ -1,3 +1,7 @@
+import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { attendanceDays, employees, policyPassages, policyDocuments } from '@/db/schema';
@@ -44,38 +48,44 @@ async function openai(path: string, body: unknown): Promise<Record<string, unkno
 }
 
 /**
- * Reads a PDF, including a scanned one.
+ * Reads a PDF into text with optical character recognition.
  *
- * The model is given the file itself rather than text pulled out of it, because
- * the guideline documents customers actually send are page images with no text
- * layer at all.
+ * Deliberately not a language model. A model asked to transcribe a policy
+ * document produces plausible text, and for numbered clauses carrying figures
+ * "plausible" means invented: in testing, one merged two clauses and reported a
+ * monthly cap as the annual carry-forward limit, and a better one wrote an
+ * encashment clause that does not appear in the document at all. An employee is
+ * told these figures as company rule. OCR can misread a character; it cannot
+ * make up a rule.
+ *
+ * On a server this becomes Azure Document Intelligence. Bytes in, text out -
+ * the same contract, which is why it is one function.
  */
 export async function extractPdfText(buffer: Buffer, filename: string): Promise<string> {
-  const json = await openai('/chat/completions', {
-    model: ANSWER_MODEL,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text:
-              'Transcribe this document to plain text, keeping its headings, numbered clauses and tables in reading order. ' +
-              'Output only the transcription.',
-          },
-          {
-            type: 'file',
-            file: { filename, file_data: `data:application/pdf;base64,${buffer.toString('base64')}` },
-          },
-        ],
-      },
-    ],
-    max_tokens: 16000,
-  });
-  const choices = json.choices as { message?: { content?: string } }[] | undefined;
-  const text = choices?.[0]?.message?.content?.trim() ?? '';
-  if (!text) throw new Error('Nothing could be read from this file');
-  return text;
+  const scratch = await mkdtemp(path.join(tmpdir(), 'policy-'));
+  const file = path.join(scratch, 'document.pdf');
+  try {
+    await writeFile(file, buffer);
+    const text = await new Promise<string>((resolve, reject) => {
+      const child = spawn('python3', [path.resolve('tools/ocr-pdf.py'), file]);
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (chunk) => (out += chunk));
+      child.stderr.on('data', (chunk) => (err += chunk));
+      child.on('error', reject);
+      child.on('close', (code) =>
+        code === 0 ? resolve(out) : reject(new Error(err.trim().slice(0, 300) || `reader exited ${code}`)),
+      );
+    });
+
+    const trimmed = text.trim();
+    if (trimmed.length < 200) {
+      throw new Error(`Almost no text could be read from ${filename}. If it is a photograph, a clearer scan will help.`);
+    }
+    return trimmed;
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 }
 
 /**
