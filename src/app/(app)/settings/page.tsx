@@ -24,7 +24,16 @@ export default async function SettingsPage() {
         <p>How the agent behaves for this customer. Everything here is per customer, not global.</p>
       </section>
 
-      <form action={updateSettings}>
+      {/*
+        Keyed on when the settings last changed.
+
+        React resets an uncontrolled form to its original `defaultValue` once a
+        server action finishes, and re-rendering does not refresh that value -
+        so every field visibly snapped back to what it was before the save, and
+        only looked right again after a reload. Changing the key remounts the
+        form, which makes the freshly saved values the new defaults.
+      */}
+      <form action={updateSettings} key={String(settings.updatedAt)}>
         <div className="layout">
           <div>
             <section className="card pad">
