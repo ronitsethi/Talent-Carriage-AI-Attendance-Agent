@@ -21,7 +21,7 @@ import aiohttp
 from dotenv import load_dotenv
 from livekit import agents, api
 from livekit.agents import Agent, AgentSession, JobContext, StopResponse, WorkerOptions, cli
-from livekit.plugins import openai, silero
+from livekit.plugins import openai, sarvam, silero
 
 load_dotenv()
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -31,6 +31,13 @@ log = logging.getLogger("attendance-agent")
 ROOM_PREFIX = "attendance-call-"
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:3000")
 AGENT_API_TOKEN = os.environ.get("AGENT_API_TOKEN", "")
+
+# The voice, and who listens. Both are settings rather than code so the tone can
+# be changed without a deploy - the right voice is a judgement made by ear.
+VOICE = os.environ.get("AGENT_VOICE", "ritu")
+VOICE_MODEL = os.environ.get("AGENT_VOICE_MODEL", "bulbul:v3-beta")
+VOICE_PACE = float(os.environ.get("AGENT_VOICE_PACE", "0.95"))
+STT_VENDOR = os.environ.get("AGENT_STT", "sarvam")
 
 
 @dataclass
@@ -170,11 +177,27 @@ async def entrypoint(ctx: JobContext) -> None:
     ctx.add_shutdown_callback(on_shutdown)
 
     session = AgentSession(
-        # Listening, deciding how to phrase, speaking. The decisions that matter
-        # are not made here - see the class docstring.
-        stt=openai.STT(model="gpt-4o-transcribe"),
+        # Ears and a voice. The decisions that matter are not made here - see
+        # the class docstring.
+        #
+        # Sarvam is used for both by default: its voices are Indian rather than
+        # an American accent reading Indian names, and it is trained on the
+        # Hinglish people actually speak on the phone. A slightly slower pace
+        # than natural helps on a bad line.
+        stt=(
+            sarvam.STT(language="en-IN")
+            if STT_VENDOR == "sarvam"
+            else openai.STT(model="gpt-4o-transcribe")
+        ),
+        # Present because AgentSession expects one, and used only for phrasing.
+        # It never decides the flow: every turn is intercepted before it speaks.
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=openai.TTS(voice="alloy"),
+        tts=sarvam.TTS(
+            target_language_code="en-IN",
+            model=VOICE_MODEL,
+            speaker=VOICE,
+            pace=VOICE_PACE,
+        ),
         vad=silero.VAD.load(),
     )
 
