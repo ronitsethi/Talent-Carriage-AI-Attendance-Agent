@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
-import { actions, approvals, cases, employees } from '@/db/schema';
+import { actions, approvals, calls, cases, employees, messages } from '@/db/schema';
 import { handleApprovalDecision, handleOfferResponse, offerAction, type ActionContext } from '@/lib/actions/engine';
 import type { FullContext } from '@/lib/runtime';
 import { handleInbound } from '@/lib/conversation/engine';
@@ -302,5 +302,50 @@ describe('the HRMS refusing', () => {
     });
 
     expect(bodies().some((b) => b.text.includes('could not complete'))).toBe(true);
+  });
+});
+
+/**
+ * Resetting one case.
+ *
+ *   "When I reset a case, it should just go back and not this special
+ *    'not contacted'. It should not be opened at all."
+ *
+ * A case rewound to `queued` is not the same thing as a date nobody has
+ * touched: it keeps an Open link and a case id, and the dashboard started it
+ * unticked - so the next bulk contact skipped the date that had just been
+ * reset. Reset now removes the case, and the row rejoins its neighbours.
+ */
+describe('resetting a case', () => {
+  it('removes the case, so the date looks untouched', async () => {
+    const scenario = await makeScenario({ defaultChannel: 'whatsapp' }, { preferredChannel: 'whatsapp' });
+    try {
+      await withTenant(scenario.tenantId, async (tx) => {
+        await giveAttendance(tx, scenario.tenantId, scenario.employeeId, [
+          { date: '2026-09-21', meaning: 'absent_full', raw: 'A' },
+        ]);
+        await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'manual' });
+
+        const before = await tx.select().from(cases);
+        expect(before).toHaveLength(1);
+        expect(scenario.channel.history()).toHaveLength(1);
+
+        // What resetCase does, in its order.
+        const caseId = before[0]!.id;
+        await tx.delete(messages).where(eq(messages.caseId, caseId));
+        await tx.delete(calls).where(eq(calls.caseId, caseId));
+        await tx.delete(cases).where(eq(cases.id, caseId));
+
+        const after = await tx.select().from(cases);
+        expect(after, 'no case at all, not a rewound one').toHaveLength(0);
+
+        // And the date can be contacted again, exactly as if for the first time.
+        const again = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'manual' });
+        expect(again.messagesSent).toBe(1);
+        expect(scenario.channel.history()).toHaveLength(2);
+      });
+    } finally {
+      await scenario.cleanup();
+    }
   });
 });

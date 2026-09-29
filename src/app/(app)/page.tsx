@@ -39,12 +39,17 @@ export default async function DashboardPage({
   const rangeTo = to ?? latest;
 
   const flagged = await flaggedInRange(tenantId, rangeFrom, rangeTo);
-  const notYetContacted = flagged.filter((row) => !row.caseId);
+  // "Not contacted" means nobody has been asked - which includes a case that
+  // exists but has never gone out, as happens when sending is switched off.
+  // Judging by the case id alone left such rows unticked, so pressing Contact
+  // silently skipped exactly the dates that most needed contacting.
+  const awaitingContact = (row: (typeof flagged)[number]) => !row.caseId || row.caseStatus === 'queued';
+  const notYetContacted = flagged.filter(awaitingContact);
   // Anyone not yet contacted starts ticked. The signature changes whenever the
   // table does, which resets the selection to those defaults.
   const selectionRows = flagged.map((row) => ({
     value: `${row.employeeId}|${row.attDate}`,
-    selected: !row.caseId,
+    selected: awaitingContact(row),
   }));
   const selectionKey = selectionRows.map((row) => `${row.value}:${row.selected ? 1 : 0}`).join(',');
   const caps = capabilities();

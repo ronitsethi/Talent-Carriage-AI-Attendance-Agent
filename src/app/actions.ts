@@ -238,9 +238,17 @@ export async function importAttendance(formData: FormData) {
 }
 
 /**
- * Puts one case back to the start: its conversation is removed and it becomes a
- * fresh, unasked case. Used to re-run a demo, or to start again after a wrong
- * number or a mistaken reply.
+ * Undoes a case entirely, so the date looks untouched again.
+ *
+ * The case is deleted rather than rewound. A case rewound to `queued` is not
+ * the same thing as a date nobody has contacted: it still shows an Open link,
+ * still carries a case id, and - worst of all - the dashboard starts it
+ * unticked, so the next "Contact selected" would quietly skip the very date
+ * that had just been reset. Deleting it puts the row back among its
+ * neighbours, and the case is created again the moment anyone is contacted.
+ *
+ * Used to re-run a demo, or to start again after a wrong number or a mistaken
+ * reply. `resetAllCases` has always worked this way; this now matches it.
  */
 export async function resetCase(formData: FormData) {
   const { tenantId } = await requireTenant();
@@ -254,33 +262,7 @@ export async function resetCase(formData: FormData) {
 
     await tx.delete(messages).where(eq(messages.caseId, caseId));
     await tx.delete(actions).where(eq(actions.caseId, caseId));
-    // Calls too, or the portal keeps showing the transcript of a conversation
-    // that has been reset away - which looks exactly like the reset failing.
     await tx.delete(calls).where(eq(calls.caseId, caseId));
-    await tx
-      .update(cases)
-      .set({
-        status: 'queued',
-        askedAt: null,
-        firstMessageId: null,
-        answeredAt: null,
-        replyOption: null,
-        replyIntent: null,
-        replyText: null,
-        aiUsed: false,
-        followUpDueAt: null,
-        followUpSentAt: null,
-        followUpReply: null,
-        callDueAt: null,
-        callAttempts: 0,
-        resolvedAt: null,
-        closeReason: null,
-        needsHrReason: null,
-        error: null,
-        context: {},
-        updatedAt: new Date(),
-      })
-      .where(eq(cases.id, caseId));
 
     // The employee may now be mid-conversation about a case that no longer
     // exists, so clear the pointer rather than leaving it dangling.
@@ -288,11 +270,14 @@ export async function resetCase(formData: FormData) {
       .update(conversations)
       .set({ activeCaseId: null })
       .where(and(eq(conversations.employeeId, target.employeeId), eq(conversations.activeCaseId, caseId)));
+
+    await tx.delete(cases).where(eq(cases.id, caseId));
   });
 
-  revalidatePath(`/cases/${caseId}`);
   revalidatePath('/cases');
   revalidatePath('/');
+  // The case page no longer has a case to show, so go back to the list.
+  redirect('/cases');
 }
 
 /**
