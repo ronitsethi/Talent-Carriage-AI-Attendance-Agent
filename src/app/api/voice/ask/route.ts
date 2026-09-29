@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
 import { tenants } from '@/db/schema';
 import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
-import { promptXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
+import { questionXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
 
 /**
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
 
   const text = answer?.text ?? 'Sorry, something went wrong at our end. Please contact your H R team.';
   return xmlResponse(
-    promptXml({
+    questionXml({
       intro: text,
       speak: 'Is there anything else?',
       actionUrl: `${env.APP_BASE_URL}/api/voice/ask?from=${encodeURIComponent(from)}`,

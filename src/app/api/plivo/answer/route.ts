@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { env } from '@/lib/env';
+import { inboundXml } from '@/app/api/voice/inbound/route';
 
 /**
  * Answers a call arriving on the Plivo number, for WhatsApp verification.
@@ -67,8 +68,10 @@ export async function GET(request: Request) {
   // console.log('[verify] recording the call; run `npm run verify:code` once it ends');
   // return recordResponse(`${env.APP_BASE_URL}/api/plivo/recording`);
 
-  // Incoming calls now reach the attendance agent.
-  return NextResponse.redirect(new URL('/api/voice/inbound', env.APP_BASE_URL), 307);
+  // Incoming calls reach the attendance agent. Answered here rather than
+  // redirected: a call's answer URL is fetched once, and sending Plivo somewhere
+  // else for the XML is a hop that can only fail.
+  return inboundXml(request);
 }
 
 /** Plivo posts by default; both verbs answer the same way. */

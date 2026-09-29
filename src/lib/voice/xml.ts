@@ -79,6 +79,44 @@ function getInput(speak: string, actionUrl: string, language: string, timeout: n
   );
 }
 
+/**
+ * A prompt for an open question, rather than one of four answers.
+ *
+ * The keypad prompt above is the wrong shape for this and was being reused: it
+ * completes on a single digit, uses a speech model built for short commands,
+ * and carries hints listing "absent, working, leave, one, two, three, four".
+ * None of that can hear "how many days was I absent in August", which is why an
+ * incoming call sat silent and then gave up.
+ */
+export function questionXml({
+  speak,
+  intro,
+  actionUrl,
+  language = 'en-IN',
+  timeoutSeconds = 20,
+}: PromptOptions): string {
+  const listen = (prompt: string | null) =>
+    `  <GetInput action="${escape(actionUrl)}" method="POST" inputType="speech" ` +
+    `language="${language}" speechModel="phone_call" executionTimeout="${Math.min(60, Math.max(5, timeoutSeconds))}" ` +
+    // Long enough to let somebody finish a sentence, and to sit through the
+    // pause in the middle of one.
+    `speechEndTimeout="3" profanityFilter="false" retries="1">\n` +
+    (prompt ? `    <Speak language="${language}">${escape(prompt)}</Speak>\n` : '') +
+    `  </GetInput>`;
+
+  return xml(
+    [
+      intro ? `  <Speak language="${language}">${escape(intro)}</Speak>` : null,
+      listen(speak),
+      listen('Sorry, I did not catch that. Please say it once more.'),
+      `  <Speak language="${language}">I could not hear you. Please call again, or contact your H R team. Goodbye.</Speak>`,
+      '  <Hangup/>',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  );
+}
+
 export function speakAndHangupXml(speak: string, language = 'en-IN'): string {
   return xml(`  <Speak language="${language}">${escape(speak)}</Speak>\n  <Hangup/>`);
 }

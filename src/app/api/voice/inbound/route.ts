@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
 import { tenants } from '@/db/schema';
 import { employeeByNumber } from '@/lib/knowledge';
-import { promptXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
+import { questionXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
 
 /**
@@ -12,7 +12,7 @@ import { env } from '@/lib/env';
  * decides whose attendance they can hear about - there is no other way in, and
  * an unrecognised number is told so rather than being offered a menu.
  */
-async function handle(request: Request) {
+export async function inboundXml(request: Request): Promise<Response> {
   const form = await request.formData().catch(() => new FormData());
   const from = String(form.get('From') ?? new URL(request.url).searchParams.get('From') ?? '');
 
@@ -37,7 +37,7 @@ async function handle(request: Request) {
 
   const first = found.name.split(/\s+/)[0];
   return xmlResponse(
-    promptXml({
+    questionXml({
       intro: `Hello ${first}. This is the attendance assistant.`,
       speak: 'What would you like to know? You can ask about your attendance, or about leave, overtime or the exit process.',
       actionUrl: `${env.APP_BASE_URL}/api/voice/ask?from=${encodeURIComponent(from)}`,
@@ -46,5 +46,5 @@ async function handle(request: Request) {
   );
 }
 
-export const GET = handle;
-export const POST = handle;
+export const GET = inboundXml;
+export const POST = inboundXml;
