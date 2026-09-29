@@ -3,9 +3,10 @@ import { getActiveTenantId, getSession } from '@/lib/auth';
 import { mappingOverview } from '@/lib/queries';
 import { meaningLabel, formatTime } from '@/lib/display';
 import { analyseMappingFile, importAttendance, saveMapping, setCodeMeaning } from '@/app/actions';
-import { MappingEditor } from './editor';
+import { MappingForm, type CodeRow, type MappingDraft } from './editor';
 import { ALL_MEANINGS } from '@/lib/mapping/meanings';
 import type { Analysis } from '@/lib/mapping/analyse';
+import type { FieldMap } from '@/db/schema';
 
 export default async function MappingPage({
   searchParams,
@@ -24,6 +25,8 @@ export default async function MappingPage({
   const { imported, unresolved } = await searchParams;
   const openUnmapped = unmapped.filter((u) => !u.resolvedAt);
   const analysis = (draft?.detected ?? null) as Analysis | null;
+  const editing = toDraft(profile, codes, analysis);
+  const suggestions = analysis?.columns.filter((c) => !c.looksLikeDay).map((c) => c.name) ?? [];
 
   return (
     <>
@@ -93,57 +96,21 @@ export default async function MappingPage({
         </section>
       ) : null}
 
-      {analysis && draft ? (
-        <form action={saveMapping} style={{ marginTop: 16 }}>
-          <MappingEditor analysis={analysis} profileId={draft.id} filename={draft.sourceFilename} />
-        </form>
-      ) : null}
+      <form action={saveMapping} style={{ marginTop: 16 }}>
+        <MappingForm
+          initial={editing}
+          suggestions={suggestions}
+          heading={profile ? 'The mapping for this customer' : 'Set up the mapping for this customer'}
+          note={
+            profile
+              ? 'Change anything here and save. Nothing already imported is altered; the next import is read with the new rules.'
+              : 'Fill this in from their column names and their list of codes. You can do it before they send a file — or upload one below and it will fill in what it can.'
+          }
+        />
+      </form>
 
       <div className="layout">
         <div>
-          <section className="section">
-            <div className="section-head">
-              <h2>Attendance codes</h2>
-              <span className="hint">{profile ? `${profile.name} · version ${profile.version}` : 'No active profile'}</span>
-            </div>
-            <div className="card table-scroll">
-              <table className="data">
-                <thead>
-                  <tr>
-                    <th>Their code</th>
-                    <th>Means</th>
-                    <th>Chased</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {codes.map((code) => (
-                    <tr key={code.id}>
-                      <td>
-                        <code>{code.code}</code>
-                      </td>
-                      <td>{meaningLabel(code.meaning)}</td>
-                      <td>
-                        {code.chase === null ? (
-                          <span className="sub">default</span>
-                        ) : code.chase ? (
-                          <span className="pill pending">Yes</span>
-                        ) : (
-                          <span className="pill idle">No</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {!codes.length ? (
-                    <tr>
-                      <td className="empty" colSpan={3}>
-                        No code mappings yet.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </section>
 
           <section className="section">
             <div className="section-head">
@@ -220,11 +187,12 @@ export default async function MappingPage({
 
           <section className="card pad">
             <div className="section-head">
-              <h2>Change the mapping</h2>
+              <h2>Fill the form from a file</h2>
             </div>
             <p className="hint" style={{ marginBottom: 12 }}>
-              When their export changes shape, or a new customer sends a different file. Upload it and you map it on
-              screen — it is imported with the new rules once you save, so the file you mapped is the file that is read.
+              Optional. Upload one of their files and the form above is filled in with what it can work out — the
+              column names it recognises and the codes it finds. Nothing is imported and nothing is saved until you
+              press Save mapping.
             </p>
             <form action={analyseMappingFile}>
               <div className="field">
@@ -232,7 +200,7 @@ export default async function MappingPage({
                 <input className="input" type="file" id="mapFile" name="file" accept=".xlsx,.xls,.csv" required />
               </div>
               <button className="btn" type="submit" style={{ marginTop: 10 }}>
-                Map this file
+                Fill in the form
               </button>
             </form>
           </section>
@@ -259,4 +227,62 @@ export default async function MappingPage({
       </div>
     </>
   );
+}
+
+/**
+ * What the form opens with: the mapping in force, or the guesses from a file
+ * somebody uploaded to save typing, or an empty form.
+ */
+function toDraft(
+  profile: { name: string; hrmsHint: string | null; fieldMap: FieldMap } | null | undefined,
+  codes: { code: string; meaning: string; chase: boolean | null }[],
+  analysis: Analysis | null,
+): MappingDraft {
+  const thisYear = String(new Date().getFullYear());
+
+  if (profile) {
+    const dateLayout = profile.fieldMap.dateLayout;
+    const statusLayout = profile.fieldMap.statusLayout;
+    return {
+      name: profile.name,
+      hrmsHint: profile.hrmsHint ?? '',
+      layout: dateLayout.kind,
+      dateColumn: dateLayout.kind === 'row_per_day' ? dateLayout.column : '',
+      headerPattern: dateLayout.kind === 'column_per_day' ? dateLayout.headerPattern : '',
+      year: dateLayout.kind === 'column_per_day' ? String(dateLayout.year ?? '') : '',
+      separator: statusLayout.kind === 'two_session' ? statusLayout.separator : '',
+      fields: Object.fromEntries(
+        Object.entries(profile.fieldMap.fields).map(([field, spec]) => [field, spec.columns.join(', ')]),
+      ),
+      codes: codes.map((c) => ({ code: c.code, meaning: c.meaning as CodeRow['meaning'], chase: c.chase === true })),
+    };
+  }
+
+  if (analysis) {
+    return {
+      name: `${analysis.sheetName} export`,
+      hrmsHint: '',
+      layout: analysis.layout,
+      dateColumn: analysis.columns.find((c) => /date|day/i.test(c.name))?.name ?? '',
+      headerPattern: '',
+      year: String(analysis.year ?? new Date().getFullYear()),
+      separator: analysis.separator ?? '',
+      fields: Object.fromEntries(
+        Object.entries(analysis.fields).map(([field, columns]) => [field, (columns ?? []).join(', ')]),
+      ),
+      codes: analysis.codes.map((c) => ({ code: c.code, meaning: c.guess, chase: false })),
+    };
+  }
+
+  return {
+    name: '',
+    hrmsHint: '',
+    layout: 'row_per_day',
+    dateColumn: '',
+    headerPattern: '',
+    year: thisYear,
+    separator: '',
+    fields: {},
+    codes: [],
+  };
 }

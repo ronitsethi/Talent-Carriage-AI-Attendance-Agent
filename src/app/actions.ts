@@ -608,77 +608,94 @@ export async function analyseMappingFile(formData: FormData) {
 }
 
 /**
- * Saves the corrected mapping and makes it the one imports use.
+ * Saves the mapping as it was filled in on the page.
  *
- * The previous active profile is archived rather than deleted, so an import made
- * last month can still be explained by the mapping that was in force then.
+ * No file is involved. The mapping is configuration - somebody with their
+ * customer's column names and code list can enter it before any data arrives,
+ * and change it afterwards without re-uploading anything.
+ *
+ * The previous mapping is archived rather than deleted, so an import made last
+ * month can still be explained by the rules that were in force then.
  */
 export async function saveMapping(formData: FormData) {
   const { tenantId } = await requireTenant();
-  const draftId = String(formData.get('profileId') ?? '');
 
-  const missing = REQUIRED_FIELDS.filter((field) => !String(formData.get(`field:${field}`) ?? '').trim());
+  const text = (key: string) => String(formData.get(key) ?? '').trim();
+  const columnsFor = (field: PlatformField) =>
+    text(`field:${field}`)
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+  const missing = REQUIRED_FIELDS.filter((field) => !columnsFor(field).length);
   if (missing.length) {
-    redirect(
-      '/mapping?problem=' +
-        encodeURIComponent(`These are needed before a file can be read: ${missing.join(', ')}`),
-    );
+    const names = missing.map((f) => f.replace(/_/g, ' ')).join(', ');
+    redirect('/mapping?problem=' + encodeURIComponent(`Still needed before a file can be read: ${names}`));
   }
 
-  let imported = '';
-  let unresolved = 0;
+  const fields: Partial<Record<PlatformField, string[]>> = {};
+  for (const field of PLATFORM_FIELDS) {
+    const columns = columnsFor(field);
+    if (columns.length) fields[field] = columns;
+  }
+
+  const layout = text('layout') === 'column_per_day' ? 'column_per_day' : 'row_per_day';
+  const fieldMap = buildFieldMap({
+    sheetName: text('sheetName'),
+    fields,
+    layout,
+    dateColumn: text('dateColumn'),
+    headerPattern: text('headerPattern'),
+    year: Number(formData.get('year')) || null,
+    separator: text('separator') || null,
+  });
+
+  // The three code columns arrive as parallel lists, one entry per row.
+  const names = formData.getAll('codeName').map(String);
+  const meanings = formData.getAll('codeMeaning').map(String);
+  const chases = formData.getAll('codeChase').map(String);
 
   await withTenant(tenantId, async (tx) => {
-    const draft = await tx.query.mappingProfiles.findFirst({
-      where: and(eq(mappingProfiles.tenantId, tenantId), eq(mappingProfiles.id, draftId)),
-    });
-    if (!draft) return;
+    const name = text('name') || 'Mapping';
 
-    const analysis = draft.detected as unknown as Analysis | null;
-    const fields: Partial<Record<PlatformField, string[]>> = {};
-    for (const field of PLATFORM_FIELDS) {
-      const chosen = formData.getAll(`field:${field}`).map(String).filter(Boolean);
-      if (chosen.length) fields[field] = chosen;
-    }
-
-    const layout = String(formData.get('layout') ?? 'row_per_day') as 'column_per_day' | 'row_per_day';
-    const fieldMap = buildFieldMap({
-      sheetName: String(formData.get('sheetName') ?? analysis?.sheetName ?? ''),
-      fields,
-      layout,
-      dateColumn: String(formData.get('dateColumn') ?? ''),
-      year: Number(formData.get('year')) || null,
-      separator: String(formData.get('separator') ?? '') || null,
-    });
+    // Saving keeps the old mapping under the same name, so each save is the
+    // next version of it. Without this, editing and saving a mapping collides
+    // with the one it replaces.
+    const previous = await tx
+      .select({ version: mappingProfiles.version })
+      .from(mappingProfiles)
+      .where(and(eq(mappingProfiles.tenantId, tenantId), eq(mappingProfiles.name, name)))
+      .orderBy(desc(mappingProfiles.version))
+      .limit(1);
 
     const [saved] = await tx
       .insert(mappingProfiles)
       .values({
         tenantId,
-        name: String(formData.get('name') ?? draft.name),
+        name,
+        version: (previous[0]?.version ?? 0) + 1,
         status: 'active',
-        hrmsHint: String(formData.get('hrmsHint') ?? '') || null,
+        hrmsHint: text('hrmsHint') || null,
         fieldMap,
-        detected: draft.detected,
-        notes: draft.notes,
+        detected: null,
         activatedAt: new Date(),
       })
       .returning();
 
-    // Every code the file contained gets a meaning, including the ones left as
-    // "unknown" - recorded deliberately, so nobody is messaged about them.
-    const codes = (analysis?.codes ?? []).map((c) => c.code);
-    const rows = codes
-      .map((code) => ({
+    const rows = names
+      .map((code, index) => ({
         tenantId,
         profileId: saved!.id,
-        code: code.toUpperCase(),
-        meaning: String(formData.get(`code:${code}`) ?? 'unknown') as Meaning,
-        chase: formData.get(`chase:${code}`) === 'on' ? true : null,
+        code: code.trim().toUpperCase(),
+        meaning: (meanings[index] ?? 'unknown') as Meaning,
+        chase: chases[index] === 'yes' ? true : null,
         confirmedAt: new Date(),
       }))
       .filter((row) => row.code);
-    if (rows.length) await tx.insert(codeMappings).values(rows);
+
+    // A code typed twice is one code; the last one entered wins.
+    const unique = new Map(rows.map((row) => [row.code, row]));
+    if (unique.size) await tx.insert(codeMappings).values([...unique.values()]);
 
     await tx
       .update(mappingProfiles)
@@ -691,27 +708,15 @@ export async function saveMapping(formData: FormData) {
         ),
       );
 
-    await tx.delete(mappingProfiles).where(eq(mappingProfiles.id, draftId));
-
-    // The file that was just mapped is the file to read. Asking for it a second
-    // time is how the mapping and the data drift apart.
-    if (draft.sourceFile) {
-      const result = await importAttendanceFile(tx, tenantId, Buffer.from(draft.sourceFile, 'base64'), {
-        source: 'upload',
-        filename: draft.sourceFilename ?? 'mapped file',
-      });
-      await closeCasesExplainedByData(tx, tenantId);
-      imported = `${result.report.daysImported} days for ${result.report.employeesSeen} employees`;
-      unresolved = Object.keys(result.report.unmappedCodes).length;
-    }
+    // Any draft was only ever a way of filling this form in.
+    await tx
+      .delete(mappingProfiles)
+      .where(and(eq(mappingProfiles.tenantId, tenantId), eq(mappingProfiles.status, 'draft')));
   });
 
   revalidatePath('/mapping');
   revalidatePath('/');
-  const params = new URLSearchParams({ saved: '1' });
-  if (imported) params.set('imported', imported);
-  if (unresolved) params.set('unresolved', String(unresolved));
-  redirect(`/mapping?${params.toString()}`);
+  redirect('/mapping?saved=1');
 }
 
 /** Gives one code a meaning, from the unmapped-codes list after an import. */

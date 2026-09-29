@@ -1,18 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import type { Analysis } from '@/lib/mapping/analyse';
 import { PLATFORM_FIELDS, REQUIRED_FIELDS, type PlatformField } from '@/lib/mapping/apply';
-import { ALL_MEANINGS } from '@/lib/mapping/meanings';
+import { ALL_MEANINGS, type Meaning } from '@/lib/mapping/meanings';
 import { meaningLabel } from '@/lib/display';
 
 /**
- * The screen where somebody teaches the platform to read one customer's file.
+ * The mapping, as a form you fill in.
  *
- * Everything here starts as a guess made from the file itself, and every guess
- * is editable. That is the point: a column matched by its heading is a
- * coincidence until a person confirms it, and a code guessed from its letter is
- * how you end up telephoning people who were never absent.
+ * This is configuration, not a file-reading exercise. Somebody holding their
+ * customer's column names and code list can enter the whole thing here before a
+ * single file arrives, and can come back and change it afterwards. Uploading a
+ * file only fills these boxes in as a convenience; it is never how the mapping
+ * is made.
  */
 
 const FIELD_LABELS: Record<PlatformField, string> = {
@@ -35,48 +35,90 @@ const FIELD_LABELS: Record<PlatformField, string> = {
   language: 'Language',
 };
 
-export function MappingEditor({
-  analysis,
-  profileId,
-  filename,
+const FIELD_NOTES: Partial<Record<PlatformField, string>> = {
+  employee_name: 'Two columns? Separate with a comma: First Name, Last Name',
+  attendance_status: 'Only when their file has a row for each day',
+  manager_ref: "The manager's employee code, not their name",
+  exit_date: 'Stops the agent ever ringing somebody who has left',
+};
+
+export type CodeRow = { code: string; meaning: Meaning; chase: boolean };
+
+export type MappingDraft = {
+  name: string;
+  hrmsHint: string;
+  layout: 'column_per_day' | 'row_per_day';
+  dateColumn: string;
+  headerPattern: string;
+  year: string;
+  separator: string;
+  fields: Partial<Record<PlatformField, string>>;
+  codes: CodeRow[];
+};
+
+const DAY_THEN_MONTH = '^\\s*(\\d{1,2})\\s*[/-]\\s*(\\d{1,2})';
+const DAY_ONLY = '^\\s*(?<day>\\d{1,2})\\s*$';
+const DAY_THEN_NAME = '^\\s*(?<day>\\d{1,2})[-/](?<month>[A-Za-z]{3})';
+
+export function MappingForm({
+  initial,
+  suggestions = [],
+  heading,
+  note,
 }: {
-  analysis: Analysis;
-  profileId: string;
-  filename?: string | null;
+  initial: MappingDraft;
+  /** Headings seen in a real file, offered as you type. Never a limit. */
+  suggestions?: string[];
+  heading: string;
+  note: string;
 }) {
-  const [layout, setLayout] = useState(analysis.layout);
-  const ordinary = analysis.columns.filter((c) => !c.looksLikeDay);
+  const [layout, setLayout] = useState(initial.layout);
+  const [codes, setCodes] = useState<CodeRow[]>(
+    initial.codes.length ? initial.codes : [{ code: '', meaning: 'absent_full', chase: false }],
+  );
+
+  const setCode = (index: number, patch: Partial<CodeRow>) =>
+    setCodes((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
 
   return (
     <div className="card pad">
       <div className="section-head">
-        <h2>Match their file to ours</h2>
-        <span className="hint">
-          {analysis.sheetName} · {analysis.rowCount} rows · {analysis.columns.length} columns
-        </span>
+        <h2>{heading}</h2>
       </div>
-
-      <p className="hint" style={{ marginTop: 0, marginBottom: 16 }}>
-        Everything below was guessed from the file. Check each one — especially the codes, which decide who gets
-        telephoned.
+      <p className="hint" style={{ marginTop: 0, marginBottom: 18 }}>
+        {note}
       </p>
 
-      <input type="hidden" name="profileId" value={profileId} />
-      <input type="hidden" name="sheetName" value={analysis.sheetName} />
+      <datalist id="known-columns">
+        {suggestions.map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
 
       <div className="row" style={{ padding: 0, marginBottom: 18 }}>
         <div className="field" style={{ minWidth: 240 }}>
           <label htmlFor="name">Name this mapping</label>
-          <input className="input" id="name" name="name" defaultValue={`${analysis.sheetName} export`} />
+          <input
+            className="input"
+            id="name"
+            name="name"
+            defaultValue={initial.name}
+            placeholder="e.g. Aastha monthly register"
+          />
         </div>
         <div className="field" style={{ minWidth: 200 }}>
           <label htmlFor="hrmsHint">Which HRMS (optional)</label>
-          <input className="input" id="hrmsHint" name="hrmsHint" placeholder="e.g. TimeOffice, greytHR" />
+          <input
+            className="input"
+            id="hrmsHint"
+            name="hrmsHint"
+            defaultValue={initial.hrmsHint}
+            placeholder="TimeOffice, greytHR…"
+          />
         </div>
       </div>
 
-      {/* ---------- how the dates are laid out ---------- */}
-      <h3 style={{ fontSize: 15, margin: '18px 0 8px' }}>How the dates are laid out</h3>
+      <h3 style={{ fontSize: 15, margin: '20px 0 8px' }}>How their file lays out the dates</h3>
       <div className="switch-group" style={{ marginBottom: 12 }}>
         {(['column_per_day', 'row_per_day'] as const).map((option) => (
           <button
@@ -85,186 +127,188 @@ export function MappingEditor({
             className={`switch-option ${layout === option ? 'on' : ''}`}
             onClick={() => setLayout(option)}
           >
-            {option === 'column_per_day' ? 'One column per day' : 'One row per day'}
+            {option === 'column_per_day' ? 'A column for each day' : 'A row for each day'}
           </button>
         ))}
       </div>
       <input type="hidden" name="layout" value={layout} />
 
       {layout === 'column_per_day' ? (
-        <>
-          <p className="hint" style={{ marginTop: 0 }}>
-            {analysis.dayColumns.length} columns look like dates
-            {analysis.dayColumns.length
-              ? `, from "${analysis.dayColumns[0]}" to "${analysis.dayColumns[analysis.dayColumns.length - 1]}"`
-              : ''}
-            . Everything else is offered below as an ordinary column.
-          </p>
-          <div className="field" style={{ maxWidth: 220 }}>
+        <div className="row" style={{ padding: 0 }}>
+          <div className="field" style={{ minWidth: 290 }}>
+            <label htmlFor="headerPattern">What their day headings look like</label>
+            <select className="input" id="headerPattern" name="headerPattern" defaultValue={initial.headerPattern}>
+              <option value={DAY_THEN_MONTH}>Day then month — &ldquo;1 / 8&rdquo;, &ldquo;1-8 | Sat&rdquo;</option>
+              <option value={DAY_ONLY}>Just the day number — &ldquo;1&rdquo;, &ldquo;2&rdquo;, &ldquo;3&rdquo;</option>
+              <option value={DAY_THEN_NAME}>Day then month name — &ldquo;01-Sep&rdquo;</option>
+            </select>
+          </div>
+          <div className="field" style={{ minWidth: 150 }}>
             <label htmlFor="year">Which year</label>
-            <input className="input" type="number" id="year" name="year" min="2000" max="2100" defaultValue={analysis.year ?? new Date().getFullYear()} />
+            <input
+              className="input"
+              type="number"
+              id="year"
+              name="year"
+              min="2000"
+              max="2100"
+              defaultValue={initial.year}
+            />
             <p className="hint" style={{ marginTop: 5 }}>
-              {analysis.year
-                ? `Read from the file. Change it if the register is for an earlier year.`
-                : `The file does not say, so this is a guess. Check it — the wrong year files every absence under the wrong date.`}
+              Headings like &ldquo;1 / 8&rdquo; carry no year. The wrong one files every absence twelve months out.
             </p>
           </div>
-        </>
+        </div>
       ) : (
         <div className="field" style={{ maxWidth: 320 }}>
-          <label htmlFor="dateColumn">Which column holds the date</label>
-          <select className="input" id="dateColumn" name="dateColumn" defaultValue={guessDateColumn(ordinary)}>
-            {ordinary.map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <label htmlFor="dateColumn">Their date column is called</label>
+          <input
+            className="input"
+            id="dateColumn"
+            name="dateColumn"
+            list="known-columns"
+            defaultValue={initial.dateColumn}
+            placeholder="Date"
+          />
         </div>
       )}
 
-      <div className="field" style={{ maxWidth: 320, marginTop: 12 }}>
-        <label htmlFor="separator">Two halves in one cell?</label>
-        <select className="input" id="separator" name="separator" defaultValue={analysis.separator ?? ''}>
+      <div className="field" style={{ maxWidth: 380, marginTop: 12 }}>
+        <label htmlFor="separator">Two halves of the day in one cell?</label>
+        <select className="input" id="separator" name="separator" defaultValue={initial.separator}>
           <option value="">No — one code per day</option>
-          <option value="|">Yes, split on | (as in A|P)</option>
-          <option value="/">Yes, split on / (as in A/P)</option>
-          <option value="-">Yes, split on - (as in A-P)</option>
+          <option value="|">Yes, split on | — as in A|P</option>
+          <option value="/">Yes, split on / — as in A/P</option>
+          <option value="-">Yes, split on - — as in A-P</option>
         </select>
       </div>
 
-      {/* ---------- which column is which ---------- */}
-      <h3 style={{ fontSize: 15, margin: '26px 0 4px' }}>Which of their columns is which</h3>
+      <h3 style={{ fontSize: 15, margin: '26px 0 4px' }}>What their columns are called</h3>
       <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-        Only the first three are needed. The rest improve the portal but nothing depends on them.
+        Type the heading exactly as it appears in their file. Leave anything they do not send blank — only the first
+        three are needed.
       </p>
 
       <div className="table-scroll">
         <table className="data">
           <thead>
             <tr>
-              <th style={{ width: '32%' }}>We call it</th>
-              <th style={{ width: '34%' }}>Their column</th>
-              <th>What that column contains</th>
+              <th style={{ width: '38%' }}>We call it</th>
+              <th>They call it</th>
             </tr>
           </thead>
           <tbody>
             {PLATFORM_FIELDS.map((field) => (
-              <FieldRow key={field} field={field} columns={ordinary} chosen={analysis.fields[field] ?? []} />
+              <tr key={field}>
+                <td>
+                  {FIELD_LABELS[field]}
+                  {REQUIRED_FIELDS.includes(field) ? (
+                    <span className="pill danger" style={{ marginLeft: 6 }}>
+                      needed
+                    </span>
+                  ) : null}
+                  {FIELD_NOTES[field] ? <div className="sub">{FIELD_NOTES[field]}</div> : null}
+                </td>
+                <td>
+                  <input
+                    className="input"
+                    name={`field:${field}`}
+                    list="known-columns"
+                    defaultValue={initial.fields[field] ?? ''}
+                    placeholder="—"
+                  />
+                </td>
+              </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* ---------- what their codes mean ---------- */}
       <h3 style={{ fontSize: 15, margin: '26px 0 4px' }}>What their codes mean</h3>
       <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-        Every code in the file, most common first. Anything left as <strong>Not recognised</strong> is never messaged
-        about — which is the safe answer when you are not sure.
+        Every code that can appear in their file. Anything not listed is never messaged about, so a code you are unsure
+        of is safest left out until you have asked them.
       </p>
 
-      {analysis.codes.length ? (
-        <div className="table-scroll">
-          <table className="data">
-            <thead>
-              <tr>
-                <th style={{ width: 110 }}>Their code</th>
-                <th style={{ width: 90 }}>Times seen</th>
-                <th>Means</th>
+      <div className="table-scroll">
+        <table className="data">
+          <thead>
+            <tr>
+              <th style={{ width: 140 }}>Their code</th>
+              <th>Means</th>
+              <th style={{ width: 80 }}>Chase</th>
+              <th style={{ width: 90 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {codes.map((row, index) => (
+              <tr key={index}>
+                <td>
+                  <input
+                    className="input"
+                    name="codeName"
+                    value={row.code}
+                    onChange={(event) => setCode(index, { code: event.target.value })}
+                    placeholder="A"
+                  />
+                </td>
+                <td>
+                  <select
+                    className="input"
+                    name="codeMeaning"
+                    value={row.meaning}
+                    onChange={(event) => setCode(index, { meaning: event.target.value as Meaning })}
+                  >
+                    {ALL_MEANINGS.map((meaning) => (
+                      <option key={meaning} value={meaning}>
+                        {meaning === 'unknown' ? 'Not recognised — never chase' : meaningLabel(meaning)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  {/* A hidden twin, because an unticked checkbox submits nothing
+                      and the three code columns have to stay the same length. */}
+                  <input type="hidden" name="codeChase" value={row.chase ? 'yes' : 'no'} />
+                  <input
+                    type="checkbox"
+                    checked={row.chase}
+                    onChange={(event) => setCode(index, { chase: event.target.checked })}
+                    title="Chase this code even when its meaning is not normally chased"
+                  />
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => setCodes((rows) => rows.filter((_, i) => i !== index))}
+                  >
+                    Remove
+                  </button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {analysis.codes.map((code) => (
-                <tr key={code.code}>
-                  <td>
-                    <code>{code.code}</code>
-                  </td>
-                  <td className="nowrap">{code.count.toLocaleString('en-IN')}</td>
-                  <td>
-                    <select
-                      className="input"
-                      name={`code:${code.code}`}
-                      defaultValue={code.guess}
-                      style={{ maxWidth: 320 }}
-                    >
-                      {ALL_MEANINGS.map((meaning) => (
-                        <option key={meaning} value={meaning}>
-                          {meaning === 'unknown' ? 'Not recognised — never chase' : meaningLabel(meaning)}
-                        </option>
-                      ))}
-                    </select>
-                    {!code.confident ? (
-                      <div className="sub" style={{ marginTop: 4 }}>
-                        Guessed. Worth checking with their HR.
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="hint">
-          No codes found. If this is a one-row-per-day file, set the attendance status column above and upload again.
-        </p>
-      )}
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-      <button className="btn primary" type="submit" style={{ marginTop: 20 }}>
-        Save this mapping and import the file
+      <button
+        type="button"
+        className="btn"
+        style={{ marginTop: 10 }}
+        onClick={() => setCodes((rows) => [...rows, { code: '', meaning: 'absent_full', chase: false }])}
+      >
+        Add a code
       </button>
+
+      <div className="btn-row" style={{ marginTop: 22 }}>
+        <button className="btn primary" type="submit">
+          Save mapping
+        </button>
+      </div>
       <p className="hint" style={{ marginTop: 8 }}>
-        {filename ? `Reads ${filename} with the rules above.` : 'Reads the uploaded file with the rules above.'} Later
-        months only need the Import box — the mapping is remembered.
+        Saving changes nothing already imported. Import a file afterwards to read it with these rules.
       </p>
     </div>
   );
-}
-
-function FieldRow({
-  field,
-  columns,
-  chosen,
-}: {
-  field: PlatformField;
-  columns: Analysis['columns'];
-  chosen: string[];
-}) {
-  const [value, setValue] = useState(chosen[0] ?? '');
-  const required = REQUIRED_FIELDS.includes(field);
-  const preview = columns.find((c) => c.name === value)?.samples ?? [];
-
-  return (
-    <tr>
-      <td>
-        {FIELD_LABELS[field]}
-        {required ? <span className="pill danger" style={{ marginLeft: 6 }}>needed</span> : null}
-      </td>
-      <td>
-        <select
-          className="input"
-          name={`field:${field}`}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-        >
-          <option value="">— not in this file —</option>
-          {columns.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        {/* A name split across two columns keeps both; the second is hidden here
-            but still submitted, so "First Name" + "Last Name" survives a save. */}
-        {chosen.slice(1).map((extra) => (
-          <input key={extra} type="hidden" name={`field:${field}`} value={extra} />
-        ))}
-      </td>
-      <td className="sub">{preview.length ? preview.join(' · ') : '—'}</td>
-    </tr>
-  );
-}
-
-function guessDateColumn(columns: Analysis['columns']): string {
-  return columns.find((c) => /date|day/i.test(c.name))?.name ?? columns[0]?.name ?? '';
 }
