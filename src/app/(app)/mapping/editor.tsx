@@ -65,8 +65,11 @@ export function MappingForm({
   suggestions = [],
   heading,
   note,
+  resolvedYear,
 }: {
   initial: MappingDraft;
+  /** The year the last import actually used, when none is pinned. */
+  resolvedYear?: number | null;
   /** Headings seen in a real file, offered as you type. Never a limit. */
   suggestions?: string[];
   heading: string;
@@ -154,9 +157,14 @@ export function MappingForm({
               min="2000"
               max="2100"
               defaultValue={initial.year}
+              placeholder={resolvedYear ? String(resolvedYear) : 'from the file'}
             />
             <p className="hint" style={{ marginTop: 5 }}>
-              Headings like &ldquo;1 / 8&rdquo; carry no year. The wrong one files every absence twelve months out.
+              {initial.year
+                ? 'Fixed. Headings like “1 / 8” carry no year, and the wrong one files every absence twelve months out.'
+                : resolvedYear
+                  ? `Left blank, so it is taken from the file — the last import read ${resolvedYear}. Type a year to fix it instead.`
+                  : 'Left blank, so it is taken from the report date inside the file. Type a year to fix it instead.'}
             </p>
           </div>
         </div>
@@ -237,9 +245,18 @@ export function MappingForm({
         of is safest left out until you have asked them.
       </p>
       {separator ? (
-        <p className="hint" style={{ marginTop: -6, marginBottom: 12, fontWeight: 600 }}>
-          Their cells hold two halves, so give the meaning of each half on its own — <code>HO</code>, not{' '}
-          <code>HO{separator}HO</code>. A pair typed here is split for you.
+        <p className="hint" style={{ marginTop: -6, marginBottom: 12 }}>
+          <strong>Their cells hold two halves.</strong> A cell reading{' '}
+          <code>
+            A{separator}P
+          </code>{' '}
+          is absent in the morning and present in the afternoon, which is how a half day is told from a full one. So
+          each half is given a meaning on its own — <code>A</code> and <code>P</code> — and a code that only ever
+          appears doubled, like{' '}
+          <code>
+            HO{separator}HO
+          </code>
+          , is still mapped as <code>HO</code>. A pair typed here is split for you.
         </p>
       ) : null}
 

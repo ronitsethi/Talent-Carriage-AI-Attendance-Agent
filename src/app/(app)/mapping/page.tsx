@@ -100,6 +100,7 @@ export default async function MappingPage({
         <MappingForm
           initial={editing}
           suggestions={suggestions}
+          resolvedYear={latest?.dateFrom ? Number(latest.dateFrom.slice(0, 4)) : null}
           heading={profile ? 'The mapping for this customer' : 'Set up the mapping for this customer'}
           note={
             profile
