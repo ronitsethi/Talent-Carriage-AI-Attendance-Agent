@@ -35,7 +35,15 @@ const FIELD_LABELS: Record<PlatformField, string> = {
   language: 'Language',
 };
 
-export function MappingEditor({ analysis, profileId }: { analysis: Analysis; profileId: string }) {
+export function MappingEditor({
+  analysis,
+  profileId,
+  filename,
+}: {
+  analysis: Analysis;
+  profileId: string;
+  filename?: string | null;
+}) {
   const [layout, setLayout] = useState(analysis.layout);
   const ordinary = analysis.columns.filter((c) => !c.looksLikeDay);
 
@@ -84,11 +92,24 @@ export function MappingEditor({ analysis, profileId }: { analysis: Analysis; pro
       <input type="hidden" name="layout" value={layout} />
 
       {layout === 'column_per_day' ? (
-        <p className="hint">
-          Found {analysis.dayColumns.length} day columns
-          {analysis.dayColumns.length ? `: ${analysis.dayColumns.slice(0, 4).join(', ')}…` : ''}
-          {analysis.year ? ` The year ${analysis.year} was read from the file.` : ''}
-        </p>
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>
+            {analysis.dayColumns.length} columns look like dates
+            {analysis.dayColumns.length
+              ? `, from "${analysis.dayColumns[0]}" to "${analysis.dayColumns[analysis.dayColumns.length - 1]}"`
+              : ''}
+            . Everything else is offered below as an ordinary column.
+          </p>
+          <div className="field" style={{ maxWidth: 220 }}>
+            <label htmlFor="year">Which year</label>
+            <input className="input" type="number" id="year" name="year" min="2000" max="2100" defaultValue={analysis.year ?? new Date().getFullYear()} />
+            <p className="hint" style={{ marginTop: 5 }}>
+              {analysis.year
+                ? `Read from the file. Change it if the register is for an earlier year.`
+                : `The file does not say, so this is a guess. Check it — the wrong year files every absence under the wrong date.`}
+            </p>
+          </div>
+        </>
       ) : (
         <div className="field" style={{ maxWidth: 320 }}>
           <label htmlFor="dateColumn">Which column holds the date</label>
@@ -111,7 +132,6 @@ export function MappingEditor({ analysis, profileId }: { analysis: Analysis; pro
           <option value="-">Yes, split on - (as in A-P)</option>
         </select>
       </div>
-      <input type="hidden" name="year" value={analysis.year ?? ''} />
 
       {/* ---------- which column is which ---------- */}
       <h3 style={{ fontSize: 15, margin: '26px 0 4px' }}>Which of their columns is which</h3>
@@ -191,10 +211,11 @@ export function MappingEditor({ analysis, profileId }: { analysis: Analysis; pro
       )}
 
       <button className="btn primary" type="submit" style={{ marginTop: 20 }}>
-        Save and use this mapping
+        Save this mapping and import the file
       </button>
       <p className="hint" style={{ marginTop: 8 }}>
-        Saving does not import anything. Upload the file again on the right once this is right.
+        {filename ? `Reads ${filename} with the rules above.` : 'Reads the uploaded file with the rules above.'} Later
+        months only need the Import box — the mapping is remembered.
       </p>
     </div>
   );

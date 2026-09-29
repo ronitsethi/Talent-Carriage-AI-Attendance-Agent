@@ -596,6 +596,8 @@ export async function analyseMappingFile(formData: FormData) {
         separator: analysis.separator,
       }),
       detected: analysis as unknown as Record<string, unknown>,
+      sourceFile: buffer.toString('base64'),
+      sourceFilename: file.name,
       notes: `${analysis.rowCount} rows, ${analysis.columns.length} columns`,
       createdBy: session.userId,
     });
@@ -622,6 +624,9 @@ export async function saveMapping(formData: FormData) {
         encodeURIComponent(`These are needed before a file can be read: ${missing.join(', ')}`),
     );
   }
+
+  let imported = '';
+  let unresolved = 0;
 
   await withTenant(tenantId, async (tx) => {
     const draft = await tx.query.mappingProfiles.findFirst({
@@ -687,11 +692,26 @@ export async function saveMapping(formData: FormData) {
       );
 
     await tx.delete(mappingProfiles).where(eq(mappingProfiles.id, draftId));
+
+    // The file that was just mapped is the file to read. Asking for it a second
+    // time is how the mapping and the data drift apart.
+    if (draft.sourceFile) {
+      const result = await importAttendanceFile(tx, tenantId, Buffer.from(draft.sourceFile, 'base64'), {
+        source: 'upload',
+        filename: draft.sourceFilename ?? 'mapped file',
+      });
+      await closeCasesExplainedByData(tx, tenantId);
+      imported = `${result.report.daysImported} days for ${result.report.employeesSeen} employees`;
+      unresolved = Object.keys(result.report.unmappedCodes).length;
+    }
   });
 
   revalidatePath('/mapping');
   revalidatePath('/');
-  redirect('/mapping?saved=1');
+  const params = new URLSearchParams({ saved: '1' });
+  if (imported) params.set('imported', imported);
+  if (unresolved) params.set('unresolved', String(unresolved));
+  redirect(`/mapping?${params.toString()}`);
 }
 
 /** Gives one code a meaning, from the unmapped-codes list after an import. */

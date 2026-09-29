@@ -69,7 +69,10 @@ const FIELD_HINTS: [PlatformField, RegExp[]][] = [
   // Before `employment_status`, because a bare "Status" column in an attendance
   // file is the attendance, and claiming it as employment leaves the file with
   // no codes at all.
-  ['attendance_status', [/attendance|punch ?status/i, /^status$/i, /present/i]],
+  // Not /present/: a column-per-day register carries a "Present" column that is
+  // a monthly total, and reading it as the day's status turns every code into a
+  // number.
+  ['attendance_status', [/attendance ?status|punch ?status/i, /^status$/i]],
   ['employment_status', [/employment ?status|confirmation|probation/i]],
 ];
 
@@ -154,6 +157,10 @@ export function analyseFile(buffer: Buffer | Uint8Array, sheetHint?: string | nu
   }));
 
   const fields = guessFields(table.columns.filter((c) => !dayColumns.includes(c)));
+
+  // When the dates run across the top, the codes are in those columns and there
+  // is no status column to find. Anything matched here would be a monthly total.
+  if (layout === 'column_per_day') delete fields.attendance_status;
 
   // Codes come from the day columns when dates run across the top, and from the
   // status column when each row is one day.

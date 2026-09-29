@@ -10,7 +10,7 @@ import type { Analysis } from '@/lib/mapping/analyse';
 export default async function MappingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ problem?: string; saved?: string }>;
+  searchParams: Promise<{ problem?: string; saved?: string; imported?: string; unresolved?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -21,6 +21,7 @@ export default async function MappingPage({
     mappingOverview(tenantId),
     searchParams,
   ]);
+  const { imported, unresolved } = await searchParams;
   const openUnmapped = unmapped.filter((u) => !u.resolvedAt);
   const analysis = (draft?.detected ?? null) as Analysis | null;
 
@@ -42,7 +43,8 @@ export default async function MappingPage({
       ) : null}
       {saved ? (
         <div className="notice ok" style={{ margin: '16px 0 0' }}>
-          Mapping saved and in use. Import the file to read it with these rules.
+          Mapping saved and in use.{imported ? ` Imported ${imported}.` : ''}
+          {unresolved ? ` ${unresolved} code${unresolved === '1' ? '' : 's'} still need a meaning — below.` : ''}
         </div>
       ) : null}
 
@@ -93,7 +95,7 @@ export default async function MappingPage({
 
       {analysis && draft ? (
         <form action={saveMapping} style={{ marginTop: 16 }}>
-          <MappingEditor analysis={analysis} profileId={draft.id} />
+          <MappingEditor analysis={analysis} profileId={draft.id} filename={draft.sourceFilename} />
         </form>
       ) : null}
 
@@ -201,32 +203,28 @@ export default async function MappingPage({
               <h2>Import attendance</h2>
             </div>
             <p className="hint" style={{ marginBottom: 12 }}>
-              The same file the HRMS exports. Re-importing is safe: a corrected day overwrites the old one and can close
-              an open case.
+              {profile
+                ? 'Read with the mapping below. Re-importing is safe: a corrected day overwrites the old one and can close an open case.'
+                : 'This customer has no mapping yet, so the first file is read on screen and you say what its columns and codes mean.'}
             </p>
-            <form action={importAttendance}>
+            <form action={profile ? importAttendance : analyseMappingFile}>
               <div className="field">
                 <label htmlFor="file">Attendance file</label>
                 <input className="input" type="file" id="file" name="file" accept=".xlsx,.xls,.csv" required />
               </div>
-              <button className="btn primary" type="submit" style={{ marginTop: 10 }} disabled={!profile}>
-                Import
+              <button className="btn primary" type="submit" style={{ marginTop: 10 }}>
+                {profile ? 'Import' : 'Read it and show me'}
               </button>
-              {!profile ? (
-                <p className="hint" style={{ marginTop: 8 }}>
-                  Nothing can be imported until this customer has a mapping. Start below.
-                </p>
-              ) : null}
             </form>
           </section>
 
           <section className="card pad">
             <div className="section-head">
-              <h2>Set up a new mapping</h2>
+              <h2>Change the mapping</h2>
             </div>
             <p className="hint" style={{ marginBottom: 12 }}>
-              Upload one month exactly as their HRMS exports it. Nothing is imported — the file is read to work out
-              which column is which and what their codes mean, and you correct the guesses.
+              When their export changes shape, or a new customer sends a different file. Upload it and you map it on
+              screen — it is imported with the new rules once you save, so the file you mapped is the file that is read.
             </p>
             <form action={analyseMappingFile}>
               <div className="field">
@@ -234,7 +232,7 @@ export default async function MappingPage({
                 <input className="input" type="file" id="mapFile" name="file" accept=".xlsx,.xls,.csv" required />
               </div>
               <button className="btn" type="submit" style={{ marginTop: 10 }}>
-                Read it and show me
+                Map this file
               </button>
             </form>
           </section>

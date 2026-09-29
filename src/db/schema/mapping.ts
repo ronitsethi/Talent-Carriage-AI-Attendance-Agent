@@ -37,6 +37,14 @@ export const mappingProfiles = pgTable(
      * corrected without asking for the file again.
      */
     detected: jsonb('detected').$type<Record<string, unknown>>(),
+    /**
+     * The uploaded file itself, base64, kept only while a draft is being
+     * corrected. It is there so the file that was mapped is the file that gets
+     * imported - asking for it a second time is how the two drift apart.
+     * Cleared when the mapping is saved.
+     */
+    sourceFile: text('source_file'),
+    sourceFilename: text('source_filename'),
     notes: text('notes'),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
