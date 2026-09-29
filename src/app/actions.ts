@@ -3,15 +3,30 @@
 import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { withTenant } from '@/db';
-import { actions, approvals, calls, cases, conversations, employees, messages, tenantSettings } from '@/db/schema';
+import {
+  actions,
+  approvals,
+  calls,
+  cases,
+  codeMappings,
+  conversations,
+  employees,
+  mappingProfiles,
+  messages,
+  tenantSettings,
+  unmappedCodes,
+} from '@/db/schema';
 import type { InboundMessage } from '@/lib/channels/types';
 import { handleInbound } from '@/lib/conversation/engine';
 import { selectionId, type OptionNumber } from '@/lib/conversation/flow';
 import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { closeCasesExplainedByData, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { importAttendanceFile } from '@/lib/mapping/import';
+import { analyseFile, buildFieldMap, type Analysis } from '@/lib/mapping/analyse';
+import { PLATFORM_FIELDS, REQUIRED_FIELDS, type PlatformField } from '@/lib/mapping/apply';
+import type { Meaning } from '@/lib/mapping/meanings';
 import { buildContext } from '@/lib/runtime';
 import { channelFor, contactCase, contactCaseById, type ContactResult } from '@/lib/contact';
 import { ensureCase } from '@/lib/detection/run';
@@ -533,4 +548,178 @@ export async function switchTenant(formData: FormData) {
 export async function signOutAction() {
   await signOut();
   redirect('/login');
+}
+
+/* ------------------------------------------------------------------ *
+ * Mapping: teaching the platform how to read one customer's file
+ * ------------------------------------------------------------------ */
+
+/**
+ * Reads an uploaded file and proposes a mapping for somebody to correct.
+ *
+ * Nothing is imported and nothing is activated. The result is a draft: our
+ * best guess at which column is which and what each code means, saved so the
+ * screen can be reopened without the file.
+ */
+export async function analyseMappingFile(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  const file = formData.get('file');
+  if (!(file instanceof File) || file.size === 0) {
+    redirect('/mapping?problem=' + encodeURIComponent('Choose a file first'));
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  let analysis: Analysis;
+  try {
+    analysis = analyseFile(buffer);
+  } catch (error) {
+    redirect('/mapping?problem=' + encodeURIComponent((error as Error).message));
+  }
+
+  await withTenant(tenantId, async (tx) => {
+    // One draft at a time: a second upload replaces the first rather than
+    // leaving two half-finished mappings to choose between.
+    await tx
+      .delete(mappingProfiles)
+      .where(and(eq(mappingProfiles.tenantId, tenantId), eq(mappingProfiles.status, 'draft')));
+
+    await tx.insert(mappingProfiles).values({
+      tenantId,
+      name: `From ${file.name}`,
+      status: 'draft',
+      hrmsHint: null,
+      fieldMap: buildFieldMap({
+        sheetName: analysis.sheetName,
+        fields: analysis.fields,
+        layout: analysis.layout,
+        year: analysis.year,
+        separator: analysis.separator,
+      }),
+      detected: analysis as unknown as Record<string, unknown>,
+      notes: `${analysis.rowCount} rows, ${analysis.columns.length} columns`,
+      createdBy: session.userId,
+    });
+  });
+
+  revalidatePath('/mapping');
+  redirect('/mapping');
+}
+
+/**
+ * Saves the corrected mapping and makes it the one imports use.
+ *
+ * The previous active profile is archived rather than deleted, so an import made
+ * last month can still be explained by the mapping that was in force then.
+ */
+export async function saveMapping(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const draftId = String(formData.get('profileId') ?? '');
+
+  const missing = REQUIRED_FIELDS.filter((field) => !String(formData.get(`field:${field}`) ?? '').trim());
+  if (missing.length) {
+    redirect(
+      '/mapping?problem=' +
+        encodeURIComponent(`These are needed before a file can be read: ${missing.join(', ')}`),
+    );
+  }
+
+  await withTenant(tenantId, async (tx) => {
+    const draft = await tx.query.mappingProfiles.findFirst({
+      where: and(eq(mappingProfiles.tenantId, tenantId), eq(mappingProfiles.id, draftId)),
+    });
+    if (!draft) return;
+
+    const analysis = draft.detected as unknown as Analysis | null;
+    const fields: Partial<Record<PlatformField, string[]>> = {};
+    for (const field of PLATFORM_FIELDS) {
+      const chosen = formData.getAll(`field:${field}`).map(String).filter(Boolean);
+      if (chosen.length) fields[field] = chosen;
+    }
+
+    const layout = String(formData.get('layout') ?? 'row_per_day') as 'column_per_day' | 'row_per_day';
+    const fieldMap = buildFieldMap({
+      sheetName: String(formData.get('sheetName') ?? analysis?.sheetName ?? ''),
+      fields,
+      layout,
+      dateColumn: String(formData.get('dateColumn') ?? ''),
+      year: Number(formData.get('year')) || null,
+      separator: String(formData.get('separator') ?? '') || null,
+    });
+
+    const [saved] = await tx
+      .insert(mappingProfiles)
+      .values({
+        tenantId,
+        name: String(formData.get('name') ?? draft.name),
+        status: 'active',
+        hrmsHint: String(formData.get('hrmsHint') ?? '') || null,
+        fieldMap,
+        detected: draft.detected,
+        notes: draft.notes,
+        activatedAt: new Date(),
+      })
+      .returning();
+
+    // Every code the file contained gets a meaning, including the ones left as
+    // "unknown" - recorded deliberately, so nobody is messaged about them.
+    const codes = (analysis?.codes ?? []).map((c) => c.code);
+    const rows = codes
+      .map((code) => ({
+        tenantId,
+        profileId: saved!.id,
+        code: code.toUpperCase(),
+        meaning: String(formData.get(`code:${code}`) ?? 'unknown') as Meaning,
+        chase: formData.get(`chase:${code}`) === 'on' ? true : null,
+        confirmedAt: new Date(),
+      }))
+      .filter((row) => row.code);
+    if (rows.length) await tx.insert(codeMappings).values(rows);
+
+    await tx
+      .update(mappingProfiles)
+      .set({ status: 'archived', supersededBy: saved!.id })
+      .where(
+        and(
+          eq(mappingProfiles.tenantId, tenantId),
+          eq(mappingProfiles.status, 'active'),
+          sql`${mappingProfiles.id} <> ${saved!.id}`,
+        ),
+      );
+
+    await tx.delete(mappingProfiles).where(eq(mappingProfiles.id, draftId));
+  });
+
+  revalidatePath('/mapping');
+  revalidatePath('/');
+  redirect('/mapping?saved=1');
+}
+
+/** Gives one code a meaning, from the unmapped-codes list after an import. */
+export async function setCodeMeaning(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const code = String(formData.get('code') ?? '').toUpperCase();
+  const meaning = String(formData.get('meaning') ?? '') as Meaning;
+  if (!code || !meaning) return;
+
+  await withTenant(tenantId, async (tx) => {
+    const profile = await tx.query.mappingProfiles.findFirst({
+      where: and(eq(mappingProfiles.tenantId, tenantId), eq(mappingProfiles.status, 'active')),
+    });
+    if (!profile) return;
+
+    await tx
+      .insert(codeMappings)
+      .values({ tenantId, profileId: profile.id, code, meaning, confirmedAt: new Date() })
+      .onConflictDoUpdate({
+        target: [codeMappings.tenantId, codeMappings.profileId, codeMappings.code],
+        set: { meaning, confirmedAt: new Date() },
+      });
+
+    await tx
+      .update(unmappedCodes)
+      .set({ resolvedAt: new Date() })
+      .where(and(eq(unmappedCodes.tenantId, tenantId), eq(unmappedCodes.code, code)));
+  });
+
+  revalidatePath('/mapping');
 }

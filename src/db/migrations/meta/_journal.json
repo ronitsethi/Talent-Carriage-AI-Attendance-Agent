@@ -50,6 +50,13 @@
       "when": 1790483184269,
       "tag": "0006_agent_voice",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790483185269,
+      "tag": "0007_mapping_detected",
+      "breakpoints": true
     }
   ]
 }

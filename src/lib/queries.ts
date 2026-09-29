@@ -260,7 +260,11 @@ export async function mappingOverview(tenantId: string) {
       .where(eq(imports.tenantId, tenantId))
       .orderBy(desc(imports.startedAt))
       .limit(5);
-    return { profile, codes, unmapped, recentImports };
+    // A draft is a mapping somebody is part-way through correcting.
+    const draft = await tx.query.mappingProfiles.findFirst({
+      where: and(eq(mappingProfiles.tenantId, tenantId), eq(mappingProfiles.status, 'draft')),
+    });
+    return { profile, draft, codes, unmapped, recentImports };
   });
 }
 

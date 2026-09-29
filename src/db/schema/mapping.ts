@@ -31,6 +31,12 @@ export const mappingProfiles = pgTable(
     /** Which HRMS this came from, for the reusable profile library. */
     hrmsHint: text('hrms_hint'),
     fieldMap: jsonb('field_map').$type<FieldMap>().notNull(),
+    /**
+     * What the uploaded file looked like: its columns, a few values from each,
+     * and the codes found. Kept so the mapping screen can be reopened and
+     * corrected without asking for the file again.
+     */
+    detected: jsonb('detected').$type<Record<string, unknown>>(),
     notes: text('notes'),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
