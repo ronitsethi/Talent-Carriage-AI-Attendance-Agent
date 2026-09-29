@@ -5,7 +5,14 @@ import { availableDates, dashboardStats, flaggedInRange, latestCaseDate, tenantS
 import { capabilities, env } from '@/lib/env';
 import { models } from '@/lib/models/gateway';
 import { caseDateLabel, meaningLabel, statusDisplay } from '@/lib/display';
-import { contactSelected, resetAllCases, runFollowUps, setChannelFromRow, setModeFromRow } from '@/app/actions';
+import {
+  contactSelected,
+  resetAllCases,
+  runFollowUps,
+  setCallModeFromRow,
+  setChannelFromRow,
+  setModeFromRow,
+} from '@/app/actions';
 import { RowCheckbox, SelectAll, SelectionProvider } from './selection';
 
 export default async function DashboardPage({
@@ -145,6 +152,7 @@ export default async function DashboardPage({
                 <th>Attendance</th>
                 <th>Status</th>
                 <th>Contact by</th>
+                <th>Call style</th>
                 <th>Mode</th>
                 <th />
               </tr>
@@ -197,6 +205,28 @@ export default async function DashboardPage({
                         </div>
                       </td>
                       <td className="nowrap">
+                        {/* Only meaningful for someone on Call, so it is shown
+                            greyed out rather than hidden - the column stays
+                            readable as people are switched between channels. */}
+                        <div className={`switch-group ${row.preferredChannel === 'voice' ? '' : 'muted'}`}>
+                          {(['keypad', 'agent'] as const).map((option) => (
+                            <button
+                              key={option}
+                              type="submit"
+                              formAction={setCallModeFromRow.bind(null, row.employeeId, option)}
+                              className={`switch-option ${(row.callMode ?? settings?.callMode ?? 'keypad') === option ? 'on' : ''}`}
+                              title={
+                                option === 'agent'
+                                  ? 'A spoken conversation: they answer in their own words'
+                                  : 'The agent reads the options and they press a key'
+                              }
+                            >
+                              {option === 'agent' ? 'Talk' : 'Keypad'}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="nowrap">
                         <div className="switch-group">
                           {(['manual', 'automatic'] as const).map((option) => (
                             <button
@@ -224,7 +254,7 @@ export default async function DashboardPage({
                 })
               ) : (
                 <tr>
-                  <td className="empty" colSpan={8}>
+                  <td className="empty" colSpan={9}>
                     Nobody is absent or on half-day in these dates.
                   </td>
                 </tr>
@@ -309,6 +339,8 @@ export default async function DashboardPage({
               <dd>{caps.whatsapp && !caps.dryRun ? 'Meta Cloud API' : 'Simulator'}</dd>
               <dt>Calls</dt>
               <dd>{caps.voice === 'plivo' && !caps.dryRun ? 'Plivo' : 'Simulator'}</dd>
+              <dt>Conversation</dt>
+              <dd>{caps.voiceAgent ? 'LiveKit' : 'Not configured · keypad only'}</dd>
               <dt>Attendance data</dt>
               <dd>CSV or Excel import</dd>
               <dt>Webhook</dt>

@@ -25,6 +25,7 @@ export type CaseListItem = {
   employeeId: string;
   channel: string;
   preferredChannel: string;
+  callMode: string | null;
   operatingMode: string | null;
   attDate: string;
   meaning: string;
@@ -71,6 +72,7 @@ export async function listCases(
         employeeId: cases.employeeId,
         channel: cases.channel,
         preferredChannel: employees.preferredChannel,
+        callMode: employees.callMode,
         operatingMode: employees.operatingMode,
         attDate: cases.attDate,
         meaning: cases.meaning,
@@ -328,6 +330,7 @@ export type FlaggedRow = {
   meaning: string;
   rawStatus: string | null;
   preferredChannel: string;
+  callMode: string | null;
   operatingMode: string | null;
   caseId: string | null;
   caseStatus: string | null;
@@ -352,6 +355,7 @@ export async function flaggedInRange(tenantId: string, from: string, to: string)
         department: employees.department,
         mobile: employees.mobileE164,
         preferredChannel: employees.preferredChannel,
+        callMode: employees.callMode,
         operatingMode: employees.operatingMode,
         attDate: attendanceDays.attDate,
         meaning: attendanceDays.meaning,

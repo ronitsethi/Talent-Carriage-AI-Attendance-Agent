@@ -49,6 +49,12 @@ export const tenantSettings = pgTable('tenant_settings', {
    *             reminders by itself.
    */
   operatingMode: text('operating_mode').notNull().default('manual'),
+  /**
+   * The default for `employees.callMode`: 'keypad' or 'agent'. Keypad is the
+   * default because it works on any line, needs no speech recognition, and
+   * costs a fraction of a spoken conversation.
+   */
+  callMode: text('call_mode').notNull().default('keypad'),
   /** Master switch: false means cases are created but nothing is ever delivered. */
   sendingEnabled: boolean('sending_enabled').notNull().default(false),
 

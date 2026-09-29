@@ -10,6 +10,7 @@ import { MockHrms } from '@/lib/hrms/mock';
 import type { HrmsConnector } from '@/lib/hrms/types';
 import { FakeVoiceProvider } from '@/lib/voice/fake';
 import { PlivoVoiceProvider } from '@/lib/voice/plivo';
+import { LiveKitVoiceProvider } from '@/lib/voice/livekit';
 import type { VoiceProvider } from '@/lib/voice/types';
 import type { VoiceContext } from '@/lib/voice/session';
 import { env } from '@/lib/env';
@@ -79,6 +80,26 @@ function resolveVoice(tenantId: string): VoiceProvider {
   return fakeVoiceFor(tenantId);
 }
 
+/**
+ * The conversational provider, when LiveKit is configured.
+ *
+ * Returning null rather than a fake keeps the decision honest: an employee set
+ * to 'agent' on a customer without LiveKit gets the keypad call, which works,
+ * instead of a call that silently goes nowhere.
+ */
+function resolveVoiceAgent(): VoiceProvider | null {
+  const configured =
+    env.LIVEKIT_URL && env.LIVEKIT_API_KEY && env.LIVEKIT_API_SECRET && env.LIVEKIT_SIP_TRUNK_ID;
+  if (env.DRY_RUN || !configured) return null;
+
+  return new LiveKitVoiceProvider({
+    url: env.LIVEKIT_URL!,
+    apiKey: env.LIVEKIT_API_KEY!,
+    apiSecret: env.LIVEKIT_API_SECRET!,
+    sipTrunkId: env.LIVEKIT_SIP_TRUNK_ID!,
+  });
+}
+
 async function resolveHrms(tx: Db, tenantId: string): Promise<HrmsConnector | null> {
   switch (env.HRMS_CONNECTOR) {
     case 'mock':
@@ -111,6 +132,7 @@ export async function buildContext(tx: Db, tenantId: string): Promise<FullContex
     settings,
     channel: await resolveChannel(tx, tenantId),
     voice: resolveVoice(tenantId),
+    voiceAgent: resolveVoiceAgent(),
     baseUrl: env.APP_BASE_URL,
     companyName: tenant.name,
     template: {

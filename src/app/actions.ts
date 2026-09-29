@@ -325,6 +325,26 @@ export async function setChannelFromRow(employeeId: string, channel: string) {
   revalidatePath('/cases');
 }
 
+/**
+ * Keypad call or spoken conversation, for one employee.
+ *
+ * Only meaningful for someone already set to Call. Clearing it back to the
+ * customer's default is deliberate: most customers want one kind of call, and
+ * the per-person switch is the exception rather than the rule.
+ */
+export async function setCallModeFromRow(employeeId: string, mode: string) {
+  if (!employeeId) return;
+  const { tenantId } = await requireTenant();
+  await withTenant(tenantId, (tx) =>
+    tx
+      .update(employees)
+      .set({ callMode: mode === 'agent' ? 'agent' : 'keypad', updatedAt: new Date() })
+      .where(and(eq(employees.tenantId, tenantId), eq(employees.id, employeeId))),
+  );
+  revalidatePath('/');
+  revalidatePath('/cases');
+}
+
 export async function setModeFromRow(employeeId: string, mode: string) {
   if (!employeeId) return;
   const { tenantId } = await requireTenant();

@@ -6,12 +6,18 @@ import type { PlaceCallRequest, PlaceCallResult, VoiceCapabilities, VoiceProvide
  * this, so the only thing a real call adds is the audio.
  */
 export class FakeVoiceProvider implements VoiceProvider {
-  readonly name = 'fake';
   readonly capabilities: VoiceCapabilities = {
     reachesRealPeople: false,
     supportsKeypad: true,
     supportsSpeech: false,
   };
+
+  /**
+   * The name a real provider would record on the call. Tests stand a second
+   * fake up under another name to prove which line a call actually took, and
+   * the name decides how questions are worded.
+   */
+  constructor(readonly name: string = 'fake') {}
 
   private readonly placed: { at: Date; request: PlaceCallRequest; providerCallId: string }[] = [];
 

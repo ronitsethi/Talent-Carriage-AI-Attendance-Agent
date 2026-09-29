@@ -60,6 +60,17 @@ export const employees = pgTable(
      * null        - follow the customer's default
      */
     operatingMode: text('operating_mode'),
+    /**
+     * How a call to this person is conducted:
+     * 'keypad' - the agent reads the options and they press a key
+     * 'agent'  - a spoken conversation; they answer in their own words
+     * null     - follow the customer's default
+     *
+     * Only meaningful when `preferredChannel` is 'voice'. The questions asked
+     * and the answers recorded are identical either way; only the delivery
+     * differs, which is why this is a separate switch rather than a channel.
+     */
+    callMode: text('call_mode'),
     whatsappOptOut: boolean('whatsapp_opt_out').notNull().default(false),
     callOptOut: boolean('call_opt_out').notNull().default(false),
     consentAt: timestamp('consent_at', { withTimezone: true }),

@@ -26,3 +26,5 @@ next-env.d.ts
 /Talent-Carriage-Attendance-Agent/
 /tmp/
 recordings/
+agent/.venv/
+agent/.env

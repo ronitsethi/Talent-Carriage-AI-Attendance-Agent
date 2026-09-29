@@ -41,6 +41,13 @@ const schema = z.object({
 
   // Voice telephony
   VOICE_PROVIDER: z.enum(['fake', 'plivo', 'exotel', 'acs']).default('fake'),
+  /** Shared secret the LiveKit agent worker uses to reach the turn API. */
+  AGENT_API_TOKEN: z.string().optional(),
+  LIVEKIT_URL: z.string().optional(),
+  LIVEKIT_API_KEY: z.string().optional(),
+  LIVEKIT_API_SECRET: z.string().optional(),
+  LIVEKIT_SIP_TRUNK_ID: z.string().optional(),
+
   PLIVO_AUTH_ID: z.string().optional(),
   PLIVO_AUTH_TOKEN: z.string().optional(),
   PLIVO_FROM_NUMBER: z.string().optional(),
@@ -72,6 +79,10 @@ export function capabilities() {
     anthropic: Boolean(env.ANTHROPIC_API_KEY),
     sarvam: Boolean(env.SARVAM_API_KEY),
     voice: env.VOICE_PROVIDER,
+    /** True once a spoken conversation can actually be carried. */
+    voiceAgent: Boolean(
+      !env.DRY_RUN && env.LIVEKIT_URL && env.LIVEKIT_API_KEY && env.LIVEKIT_API_SECRET && env.LIVEKIT_SIP_TRUNK_ID,
+    ),
     hrms: env.HRMS_CONNECTOR,
   };
 }

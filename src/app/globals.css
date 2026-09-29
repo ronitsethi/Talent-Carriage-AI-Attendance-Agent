@@ -131,6 +131,9 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .switch-group form + form .switch-option { border-left: 1px solid var(--border-soft); }
 .switch-option:hover { color: var(--accent); }
 .switch-option.on { background: var(--accent); color: #fff; }
+/* A switch that does not apply to this row yet - e.g. call style for someone on
+   WhatsApp. Still usable, so HR can set it before flipping them to Call. */
+.switch-group.muted { opacity: 0.45; }
 
 /* ---------- chat ---------- */
 .chat { display: flex; flex-direction: column-reverse; gap: 8px; max-height: 460px; overflow: auto; background: #efeae2; border-radius: 12px; padding: 12px; }

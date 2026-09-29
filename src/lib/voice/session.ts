@@ -21,6 +21,7 @@ import {
   spokenGuidance,
   spokenHandover,
   spokenNotUnderstood,
+  type PromptStyle,
 } from '@/lib/conversation/voice-script';
 import { recordAnswer, UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from '@/lib/conversation/engine';
 import { recordFollowUpChoice } from '@/lib/conversation/follow-up-state';
@@ -28,7 +29,15 @@ import { followUpAcknowledgement, type FollowUpChoice } from '@/lib/conversation
 import { halfOfDay, type Meaning } from '@/lib/mapping/meanings';
 import type { CallTurnInput, VoiceProvider } from './types';
 
-export type VoiceContext = EngineContext & { voice: VoiceProvider; baseUrl: string };
+export type VoiceContext = EngineContext & {
+  voice: VoiceProvider;
+  /**
+   * The provider that holds a spoken conversation, when the customer has one
+   * configured. Null means every call is a keypad call, which is the default.
+   */
+  voiceAgent?: VoiceProvider | null;
+  baseUrl: string;
+};
 export type CallRow = typeof calls.$inferSelect;
 
 /**
@@ -59,6 +68,15 @@ export type CallTurn = {
 
 const spokenFor = (row: { attDate: string; meaning: string }) =>
   spokenDate(row.attDate, halfOfDay(row.meaning as Meaning) as 'first' | 'second' | null);
+
+/**
+ * How this call's questions should be worded.
+ *
+ * A keypad call has to read out the keys; a call carried by the conversation
+ * agent asks the question the way a person would, because the employee can
+ * simply answer.
+ */
+const styleOf = (call: { provider: string }): PromptStyle => (call.provider === 'livekit' ? 'spoken' : 'keypad');
 
 /** Dates this employee still has to answer, oldest first. */
 async function pending(ctx: VoiceContext, employeeId: string, excludeCaseId?: string) {
@@ -126,13 +144,18 @@ export async function placeCaseCall(
   if (employee.callOptOut) return { placed: false as const, reason: 'Employee has opted out of calls' };
   if (!employee.mobileE164) return { placed: false as const, reason: 'No mobile number on record' };
 
+  // Keypad or conversation, per this employee, falling back to the customer's
+  // default. Without an agent provider configured there is only one answer.
+  const wantsAgent = (employee.callMode ?? ctx.settings.callMode) === 'agent';
+  const provider = wantsAgent && ctx.voiceAgent ? ctx.voiceAgent : ctx.voice;
+
   const [call] = await ctx.tx
     .insert(calls)
     .values({
       tenantId: ctx.tenantId,
       caseId: caseRow.id,
       employeeId: employee.id,
-      provider: ctx.voice.name,
+      provider: provider.name,
       purpose,
       fromNumber: ctx.settings.callerId ?? undefined,
       toNumber: employee.mobileE164,
@@ -144,7 +167,7 @@ export async function placeCaseCall(
 
   const from = ctx.settings.callerId ?? process.env.PLIVO_FROM_NUMBER ?? '';
   try {
-    const result = await ctx.voice.placeCall({
+    const result = await provider.placeCall({
       to: `+${employee.mobileE164}`,
       from,
       answerUrl: `${ctx.baseUrl}/api/voice/answer?call=${call!.id}`,
@@ -209,7 +232,7 @@ export async function openingTurn(ctx: VoiceContext, callId: string): Promise<Ca
     // about an action nobody was ever given.
     if (target.replyOption) {
       const outstanding = await pendingFollowUps(ctx, employee.id);
-      const question = followUpPrompt(target.replyOption as OptionNumber, spokenFor(target));
+      const question = followUpPrompt(target.replyOption as OptionNumber, spokenFor(target), styleOf(call));
       await appendTurn(ctx, callId, 'agent', `${greeting} ${question}`);
       return {
         speak: question,
@@ -221,7 +244,7 @@ export async function openingTurn(ctx: VoiceContext, callId: string): Promise<Ca
   }
 
   const outstanding = await pending(ctx, employee.id);
-  const question = datePrompt(spokenFor(target));
+  const question = datePrompt(spokenFor(target), styleOf(call));
   const intro = [greeting, callBacklogOpening(outstanding.length)].filter(Boolean).join(' ');
 
   await appendTurn(ctx, callId, 'agent', `${intro} ${question}`);
@@ -289,9 +312,10 @@ export async function handleTurn(
       await finishCall(ctx, callId, 'needs_help');
       return { speak: spokenHandover(), nextCaseId: null, done: true };
     }
-    const question = datePrompt(spokenFor(caseRow));
-    await appendTurn(ctx, callId, 'agent', `${spokenNotUnderstood()} ${question}`);
-    return { speak: question, intro: spokenNotUnderstood(), nextCaseId: caseId, done: false, retry: true };
+    const style = styleOf(call);
+    const question = datePrompt(spokenFor(caseRow), style);
+    await appendTurn(ctx, callId, 'agent', `${spokenNotUnderstood(style)} ${question}`);
+    return { speak: question, intro: spokenNotUnderstood(style), nextCaseId: caseId, done: false, retry: true };
   }
 
   await recordAnswer(ctx, caseRow, option, usedSpeech ? { intent: 'was_absent', option, confidence: 1, source: 'model' } : undefined);
@@ -313,7 +337,7 @@ export async function handleTurn(
 
   const next = outstanding[0]!;
   const intro = [spokenGuidance(option, spokenFor(caseRow)), spokenBacklogSummary(outstanding.length)].join(' ');
-  const question = datePrompt(spokenFor(next));
+  const question = datePrompt(spokenFor(next), styleOf(call));
   await appendTurn(ctx, callId, 'agent', `${intro} ${question}`);
   return { speak: question, intro, nextCaseId: next.id, done: false };
 }
@@ -356,11 +380,12 @@ async function followUpTurn(
       await finishCall(ctx, callId, 'needs_help');
       return { speak: spokenHandover(), nextCaseId: null, done: true };
     }
-    const question = followUpPrompt(caseRow.replyOption as OptionNumber, spokenFor(caseRow));
-    await appendTurn(ctx, callId, 'agent', `${spokenFollowUpNotUnderstood()} ${question}`);
+    const style = styleOf(call);
+    const question = followUpPrompt(caseRow.replyOption as OptionNumber, spokenFor(caseRow), style);
+    await appendTurn(ctx, callId, 'agent', `${spokenFollowUpNotUnderstood(style)} ${question}`);
     return {
       speak: question,
-      intro: spokenFollowUpNotUnderstood(),
+      intro: spokenFollowUpNotUnderstood(style),
       nextCaseId: caseRow.id,
       done: false,
       retry: true,
@@ -393,7 +418,7 @@ async function followUpTurn(
 
   const next = outstanding[0]!;
   const intro = `${acknowledgement} ${spokenFollowUpSummary(outstanding.length)}`;
-  const question = followUpPrompt(next.replyOption as OptionNumber, spokenFor(next));
+  const question = followUpPrompt(next.replyOption as OptionNumber, spokenFor(next), styleOf(call));
   await appendTurn(ctx, callId, 'agent', `${intro} ${question}`);
   return { speak: question, intro, nextCaseId: next.id, done: false };
 }

@@ -17,6 +17,8 @@ export type Scenario = {
   channel: FakeChannel;
   /** The fake phone line, for scenarios that put an employee on Call. */
   voice: FakeVoiceProvider;
+  /** The fake conversational line, for employees set to a talking call. */
+  voiceAgent: FakeVoiceProvider;
   context: (tx: Db) => FullContext;
   cleanup: () => Promise<void>;
 };
@@ -28,6 +30,8 @@ export async function makeScenario(
 ): Promise<Scenario> {
   const channel = new FakeChannel();
   const voice = new FakeVoiceProvider();
+  // A second line, so a test can prove which of the two a call actually used.
+  const voiceAgent = new FakeVoiceProvider('livekit');
   const slug = `t-${randomUUID().slice(0, 8)}`;
   const mobile = `9190000${String(Math.floor(Math.random() * 90000) + 10000)}`;
 
@@ -64,12 +68,14 @@ export async function makeScenario(
     mobile,
     channel,
     voice,
+    voiceAgent,
     context: (tx: Db) => ({
       tx,
       tenantId,
       settings,
       channel,
       voice,
+      voiceAgent,
       baseUrl: 'http://localhost:3000',
       hrms: null,
       companyName: 'Test Co',

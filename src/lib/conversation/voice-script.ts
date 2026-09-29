@@ -38,8 +38,26 @@ export function callBacklogOpening(pendingCount: number): string {
   return `Our records show ${pendingCount} days of attendance still to be confirmed.`;
 }
 
-/** The four options, worded for the keypad. */
-export function datePrompt(spoken: string): string {
+/**
+ * How a question is put.
+ *
+ * 'keypad' spells out the keys, because the caller has no other way to answer.
+ * 'spoken' asks it the way a person would - the agent understands whatever
+ * comes back, so reading out a menu would only be strange.
+ */
+export type PromptStyle = 'keypad' | 'spoken';
+
+/** The four options, as a question. */
+export function datePrompt(spoken: string, style: PromptStyle = 'keypad'): string {
+  if (style === 'spoken') {
+    return [
+      `I am calling about ${spoken}.`,
+      `Our records show you were absent.`,
+      `Could you tell me what happened - were you absent that day, were you actually working,`,
+      `or have you already applied for leave or sent a regularisation request?`,
+    ].join(' ');
+  }
+
   return [
     `About ${spoken}.`,
     `Press 1 if you were absent.`,
@@ -57,7 +75,7 @@ export function datePrompt(spoken: string): string {
  * cannot scroll back to the earlier message. The keys mean something different
  * here from the first call, so the prompt spells them out again.
  */
-export function followUpPrompt(option: OptionNumber, spoken: string): string {
+export function followUpPrompt(option: OptionNumber, spoken: string, style: PromptStyle = 'keypad'): string {
   // The date is already named by the sentence before this one, so it is not
   // repeated here: hearing it twice in one breath sounds like a fault.
   const asked = {
@@ -68,6 +86,13 @@ export function followUpPrompt(option: OptionNumber, spoken: string): string {
   }[option];
   const done = option === 1 || option === 2 ? 'it is done' : 'it has been approved';
   const notDone = option === 1 || option === 2 ? 'it is not done yet' : 'it is not approved yet';
+
+  if (style === 'spoken') {
+    return [
+      `I am calling about ${spoken}. Last time, ${asked}.`,
+      `Has that been done yet, or would you like H R to help you with it?`,
+    ].join(' ');
+  }
 
   return [
     `About ${spoken}. Last time, ${asked}.`,
@@ -101,7 +126,8 @@ export function spokenFollowUpClosing(remaining: number): string {
   return `That is everything. Goodbye.`;
 }
 
-export function spokenFollowUpNotUnderstood(): string {
+export function spokenFollowUpNotUnderstood(style: PromptStyle = 'keypad'): string {
+  if (style === 'spoken') return `Sorry, I did not quite catch that.`;
   return `Sorry, I did not catch that. Please press 1, 2 or 3.`;
 }
 
@@ -165,7 +191,8 @@ export function spokenBacklogSummary(remaining: number): string {
   return `You have ${remaining} more ${days} pending.`;
 }
 
-export function spokenNotUnderstood(): string {
+export function spokenNotUnderstood(style: PromptStyle = 'keypad'): string {
+  if (style === 'spoken') return `Sorry, I did not quite catch that.`;
   return `Sorry, I did not catch that. Please press 1, 2, 3 or 4.`;
 }
 
