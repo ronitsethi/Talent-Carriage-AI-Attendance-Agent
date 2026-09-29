@@ -13,7 +13,7 @@ import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { closeCasesExplainedByData, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { importAttendanceFile } from '@/lib/mapping/import';
 import { buildContext } from '@/lib/runtime';
-import { channelFor, contactCase, contactCaseById } from '@/lib/contact';
+import { channelFor, contactCase, contactCaseById, type ContactResult } from '@/lib/contact';
 import { ensureCase } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { canManageSettings, getActiveTenantId, getSession, setActiveTenant, signOut } from '@/lib/auth';
@@ -370,6 +370,8 @@ export async function contactSelected(formData: FormData) {
   if (!targets.length) return;
   const { tenantId } = await requireTenant();
 
+  const outcomes: ContactResult[] = [];
+
   await withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
 
@@ -396,16 +398,38 @@ export async function contactSelected(formData: FormData) {
 
       if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') {
         // One call, about the most recent date; the older ones follow inside it.
-        await contactCase(ctx, created[created.length - 1]!, employee);
+        outcomes.push(await contactCase(ctx, created[created.length - 1]!, employee));
       } else {
         // WhatsApp stacks in a chat, so each date gets its own message.
-        for (const caseRow of created) await contactCase(ctx, caseRow, employee);
+        for (const caseRow of created) outcomes.push(await contactCase(ctx, caseRow, employee));
       }
     }
   });
 
   revalidatePath('/');
   revalidatePath('/cases');
+  redirect(`/?${noticeFor(outcomes)}`);
+}
+
+/**
+ * Turns what happened into something the dashboard can say out loud.
+ *
+ * Pressing Contact and having nothing happen, with no explanation, is the worst
+ * thing this page can do - and it is exactly what it did when a customer's
+ * master sending switch was off. Whatever the reason, it gets said.
+ */
+function noticeFor(outcomes: ContactResult[]): string {
+  const sent = outcomes.filter((o) => o.contacted).length;
+  const blocked = outcomes.filter((o) => !o.contacted) as Extract<ContactResult, { contacted: false }>[];
+  const params = new URLSearchParams();
+
+  if (sent) params.set('sent', String(sent));
+  if (blocked.length) {
+    // The same reason usually applies to everyone, so say it once.
+    params.set('blocked', [...new Set(blocked.map((o) => o.reason))].join('; '));
+  }
+  if (!outcomes.length) params.set('blocked', 'Nothing was selected');
+  return params.toString();
 }
 
 /** The per-employee WhatsApp / Call switch shown on every flagged employee. */
@@ -448,13 +472,16 @@ export async function contactNow(formData: FormData) {
   const { tenantId } = await requireTenant();
   const caseId = String(formData.get('caseId') ?? '');
 
-  await withTenant(tenantId, async (tx) => {
+  const result = await withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
-    await contactCaseById(ctx, caseId);
+    return contactCaseById(ctx, caseId);
   });
   revalidatePath(`/cases/${caseId}`);
   revalidatePath('/cases');
   revalidatePath('/');
+
+  // Say why nothing happened. Silence here reads as a broken button.
+  if (result && !result.contacted) redirect(`/cases/${caseId}?blocked=${encodeURIComponent(result.reason)}`);
 }
 
 /**

@@ -18,14 +18,14 @@ import { RowCheckbox, SelectAll, SelectionProvider } from './selection';
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; sent?: string; blocked?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) return <p style={{ paddingTop: 40 }}>No customer has been set up yet.</p>;
 
-  const [{ tenant, settings }, stats, dates, withCases, { from, to }] = await Promise.all([
+  const [{ tenant, settings }, stats, dates, withCases, { from, to, sent, blocked }] = await Promise.all([
     tenantSummary(tenantId),
     dashboardStats(tenantId),
     availableDates(tenantId),
@@ -102,6 +102,23 @@ export default async function DashboardPage({
           <span className="flag idle">Calls from {settings?.callerId ?? 'no number set'}</span>
         </div>
       </section>
+
+      {/* Nothing goes out at all while this is off, so it cannot be a quiet
+          grey pill among five others - it is the whole product switched off. */}
+      {settings && !settings.sendingEnabled ? (
+        <div className="notice err" style={{ marginTop: 16 }}>
+          <strong>Sending is switched off for {tenant?.name}.</strong> Cases are still created, but no message or call
+          will go out however many times you press Contact. Turn it back on in{' '}
+          <Link href="/settings">Settings</Link> — &ldquo;Allow messages to be sent at all&rdquo;.
+        </div>
+      ) : null}
+
+      {sent || blocked ? (
+        <div className={`notice ${blocked ? 'err' : 'ok'}`} style={{ marginTop: 16 }}>
+          {sent ? `Contacted ${sent} ${Number(sent) === 1 ? 'person' : 'people'}. ` : ''}
+          {blocked ? `Nothing sent: ${blocked}.` : ''}
+        </div>
+      ) : null}
 
       <section className="page-head">
         <div className="eyebrow">✦ HR Command Center</div>

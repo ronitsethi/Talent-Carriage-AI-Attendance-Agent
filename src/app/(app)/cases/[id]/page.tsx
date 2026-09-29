@@ -8,13 +8,20 @@ import { env } from '@/lib/env';
 import { closeCase, contactNow, flagForHr, resetCase, simulateCallAnswer, simulateReply } from '@/app/actions';
 import { callPurposeFor } from '@/lib/voice/session';
 
-export default async function CaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function CaseDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ blocked?: string }>;
+}) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) redirect('/');
 
   const { id } = await params;
+  const { blocked } = await searchParams;
   const detail = await caseDetail(tenantId, id);
   if (!detail) notFound();
 
@@ -33,6 +40,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <>
+      {blocked ? (
+        <div className="notice err" style={{ marginTop: 16 }}>
+          Nothing was sent: {blocked}.
+        </div>
+      ) : null}
       <section className="page-head">
         <div className="eyebrow">
           <Link href="/cases">← All cases</Link>
