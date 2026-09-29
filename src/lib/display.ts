@@ -4,7 +4,9 @@ import { OPTIONS, dateLabel, type OptionNumber } from '@/lib/conversation/flow';
 /** Presentation helpers shared by the portal pages. */
 
 export const STATUS_DISPLAY: Record<string, { label: string; tone: 'waiting' | 'pending' | 'done' | 'call' | 'idle' }> = {
-  queued: { label: 'Queued', tone: 'idle' },
+  // Not "Queued": nothing is waiting in a queue. The case exists because the
+  // absence was found, and nobody has been contacted about it yet.
+  queued: { label: 'Not contacted', tone: 'idle' },
   asked: { label: 'Asked · awaiting reply', tone: 'waiting' },
   delivered: { label: 'Delivered · awaiting reply', tone: 'waiting' },
   read: { label: 'Read · awaiting reply', tone: 'waiting' },

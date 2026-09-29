@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
-import { availableDates, listCases } from '@/lib/queries';
+import { availableDates, listCases, tenantSummary } from '@/lib/queries';
 import { actionLabel, caseDateLabel, formatTime, replyLabel, statusDisplay } from '@/lib/display';
-import { contactNow, setEmployeeChannel, setEmployeeMode } from '@/app/actions';
+import { contactNow, setCallModeFromRow, setEmployeeChannel, setEmployeeMode } from '@/app/actions';
 
 const FILTERS = [
   { key: 'open', label: 'Open' },
@@ -23,9 +23,10 @@ export default async function CasesPage({
   if (!tenantId) return <p style={{ paddingTop: 40 }}>No customer selected.</p>;
 
   const { date, from, to, status, q } = await searchParams;
-  const [rows, dates] = await Promise.all([
+  const [rows, dates, { settings }] = await Promise.all([
     listCases(tenantId, { date, from, to, status: status ?? 'open', search: q }),
     availableDates(tenantId),
+    tenantSummary(tenantId),
   ]);
 
   const query = (next: Record<string, string | undefined>) => {
@@ -96,6 +97,7 @@ export default async function CasesPage({
               <th>Status</th>
               <th>Reply → action</th>
               <th>Contact by</th>
+              <th>Call style</th>
               <th>Mode</th>
               <th />
             </tr>
@@ -152,6 +154,30 @@ export default async function CasesPage({
                       </div>
                     </td>
                     <td className="nowrap">
+                      <div className={`switch-group ${row.preferredChannel === 'voice' ? '' : 'muted'}`}>
+                        {/* Each switch is its own form on this page: the table
+                            is not wrapped in one, so `formAction` has nothing to
+                            submit. */}
+                        {(['keypad', 'agent'] as const).map((option) => (
+                          <form key={option} action={setCallModeFromRow.bind(null, row.employeeId, option)}>
+                            <button
+                              type="submit"
+                              className={`switch-option ${
+                                (row.callMode ?? settings?.callMode ?? 'keypad') === option ? 'on' : ''
+                              }`}
+                              title={
+                                option === 'agent'
+                                  ? 'A spoken conversation: they answer in their own words'
+                                  : 'The agent reads the options and they press a key'
+                              }
+                            >
+                              {option === 'agent' ? 'Talk' : 'Keypad'}
+                            </button>
+                          </form>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="nowrap">
                       <div className="switch-group">
                         {(['manual', 'automatic'] as const).map((option) => (
                           <form key={option} action={setEmployeeMode}>
@@ -159,14 +185,23 @@ export default async function CasesPage({
                             <input type="hidden" name="mode" value={option} />
                             <button
                               type="submit"
-                              className={`switch-option ${(row.operatingMode ?? 'manual') === option ? 'on' : ''}`}
+                              className={`switch-option ${
+                                (row.operatingMode ?? settings?.operatingMode ?? 'manual') === option ? 'on' : ''
+                              }`}
+                              title={
+                                row.operatingMode
+                                  ? 'Set for this person, whatever the customer default is'
+                                  : `Following the customer default (${settings?.operatingMode ?? 'manual'})`
+                              }
                             >
                               {option === 'automatic' ? 'Auto' : 'Manual'}
                             </button>
                           </form>
                         ))}
                       </div>
-                      <div className="sub">{formatTime(row.answeredAt ?? row.askedAt)}</div>
+                      {row.answeredAt || row.askedAt ? (
+                        <div className="sub">{formatTime(row.answeredAt ?? row.askedAt)}</div>
+                      ) : null}
                     </td>
                     <td className="nowrap">
                       <div className="btn-row">
