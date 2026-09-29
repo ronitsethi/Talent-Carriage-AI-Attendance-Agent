@@ -18,6 +18,7 @@ import { ensureCase } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { canManageSettings, getActiveTenantId, getSession, setActiveTenant, signOut } from '@/lib/auth';
 import { env } from '@/lib/env';
+import { DEFAULT_AGENT_VOICE, isAgentVoice } from '@/lib/voice/voices';
 import { datesInRange } from '@/lib/dates';
 
 async function requireTenant() {
@@ -202,6 +203,14 @@ export async function updateSettings(formData: FormData) {
         approvalTimeoutHours: int('approvalTimeoutHours', 24),
         quietHoursStart: String(formData.get('quietHoursStart') ?? '20:00'),
         quietHoursEnd: String(formData.get('quietHoursEnd') ?? '09:00'),
+        // An unknown voice would leave calls silent, so anything unrecognised
+        // falls back rather than being stored.
+        agentVoice: isAgentVoice(String(formData.get('agentVoice') ?? '')) 
+          ? String(formData.get('agentVoice'))
+          : DEFAULT_AGENT_VOICE,
+        agentVoicePace: String(
+          Math.min(1.3, Math.max(0.7, Number(formData.get('agentVoicePace') ?? 0.95) || 0.95)),
+        ),
         updatedAt: new Date(),
       })
       .where(eq(tenantSettings.tenantId, tenantId)),

@@ -26,6 +26,8 @@ type Body = {
   digits?: string;
   /** The line has dropped. There is no hangup webhook on a LiveKit call. */
   ended?: boolean;
+  /** Describe the call without advancing it: which voice, whose language. */
+  brief?: boolean;
 };
 
 function unauthorised() {
@@ -51,6 +53,25 @@ export async function POST(request: Request) {
       return true;
     });
     return NextResponse.json({ closed: Boolean(closed) });
+  }
+
+  if (body.brief) {
+    // Asked before the agent opens its mouth, so the voice belongs to the
+    // customer being called rather than to whatever the worker was started with.
+    const brief = await withCallContext(callId, async (ctx) => {
+      const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
+      const employee = call
+        ? await ctx.tx.query.employees.findFirst({ where: eq(employees.id, call.employeeId) })
+        : null;
+      return {
+        voice: ctx.settings.agentVoice,
+        pace: Number(ctx.settings.agentVoicePace),
+        language: employee?.language ?? ctx.settings.defaultLanguage,
+        company: ctx.companyName,
+      };
+    });
+    if (!brief) return NextResponse.json({ error: 'unknown call' }, { status: 404 });
+    return NextResponse.json(brief);
   }
 
   const result = await withCallContext(callId, async (ctx) => {

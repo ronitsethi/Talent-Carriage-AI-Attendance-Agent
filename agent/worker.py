@@ -32,8 +32,8 @@ ROOM_PREFIX = "attendance-call-"
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:3000")
 AGENT_API_TOKEN = os.environ.get("AGENT_API_TOKEN", "")
 
-# The voice, and who listens. Both are settings rather than code so the tone can
-# be changed without a deploy - the right voice is a judgement made by ear.
+# The voice belongs to the customer being called and is read from their
+# settings; these are only the fallbacks for when the platform cannot be asked.
 VOICE = os.environ.get("AGENT_VOICE", "ritu")
 VOICE_MODEL = os.environ.get("AGENT_VOICE_MODEL", "bulbul:v3-beta")
 VOICE_PACE = float(os.environ.get("AGENT_VOICE_PACE", "0.95"))
@@ -69,6 +69,17 @@ class TurnApi:
 
     async def answer(self, case_id: str, speech: str) -> Turn:
         return await self._post({"caseId": case_id, "speech": speech})
+
+    async def brief(self) -> dict:
+        """Who is being called, and in whose voice. Asked before speaking."""
+        async with self._http.post(
+            f"{APP_BASE_URL}/api/agent/turn",
+            json={"callId": self._call_id, "brief": True},
+            headers={"x-agent-token": AGENT_API_TOKEN},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as response:
+            response.raise_for_status()
+            return await response.json()
 
     async def ended(self) -> None:
         """The line has dropped. Without this a call sits 'in progress' for ever."""
@@ -176,6 +187,17 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.add_shutdown_callback(on_shutdown)
 
+    # The customer chooses the voice in the portal. Falling back to the
+    # configured default keeps the call working if that lookup fails, because a
+    # call in the wrong voice beats a call that never happens.
+    try:
+        brief = await api_client.brief()
+        voice, pace = brief.get("voice") or VOICE, float(brief.get("pace") or VOICE_PACE)
+        log.info("call %s speaks as %s at pace %s", call_id, voice, pace)
+    except Exception:
+        log.exception("could not read the voice for call %s; using the default", call_id)
+        voice, pace = VOICE, VOICE_PACE
+
     session = AgentSession(
         # Ears and a voice. The decisions that matter are not made here - see
         # the class docstring.
@@ -195,8 +217,8 @@ async def entrypoint(ctx: JobContext) -> None:
         tts=sarvam.TTS(
             target_language_code="en-IN",
             model=VOICE_MODEL,
-            speaker=VOICE,
-            pace=VOICE_PACE,
+            speaker=voice,
+            pace=pace,
         ),
         vad=silero.VAD.load(),
     )

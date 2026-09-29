@@ -154,7 +154,7 @@ export default async function DashboardPage({
                 <th>Contact by</th>
                 <th>Call style</th>
                 <th>Mode</th>
-                <th />
+                <th>Case</th>
               </tr>
             </thead>
             <tbody>
@@ -246,7 +246,11 @@ export default async function DashboardPage({
                             Open
                           </Link>
                         ) : (
-                          <span className="sub">—</span>
+                          // No case exists until this person is contacted about
+                          // this date, so there is nothing to open yet.
+                          <span className="sub" title="A case is created when you contact them">
+                            Not started
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -300,7 +304,9 @@ export default async function DashboardPage({
                 <div>
                   <div className="step-title">Automatic chases yesterday</div>
                   <div className="step-copy">
-                    Employees set to Auto are contacted the day after the absence, at {settings?.checkTime.slice(0, 5)}.
+                    Employees set to Auto are contacted the day after the absence, at{' '}
+                    {settings?.checkTime.slice(0, 5)} — change that time in <Link href="/settings">Settings</Link>,
+                    under Daily check.
                   </div>
                 </div>
               </div>

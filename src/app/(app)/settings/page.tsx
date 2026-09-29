@@ -2,7 +2,8 @@ import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession, canManageSettings } from '@/lib/auth';
 import { tenantSummary } from '@/lib/queries';
 import { updateSettings } from '@/app/actions';
-import { env } from '@/lib/env';
+import { AGENT_VOICES } from '@/lib/voice/voices';
+import { capabilities, env } from '@/lib/env';
 
 export default async function SettingsPage() {
   const session = await getSession();
@@ -11,6 +12,7 @@ export default async function SettingsPage() {
   if (!tenantId) redirect('/');
 
   const { tenant, settings } = await tenantSummary(tenantId);
+  const caps = capabilities();
   if (!settings) return <p style={{ paddingTop: 40 }}>This customer has no settings row.</p>;
   const readOnly = !canManageSettings(session);
 
@@ -58,6 +60,53 @@ export default async function SettingsPage() {
                 <input type="checkbox" name="sendingEnabled" defaultChecked={settings.sendingEnabled} /> Allow messages
                 to be sent at all
               </label>
+            </section>
+
+            <section className="card pad" style={{ marginTop: 18 }}>
+              <div className="section-head">
+                <h2>The talking call</h2>
+                <span className="hint">
+                  {caps.voiceAgent ? 'LiveKit connected' : 'Not configured — calls use the keypad'}
+                </span>
+              </div>
+              <div className="row" style={{ padding: 0 }}>
+                <div className="field" style={{ minWidth: 240 }}>
+                  <label htmlFor="agentVoice">Voice</label>
+                  <select className="input" id="agentVoice" name="agentVoice" defaultValue={settings.agentVoice}>
+                    <optgroup label="Female">
+                      {AGENT_VOICES.filter((v) => v.gender === 'female').map((voice) => (
+                        <option key={voice.id} value={voice.id}>
+                          {voice.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Male">
+                      {AGENT_VOICES.filter((v) => v.gender === 'male').map((voice) => (
+                        <option key={voice.id} value={voice.id}>
+                          {voice.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+                <div className="field" style={{ minWidth: 160 }}>
+                  <label htmlFor="agentVoicePace">Speed</label>
+                  <input
+                    className="input"
+                    type="number"
+                    id="agentVoicePace"
+                    name="agentVoicePace"
+                    step="0.05"
+                    min="0.7"
+                    max="1.3"
+                    defaultValue={Number(settings.agentVoicePace)}
+                  />
+                </div>
+              </div>
+              <p className="hint" style={{ marginTop: 8 }}>
+                Indian voices, for employees set to Call · Talk. Slightly under 1.0 is easier to follow on a poor
+                line. Run <code>npm run voices</code> to hear each one speak the real opening line before choosing.
+              </p>
             </section>
 
             <section className="card pad">
