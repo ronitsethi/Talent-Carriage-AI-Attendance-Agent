@@ -29,6 +29,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 log = logging.getLogger("attendance-agent")
 
 ROOM_PREFIX = "attendance-call-"
+ASK_PREFIX = "attendance-ask"
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:3000")
 AGENT_API_TOKEN = os.environ.get("AGENT_API_TOKEN", "")
 
@@ -91,13 +92,20 @@ class TurnApi:
     async def answer(self, case_id: str, speech: str) -> Turn:
         return await self._post({"caseId": case_id, "speech": speech})
 
+    async def ask(self, caller: str, question: str | None) -> dict:
+        """One turn of a call somebody made to us, rather than one we made."""
+        return await self._raw({"ask": {"from": caller, "question": question}})
+
     async def brief(self) -> dict:
         """Who is being called, and in whose voice. Asked before speaking."""
+        return await self._raw({"callId": self._call_id, "brief": True})
+
+    async def _raw(self, body: dict) -> dict:
         async with self._http.post(
             f"{APP_BASE_URL}/api/agent/turn",
-            json={"callId": self._call_id, "brief": True},
+            json=body,
             headers={"x-agent-token": AGENT_API_TOKEN},
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=aiohttp.ClientTimeout(total=30),
         ) as response:
             response.raise_for_status()
             return await response.json()
@@ -188,10 +196,72 @@ class AttendanceAgent(Agent):
         await ctx.api.room.delete_room(api.DeleteRoomRequest(room=ctx.room.name))
 
 
+class QuestionAgent(Agent):
+    """
+    The voice when somebody rings us.
+
+    Same brain as the attendance call and the same rule: it answers from the
+    customer's own guidelines and this caller's own record, or says HR will come
+    back to them. The caller's number is the only thing that says who they are.
+    """
+
+    def __init__(self, api: TurnApi, caller: str) -> None:
+        super().__init__(
+            instructions=(
+                "You are an attendance and HR assistant for an Indian employer, speaking to an "
+                "employee who has telephoned in. You speak Indian English and understand Hindi "
+                "and Hinglish."
+            )
+        )
+        self._api = api
+        self._caller = caller
+        self._finished = False
+
+    async def on_enter(self) -> None:
+        turn = await self._api.ask(self._caller, None)
+        await self.session.say(turn.get("say", ""))
+        if turn.get("done"):
+            await self._hang_up()
+
+    async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # noqa: ANN001
+        if self._finished:
+            raise StopResponse()
+
+        said = (new_message.text_content or "").strip()
+        if not said:
+            raise StopResponse()
+
+        # Ending the call is the caller's to decide, and they say so in words.
+        if said.lower().strip(" .!") in {"no", "nothing", "no thanks", "no thank you", "that is all", "bye", "goodbye"}:
+            await self.session.say("Glad to help. Goodbye.")
+            await self._hang_up()
+            raise StopResponse()
+
+        try:
+            turn = await self._api.ask(self._caller, said)
+        except Exception:
+            log.exception("turn API failed on an incoming call")
+            await self.session.say("Sorry, I am having trouble just now. Please contact your H R team. Goodbye.")
+            await self._hang_up()
+            raise StopResponse()
+
+        await self.session.say(turn.get("say", ""))
+        if turn.get("done"):
+            await self._hang_up()
+        raise StopResponse()
+
+    async def _hang_up(self) -> None:
+        self._finished = True
+        await self.session.drain()
+        ctx = agents.get_job_context()
+        await ctx.api.room.delete_room(api.DeleteRoomRequest(room=ctx.room.name))
+
+
 async def entrypoint(ctx: JobContext) -> None:
+    inbound = ctx.room.name.startswith(ASK_PREFIX)
     call_id = ctx.room.name[len(ROOM_PREFIX):] if ctx.room.name.startswith(ROOM_PREFIX) else ""
-    if not call_id:
-        log.warning("room %s is not an attendance call; leaving it alone", ctx.room.name)
+    if not call_id and not inbound:
+        log.warning("room %s is neither an attendance call nor a question; leaving it alone", ctx.room.name)
         return
 
     log.info("joining call %s, reporting to %s", call_id, APP_BASE_URL)
@@ -213,6 +283,30 @@ async def entrypoint(ctx: JobContext) -> None:
     except Exception as problem:
         log.error("cannot reach the platform: %s", problem)
         raise
+
+    # A call somebody made to us. The number they rang from is the only thing
+    # that says who they are, and it arrives on the SIP participant.
+    if inbound:
+        participant = await ctx.wait_for_participant()
+        caller = participant.attributes.get("sip.phoneNumber", "") if participant else ""
+        log.info("incoming call from %s", caller or "an unknown number")
+
+        brief = {}
+        try:
+            brief = await api_client.ask(caller, None)
+        except Exception:
+            log.exception("could not open the incoming call")
+        voice = brief.get("voice") or VOICE
+        pace = float(brief.get("pace") or VOICE_PACE)
+
+        session = AgentSession(
+            stt=(sarvam.STT(language="en-IN") if STT_VENDOR == "sarvam" else openai.STT(model="gpt-4o-transcribe")),
+            llm=openai.LLM(model="gpt-4o-mini"),
+            tts=sarvam.TTS(target_language_code="en-IN", model=VOICE_MODEL, speaker=voice, pace=pace),
+            vad=silero.VAD.load(),
+        )
+        await session.start(agent=QuestionAgent(api_client, caller), room=ctx.room)
+        return
 
     # The customer chooses the voice in the portal. Falling back to the
     # configured default keeps the call working if that lookup fails, because a

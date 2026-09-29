@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
-import { calls, cases, employees } from '@/db/schema';
+import { calls, cases, employees, tenants, tenantSettings } from '@/db/schema';
 import { closeAnsweredCall, handleTurn, openingTurn } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
+import { withPlatformScope, withTenant } from '@/db';
+import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
 import { env } from '@/lib/env';
 
 /**
@@ -28,6 +30,12 @@ type Body = {
   ended?: boolean;
   /** Describe the call without advancing it: which voice, whose language. */
   brief?: boolean;
+  /**
+   * Somebody rang in and asked something. There is no case and no script - the
+   * caller's number says who they are and the question is answered from their
+   * employer's guidelines and their own record.
+   */
+  ask?: { from: string; question?: string };
 };
 
 function unauthorised() {
@@ -53,6 +61,58 @@ export async function POST(request: Request) {
       return true;
     });
     return NextResponse.json({ closed: Boolean(closed) });
+  }
+
+  if (body.ask) {
+    const { from, question } = body.ask;
+
+    const found = await withPlatformScope(async (tx) => {
+      const all = await tx.select({ id: tenants.id }).from(tenants).where(eq(tenants.status, 'active'));
+      for (const tenant of all) {
+        const answer = await withTenant(tenant.id, async (t) => {
+          const employee = await employeeByNumber(t, tenant.id, from);
+          if (!employee) return null;
+          const settings = await t.query.tenantSettings.findFirst({
+            where: eq(tenantSettings.tenantId, tenant.id),
+          });
+          const company = await t.query.tenants.findFirst({ where: eq(tenants.id, tenant.id) });
+
+          // No question yet: this is the greeting, so say who is speaking.
+          if (!question) {
+            return {
+              say: `Hello ${employee.fullName.split(/\s+/)[0]}. This is the attendance assistant from ${company?.name ?? 'your employer'}. What would you like to know?`,
+              known: true,
+              voice: settings?.agentVoice ?? 'ritu',
+              pace: Number(settings?.agentVoicePace ?? 0.95),
+              done: false,
+            };
+          }
+
+          const reply = await answerQuestion(t, tenant.id, question, {
+            employeeId: employee.id,
+            employeeName: employee.fullName,
+          });
+          return {
+            say: reply.text,
+            known: true,
+            voice: settings?.agentVoice ?? 'ritu',
+            pace: Number(settings?.agentVoicePace ?? 0.95),
+            done: false,
+          };
+        });
+        if (answer) return answer;
+      }
+      return null;
+    });
+
+    if (!found) {
+      return NextResponse.json({
+        say: 'Sorry, this number is not on our employee records, so I cannot help over the phone. Please contact your H R team.',
+        known: false,
+        done: true,
+      });
+    }
+    return NextResponse.json(found);
   }
 
   if (body.brief) {
