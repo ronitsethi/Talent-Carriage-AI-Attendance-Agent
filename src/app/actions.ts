@@ -702,20 +702,38 @@ export async function saveMapping(formData: FormData) {
       })
       .returning();
 
+    // With two halves packed into a cell, the importer splits before it looks a
+    // code up - so "HO|HO" is never asked about, only "HO". Somebody typing the
+    // pair has understood their file correctly and our mechanics not at all, so
+    // the pair is split here rather than silently matching nothing.
+    const separator = text('separator');
     const rows = names
-      .map((code, index) => ({
-        tenantId,
-        profileId: saved!.id,
-        code: code.trim().toUpperCase(),
-        meaning: (meanings[index] ?? 'unknown') as Meaning,
-        chase: chases[index] === 'yes' ? true : null,
-        confirmedAt: new Date(),
-      }))
+      .flatMap((code, index) => {
+        const parts = separator ? code.split(separator) : [code];
+        return parts.map((part) => ({
+          tenantId,
+          profileId: saved!.id,
+          code: part.trim().toUpperCase(),
+          meaning: (meanings[index] ?? 'unknown') as Meaning,
+          chase: chases[index] === 'yes' ? true : null,
+          confirmedAt: new Date(),
+        }));
+      })
       .filter((row) => row.code);
 
     // A code typed twice is one code; the last one entered wins.
     const unique = new Map(rows.map((row) => [row.code, row]));
     if (unique.size) await tx.insert(codeMappings).values([...unique.values()]);
+
+    // Codes an import complained about are answered by this form too, so the
+    // outstanding list should not keep asking about them.
+    const explained = [...unique.values()].filter((row) => row.meaning !== 'unknown').map((row) => row.code);
+    if (explained.length) {
+      await tx
+        .update(unmappedCodes)
+        .set({ resolvedAt: new Date() })
+        .where(and(eq(unmappedCodes.tenantId, tenantId), inArray(unmappedCodes.code, explained)));
+    }
 
     await tx
       .update(mappingProfiles)

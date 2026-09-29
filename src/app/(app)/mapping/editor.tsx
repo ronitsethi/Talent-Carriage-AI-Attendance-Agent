@@ -73,6 +73,7 @@ export function MappingForm({
   note: string;
 }) {
   const [layout, setLayout] = useState(initial.layout);
+  const [separator, setSeparator] = useState(initial.separator);
   const [codes, setCodes] = useState<CodeRow[]>(
     initial.codes.length ? initial.codes : [{ code: '', meaning: 'absent_full', chase: false }],
   );
@@ -175,7 +176,13 @@ export function MappingForm({
 
       <div className="field" style={{ maxWidth: 380, marginTop: 12 }}>
         <label htmlFor="separator">Two halves of the day in one cell?</label>
-        <select className="input" id="separator" name="separator" defaultValue={initial.separator}>
+        <select
+          className="input"
+          id="separator"
+          name="separator"
+          value={separator}
+          onChange={(event) => setSeparator(event.target.value)}
+        >
           <option value="">No — one code per day</option>
           <option value="|">Yes, split on | — as in A|P</option>
           <option value="/">Yes, split on / — as in A/P</option>
@@ -229,6 +236,12 @@ export function MappingForm({
         Every code that can appear in their file. Anything not listed is never messaged about, so a code you are unsure
         of is safest left out until you have asked them.
       </p>
+      {separator ? (
+        <p className="hint" style={{ marginTop: -6, marginBottom: 12, fontWeight: 600 }}>
+          Their cells hold two halves, so give the meaning of each half on its own — <code>HO</code>, not{' '}
+          <code>HO{separator}HO</code>. A pair typed here is split for you.
+        </p>
+      ) : null}
 
       <div className="table-scroll">
         <table className="data">
