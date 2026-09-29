@@ -60,8 +60,15 @@ export async function GET(request: Request) {
     return forwardResponse(forwardTo, env.PLIVO_FROM_NUMBER);
   }
 
-  console.log('[verify] recording the call; run `npm run verify:code` once it ends');
-  return recordResponse(`${env.APP_BASE_URL}/api/plivo/recording`);
+  // WhatsApp code recording, parked while this number answers employees instead.
+  // A Plivo number sends incoming calls to one place only, and that place is now
+  // the agent. Put these two lines back to catch a verification code again.
+  //
+  // console.log('[verify] recording the call; run `npm run verify:code` once it ends');
+  // return recordResponse(`${env.APP_BASE_URL}/api/plivo/recording`);
+
+  // Incoming calls now reach the attendance agent.
+  return NextResponse.redirect(new URL('/api/voice/inbound', env.APP_BASE_URL), 307);
 }
 
 /** Plivo posts by default; both verbs answer the same way. */

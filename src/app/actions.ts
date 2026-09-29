@@ -16,6 +16,7 @@ import {
   imports,
   mappingProfiles,
   messages,
+  policyDocuments,
   tenantSettings,
   unmappedCodes,
 } from '@/db/schema';
@@ -28,6 +29,7 @@ import { importAttendanceFile } from '@/lib/mapping/import';
 import { analyseFile, buildFieldMap, type Analysis } from '@/lib/mapping/analyse';
 import { PLATFORM_FIELDS, REQUIRED_FIELDS, type PlatformField } from '@/lib/mapping/apply';
 import type { Meaning } from '@/lib/mapping/meanings';
+import { answerQuestion, ingestDocument } from '@/lib/knowledge';
 import { buildContext } from '@/lib/runtime';
 import { channelFor, contactCase, contactCaseById, type ContactResult } from '@/lib/contact';
 import { ensureCase } from '@/lib/detection/run';
@@ -785,4 +787,67 @@ export async function setCodeMeaning(formData: FormData) {
   });
 
   revalidatePath('/mapping');
+}
+
+/* ------------------------------------------------------------------ *
+ * Policy documents the agent answers from
+ * ------------------------------------------------------------------ */
+
+/** Uploads a guideline document, reads it, and indexes it for the agent. */
+export async function uploadPolicyDocument(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  const file = formData.get('file');
+  if (!(file instanceof File) || file.size === 0) return;
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const title = String(formData.get('title') ?? '').trim() || file.name.replace(/\.pdf$/i, '');
+  const topic = String(formData.get('topic') ?? 'other');
+
+  const documentId = await withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .insert(policyDocuments)
+      .values({ tenantId, title, filename: file.name, topic, uploadedBy: session.userId })
+      .returning();
+    return row!.id;
+  });
+
+  // Reading a scanned document takes a while, so it happens outside the insert:
+  // the document appears straight away and turns ready when it is done.
+  try {
+    await withTenant(tenantId, (tx) => ingestDocument(tx, tenantId, documentId, buffer, file.name));
+  } catch {
+    // ingestDocument records the failure on the document itself.
+  }
+
+  revalidatePath('/knowledge');
+}
+
+export async function deletePolicyDocument(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const id = String(formData.get('id') ?? '');
+  await withTenant(tenantId, (tx) =>
+    tx.delete(policyDocuments).where(and(eq(policyDocuments.tenantId, tenantId), eq(policyDocuments.id, id))),
+  );
+  revalidatePath('/knowledge');
+}
+
+/** Asks a question the way the agent would, so answers can be checked before a call. */
+export async function askPolicyQuestion(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const question = String(formData.get('question') ?? '').trim();
+  if (!question) return;
+
+  const answer = await withTenant(tenantId, async (tx) => {
+    const employeeId = String(formData.get('employeeId') ?? '') || null;
+    const employee = employeeId
+      ? await tx.query.employees.findFirst({ where: eq(employees.id, employeeId) })
+      : null;
+    return answerQuestion(tx, tenantId, question, {
+      employeeId: employee?.id ?? null,
+      employeeName: employee?.fullName ?? null,
+    });
+  });
+
+  revalidatePath('/knowledge');
+  redirect(`/knowledge?q=${encodeURIComponent(question.slice(0, 200))}&a=${encodeURIComponent(answer.text.slice(0, 600))}`);
 }

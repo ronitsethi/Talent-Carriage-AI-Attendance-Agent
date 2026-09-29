@@ -8,6 +8,7 @@ const NAV = [
   { href: '/', label: 'Dashboard', icon: '▦' },
   { href: '/cases', label: 'Follow-up Cases', icon: '☑' },
   { href: '/mapping', label: 'Mapping & Import', icon: '⇄' },
+  { href: '/knowledge', label: 'Guidelines', icon: '◆' },
   { href: '/settings', label: 'Settings', icon: '⚙' },
 ];
 

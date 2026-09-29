@@ -27,6 +27,7 @@ import { recordAnswer, UNANSWERED, type CaseRow, type EmployeeRow, type EngineCo
 import { recordFollowUpChoice } from '@/lib/conversation/follow-up-state';
 import { followUpAcknowledgement, type FollowUpChoice } from '@/lib/conversation/flow';
 import { halfOfDay, type Meaning } from '@/lib/mapping/meanings';
+import { answerQuestion } from '@/lib/knowledge';
 import type { CallTurnInput, VoiceProvider } from './types';
 
 export type VoiceContext = EngineContext & {
@@ -294,6 +295,22 @@ export async function handleTurn(
     });
     option = classified.option;
     usedSpeech = true;
+
+    // They asked something instead of answering. The classifier already worked
+    // that out and pulled the question out; answering it from the customer's own
+    // guidelines and this employee's own record, then returning to the date, is
+    // the difference between a conversation and an interrogation.
+    if (classified.intent === 'question') {
+      const asked = classified.question ?? input.speech;
+      const answer = await answerQuestion(ctx.tx, ctx.tenantId, asked, {
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+      });
+      const question = datePrompt(spokenFor(caseRow), styleOf(call));
+      await appendTurn(ctx, callId, 'agent', `${answer.text} ${question}`);
+      return { speak: question, intro: answer.text, nextCaseId: caseId, done: false, retry: true };
+    }
+
     if (classified.intent === 'needs_help') {
       await ctx.tx
         .update(cases)
