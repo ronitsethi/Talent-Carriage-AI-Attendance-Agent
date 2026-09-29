@@ -192,6 +192,30 @@ export async function attendanceSummary(tx: Db, tenantId: string, employeeId: st
   ].join('\n');
 }
 
+/**
+ * Whether the caller has finished, rather than asked something.
+ *
+ * Matching whole phrases against a list was how "thank you" became a question,
+ * answered with "You're welcome!" while the line stayed open. People end a call
+ * in their own words and in more than one language, and a farewell attached to
+ * a real question - "thanks, and how many leaves do I have?" - is not a
+ * farewell at all.
+ */
+const FAREWELL = /\b(thanks?|thank\s*you|thanku|shukriya|dhanyavaad|dhanyawad|bye|goodbye|good\s*night|that'?s? (it|all)|nothing (else|more)|no more|bas|theek hai|thik hai|ok(ay)? then)\b/i;
+/** Words that carry a question wherever they appear. */
+const ASKING = /\b(how|what|when|where|which|why|who|kitna|kitne|kaise|kab|kya|kaun)\b|\?/i;
+/** Words that only make it a question when the sentence opens with them. */
+const OPENS_A_QUESTION = /^\s*(can|could|do|does|did|is|are|am|will|would|should|may|shall)\b/i;
+
+export function isFarewell(said: string): boolean {
+  const text = said.trim();
+  if (!text) return false;
+  // "no thanks that is all" is not a question because it contains "is".
+  if (ASKING.test(text) || OPENS_A_QUESTION.test(text)) return false;
+  // Short, and thanking or saying goodbye.
+  return FAREWELL.test(text) && text.split(/\s+/).length <= 8;
+}
+
 export type Answer = { text: string; grounded: boolean };
 
 const ANSWER_RULES = `You answer an employee's question on a phone call, on behalf of their employer.

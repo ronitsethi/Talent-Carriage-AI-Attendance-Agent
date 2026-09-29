@@ -4,7 +4,7 @@ import { calls, cases, employees, tenants, tenantSettings } from '@/db/schema';
 import { closeAnsweredCall, handleTurn, openingTurn } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
 import { withPlatformScope, withTenant } from '@/db';
-import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
+import { answerQuestion, employeeByNumber, isFarewell } from '@/lib/knowledge';
 import { env } from '@/lib/env';
 
 /**
@@ -85,6 +85,18 @@ export async function POST(request: Request) {
               voice: settings?.agentVoice ?? 'ritu',
               pace: Number(settings?.agentVoicePace ?? 0.95),
               done: false,
+            };
+          }
+
+          // They have finished rather than asked something. Said here, not in
+          // the worker, because this is where the words are understood.
+          if (isFarewell(question)) {
+            return {
+              say: 'Glad to help. Goodbye.',
+              known: true,
+              voice: settings?.agentVoice ?? 'ritu',
+              pace: Number(settings?.agentVoicePace ?? 0.95),
+              done: true,
             };
           }
 

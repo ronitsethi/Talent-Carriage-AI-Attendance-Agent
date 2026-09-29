@@ -231,12 +231,6 @@ class QuestionAgent(Agent):
         if not said:
             raise StopResponse()
 
-        # Ending the call is the caller's to decide, and they say so in words.
-        if said.lower().strip(" .!") in {"no", "nothing", "no thanks", "no thank you", "that is all", "bye", "goodbye"}:
-            await self.session.say("Glad to help. Goodbye.")
-            await self._hang_up()
-            raise StopResponse()
-
         try:
             turn = await self._api.ask(self._caller, said)
         except Exception:
