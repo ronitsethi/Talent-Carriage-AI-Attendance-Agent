@@ -63,6 +63,13 @@ class TurnApi:
     async def answer(self, case_id: str, speech: str) -> Turn:
         return await self._post({"caseId": case_id, "speech": speech})
 
+    async def ended(self) -> None:
+        """The line has dropped. Without this a call sits 'in progress' for ever."""
+        try:
+            await self._post({"ended": True})
+        except Exception:
+            log.exception("could not report the end of call %s", self._call_id)
+
     async def _post(self, body: dict) -> Turn:
         async with self._http.post(
             f"{APP_BASE_URL}/api/agent/turn",
@@ -149,7 +156,18 @@ async def entrypoint(ctx: JobContext) -> None:
         return
 
     log.info("joining call %s", call_id)
+
+    # `session.start()` returns once the agent is running, not when the call
+    # ends, so this must not be closed in a `finally` around it - that shut the
+    # connection mid-conversation and the agent apologised and hung up.
     http = aiohttp.ClientSession()
+    api_client = TurnApi(call_id, http)
+
+    async def on_shutdown() -> None:
+        await api_client.ended()
+        await http.close()
+
+    ctx.add_shutdown_callback(on_shutdown)
 
     session = AgentSession(
         # Listening, deciding how to phrase, speaking. The decisions that matter
@@ -160,10 +178,7 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=silero.VAD.load(),
     )
 
-    try:
-        await session.start(agent=AttendanceAgent(TurnApi(call_id, http)), room=ctx.room)
-    finally:
-        await http.close()
+    await session.start(agent=AttendanceAgent(api_client), room=ctx.room)
 
 
 if __name__ == "__main__":

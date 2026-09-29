@@ -180,3 +180,40 @@ describe('answering out loud', () => {
     });
   });
 });
+
+/**
+ * Resetting a case.
+ *
+ *   "Reset case button no longer working?"
+ *
+ * It was working - it cleared the case but left the call behind, so the portal
+ * went on showing the transcript of a conversation that had been reset away,
+ * which looks exactly like nothing happening.
+ */
+describe('resetting a case', () => {
+  it('clears the call and its transcript, not just the case', async () => {
+    await absentWeekOnTheAgent();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const newest = await tx.query.cases.findFirst({ where: eq(cases.attDate, '2026-09-23') });
+      const call = await tx.query.calls.findFirst({ where: eq(calls.caseId, newest!.id) });
+      const opening = await openingTurn(ctx, call!.id);
+      await handleTurn(ctx, call!.id, opening.nextCaseId!, { speech: 'I was unwell' });
+
+      // What the reset action does, in the order it does it.
+      await tx.delete(calls).where(eq(calls.caseId, newest!.id));
+      await tx
+        .update(cases)
+        .set({ status: 'queued', askedAt: null, answeredAt: null, replyOption: null, callAttempts: 0 })
+        .where(eq(cases.id, newest!.id));
+
+      const remaining = await tx.select().from(calls).where(eq(calls.caseId, newest!.id));
+      expect(remaining, 'no transcript should survive a reset').toHaveLength(0);
+
+      const after = await tx.query.cases.findFirst({ where: eq(cases.id, newest!.id) });
+      expect(after!.status).toBe('queued');
+      expect(after!.replyOption).toBeNull();
+    });
+  });
+});

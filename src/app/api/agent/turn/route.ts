@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { calls, cases, employees } from '@/db/schema';
-import { handleTurn, openingTurn } from '@/lib/voice/session';
+import { closeAnsweredCall, handleTurn, openingTurn } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
 import { env } from '@/lib/env';
 
@@ -24,6 +24,8 @@ type Body = {
   caseId?: string;
   speech?: string;
   digits?: string;
+  /** The line has dropped. There is no hangup webhook on a LiveKit call. */
+  ended?: boolean;
 };
 
 function unauthorised() {
@@ -38,6 +40,18 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as Body;
   const callId = body.callId ?? '';
+
+  if (body.ended) {
+    // A keypad call learns it is over from Plivo's hangup webhook; a LiveKit
+    // call has no such thing, so the worker says so on its way out. Without
+    // this the call would sit "in progress" for ever and the portal would show
+    // a conversation that is long finished.
+    const closed = await withCallContext(callId, async (ctx) => {
+      await closeAnsweredCall(ctx, callId, 0);
+      return true;
+    });
+    return NextResponse.json({ closed: Boolean(closed) });
+  }
 
   const result = await withCallContext(callId, async (ctx) => {
     const turn = body.caseId

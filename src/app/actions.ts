@@ -245,6 +245,9 @@ export async function resetCase(formData: FormData) {
 
     await tx.delete(messages).where(eq(messages.caseId, caseId));
     await tx.delete(actions).where(eq(actions.caseId, caseId));
+    // Calls too, or the portal keeps showing the transcript of a conversation
+    // that has been reset away - which looks exactly like the reset failing.
+    await tx.delete(calls).where(eq(calls.caseId, caseId));
     await tx
       .update(cases)
       .set({
@@ -298,6 +301,9 @@ export async function resetAllCases() {
     await tx.delete(actions).where(eq(actions.tenantId, tenantId));
     await tx.delete(messages).where(eq(messages.tenantId, tenantId));
     await tx.delete(conversations).where(eq(conversations.tenantId, tenantId));
+    // Calls cascade from their case, but a call need not have one - so it is
+    // named here rather than left to the foreign key.
+    await tx.delete(calls).where(eq(calls.tenantId, tenantId));
     await tx.delete(cases).where(eq(cases.tenantId, tenantId));
   });
 
