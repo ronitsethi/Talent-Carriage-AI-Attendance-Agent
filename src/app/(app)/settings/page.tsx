@@ -65,10 +65,15 @@ export default async function SettingsPage() {
                   automatic mode the daily check runs at the time above, and due reminders go out on their own.
                 </p>
               </div>
-              <label style={{ display: 'block', marginTop: 8, fontWeight: 600 }}>
-                <input type="checkbox" name="sendingEnabled" defaultChecked={settings.sendingEnabled} /> Allow messages
-                to be sent at all
+              <label style={{ display: 'block', marginTop: 14, fontWeight: 600 }}>
+                <input type="checkbox" name="sendingEnabled" defaultChecked={settings.sendingEnabled} /> Let the agent
+                contact employees
               </label>
+              <p className="hint" style={{ marginTop: 4 }}>
+                The master switch for {tenant?.name}. Turn it off and absences are still found and cases still created,
+                but no WhatsApp message and no call ever goes out — however many times anyone presses Contact. Leave it
+                off while a new customer is being set up, or use it to stop everything at once.
+              </p>
             </section>
 
             <section className="card pad" style={{ marginTop: 18 }}>
