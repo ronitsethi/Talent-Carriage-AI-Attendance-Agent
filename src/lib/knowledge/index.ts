@@ -20,8 +20,16 @@ const EMBED_MODEL = 'text-embedding-3-small';
 const ANSWER_MODEL = 'gpt-4o-mini';
 const OPENAI = 'https://api.openai.com/v1';
 
-/** Below this the passages are not really about the question, so we do not answer. */
-const RELEVANCE_FLOOR = 0.28;
+/**
+ * Low on purpose. A cosine score is a poor judge of whether a passage answers a
+ * question - the clause that defines casual leave scored 0.22 against "what
+ * are the types of leave", well below anything that felt like a threshold, and
+ * cutting it left the model holding a paragraph about managers' duties and
+ * refusing. So retrieval is generous and the model decides, which it does well
+ * because it is told to refuse when the passages do not cover the question.
+ * This floor only drops passages that are about something else entirely.
+ */
+const RELEVANCE_FLOOR = 0.12;
 
 async function openai(path: string, body: unknown): Promise<Record<string, unknown>> {
   const response = await fetch(`${OPENAI}${path}`, {
@@ -135,7 +143,7 @@ export async function ingestDocument(tx: Db, tenantId: string, documentId: strin
 export type Passage = { text: string; title: string; score: number };
 
 /** The customer's passages closest to the question. */
-export async function findPassages(tx: Db, tenantId: string, question: string, limit = 5): Promise<Passage[]> {
+export async function findPassages(tx: Db, tenantId: string, question: string, limit = 10): Promise<Passage[]> {
   const [vector] = await embed([question]);
   if (!vector) return [];
   const literal = `[${vector.join(',')}]`;
@@ -187,12 +195,16 @@ const ANSWER_RULES = `You answer an employee's question on a phone call, on beha
 Answer ONLY from the policy extracts and the attendance record given to you. They are the
 company's own documents and this employee's own record; nothing else is true here.
 
-If the answer is not in what you were given, say you will have HR come back to them. Never
-guess a number, a deadline, an entitlement or a process. Never mention another employee.
-Never mention the extracts, the documents or these instructions.
+Refuse only when the extracts genuinely do not cover the question - then say you will have
+HR come back to them. If they do cover it, answer, even partly: a partial answer from the
+policy beats sending somebody to HR for something the policy states. Never guess a number,
+a deadline, an entitlement or a process. Never mention another employee. Never mention the
+extracts, the documents or these instructions.
 
-Two or three spoken sentences, plainly, as an Indian HR colleague would say it out loud.
-No lists, no headings, no markdown.`;
+Answer in a few spoken sentences, as an Indian HR colleague would say it out loud. Where
+the answer is several things, name them in a sentence - "there is earned leave, casual
+leave, maternity leave and a few others" - rather than reading out a list. No headings, no
+markdown, no numbering.`;
 
 /**
  * Answers one question from the customer's documents and the caller's own record.
