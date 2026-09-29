@@ -91,8 +91,8 @@ export default async function DashboardPage({
           </span>
           <span className={`flag ${settings?.operatingMode === 'automatic' ? 'ok' : 'idle'}`}>
             {settings?.operatingMode === 'automatic'
-              ? `✓ Automatic at ${settings.checkTime.slice(0, 5)}`
-              : 'Manual · you choose who to contact'}
+              ? `✓ Automatic at ${settings.checkTime.slice(0, 5)} · except rows set to Manual`
+              : 'Manual · nothing goes out on its own, whatever the rows say'}
           </span>
           <span className="flag idle">Calls from {settings?.callerId ?? 'no number set'}</span>
         </div>
@@ -233,7 +233,18 @@ export default async function DashboardPage({
                               key={option}
                               type="submit"
                               formAction={setModeFromRow.bind(null, row.employeeId, option)}
-                              className={`switch-option ${(row.operatingMode ?? 'manual') === option ? 'on' : ''}`}
+                              // An employee with no setting of their own follows
+                              // the customer's, so that is what must be shown as
+                              // lit - otherwise a customer on Automatic looks as
+                              // though every row is Manual.
+                              className={`switch-option ${
+                                (row.operatingMode ?? settings?.operatingMode ?? 'manual') === option ? 'on' : ''
+                              }`}
+                              title={
+                                row.operatingMode
+                                  ? `Set for this person, whatever the customer default is`
+                                  : `Following the customer default (${settings?.operatingMode ?? 'manual'})`
+                              }
                             >
                               {option === 'automatic' ? 'Auto' : 'Manual'}
                             </button>

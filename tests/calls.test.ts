@@ -417,3 +417,64 @@ describe('the follow-up call', () => {
     });
   });
 });
+
+/**
+ * Who the daily run actually contacts.
+ *
+ *   "If I change to auto in the settings itself, will it change for the entire
+ *    organisation, overriding the switches in the dashboard?"
+ *
+ * No. The customer setting is a gate, not an override: nothing runs at all
+ * while it is Manual, and when it is Automatic each employee's own switch still
+ * decides, falling back to the customer default only when they have none.
+ */
+describe('automatic mode, customer setting versus row switch', () => {
+  async function absentOnce(settings = {}, employeeOverrides = {}) {
+    scenario = await makeScenario(
+      { defaultChannel: 'voice', ...settings },
+      { preferredChannel: 'voice', ...employeeOverrides },
+    );
+    await withTenant(scenario.tenantId, async (tx) => {
+      await giveAttendance(tx, scenario.tenantId, scenario.employeeId, [
+        { date: '2026-09-21', meaning: 'absent_full', raw: 'A' },
+      ]);
+    });
+  }
+
+  it('contacts an employee with no setting of their own when the customer is automatic', async () => {
+    await absentOnce({ operatingMode: 'automatic' }, { operatingMode: null });
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
+      expect(result.messagesSent).toBe(1);
+    });
+  });
+
+  it('leaves a row set to Manual alone, even when the customer is automatic', async () => {
+    await absentOnce({ operatingMode: 'automatic' }, { operatingMode: 'manual' });
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
+      expect(result.messagesSent, 'the row wins over the customer default').toBe(0);
+      expect(result.skipped.manual_employee).toBe(1);
+    });
+  });
+
+  it('contacts a row set to Auto even when the customer default is manual', async () => {
+    await absentOnce({ operatingMode: 'manual' }, { operatingMode: 'automatic' });
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
+      expect(result.messagesSent).toBe(1);
+    });
+  });
+
+  it('still contacts everyone when HR runs the check by hand', async () => {
+    await absentOnce({ operatingMode: 'manual' }, { operatingMode: 'manual' });
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'manual' });
+      expect(result.messagesSent, 'Manual means "not on its own", not "never"').toBe(1);
+    });
+  });
+});
