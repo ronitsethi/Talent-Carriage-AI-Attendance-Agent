@@ -88,25 +88,40 @@ function getInput(speak: string, actionUrl: string, language: string, timeout: n
  * None of that can hear "how many days was I absent in August", which is why an
  * incoming call sat silent and then gave up.
  */
+export type QuestionOptions = PromptOptions & {
+  /**
+   * A playable URL per line, in the same order as the lines are spoken. A null
+   * entry falls back to Plivo's own voice, which is worse than the customer's
+   * but far better than silence.
+   */
+  audio?: (string | null)[];
+};
+
 export function questionXml({
   speak,
   intro,
   actionUrl,
   language = 'en-IN',
   timeoutSeconds = 20,
-}: PromptOptions): string {
+  audio = [],
+}: QuestionOptions): string {
   const timeout = Math.min(60, Math.max(5, timeoutSeconds));
 
-  // Said before the element, never inside it. A prompt nested in a speech-only
-  // GetInput is not played: an incoming call sat answered and silent for
-  // exactly two listening windows, then hung up. Speaking first and listening
-  // second is also what the keypad calls do, and those have always been heard.
-  const say = (text: string) => `  <Speak language="${language}">${escape(text)}</Speak>`;
+  // Said before the element, never inside it. A prompt nested in a GetInput was
+  // not played at all: an incoming call sat answered and silent for exactly two
+  // listening windows, then hung up.
+  let spoken = 0;
+  const say = (text: string) => {
+    const url = audio[spoken++];
+    return url
+      ? `  <Play>${escape(url)}</Play>`
+      : `  <Speak language="${language}">${escape(text)}</Speak>`;
+  };
+
   // `dtmf speech`, not speech alone: that is the combination the outbound calls
-  // have always been heard on, and the only one proven on this account. What is
-  // dropped here is the keypad's baggage - numDigits, which completes on one
-  // press, and hints listing "absent, working, one, two, three, four", which
-  // cannot help recognise a sentence.
+  // have always been heard on. What is dropped here is the keypad's baggage -
+  // numDigits, which completes on one press, and hints listing "absent,
+  // working, one, two, three, four", which cannot help recognise a sentence.
   const listen = () =>
     `  <GetInput action="${escape(actionUrl)}" method="POST" inputType="dtmf speech" ` +
     `language="${language}" executionTimeout="${timeout}" speechEndTimeout="3" retries="1"/>`;
