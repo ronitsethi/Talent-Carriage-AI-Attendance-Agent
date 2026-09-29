@@ -25,6 +25,7 @@ import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { closeCasesExplainedByData, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { importAttendanceFile } from '@/lib/mapping/import';
 import { analyseFile, buildFieldMap, type Analysis } from '@/lib/mapping/analyse';
+import { pickTable, readWorkbook } from '@/lib/mapping/source';
 import { PLATFORM_FIELDS, REQUIRED_FIELDS, type PlatformField } from '@/lib/mapping/apply';
 import type { Meaning } from '@/lib/mapping/meanings';
 import { buildContext } from '@/lib/runtime';
@@ -237,19 +238,59 @@ export async function updateSettings(formData: FormData) {
 export async function importAttendance(formData: FormData) {
   const { session, tenantId } = await requireTenant();
   const file = formData.get('file');
-  if (!(file instanceof File) || file.size === 0) return;
+  if (!(file instanceof File) || file.size === 0) {
+    redirect('/mapping?problem=' + encodeURIComponent('Choose a file first'));
+  }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  await withTenant(tenantId, async (tx) => {
-    await importAttendanceFile(tx, tenantId, buffer, {
-      source: 'upload',
-      filename: file.name,
-      createdBy: session.userId,
+  let summary = '';
+  let mismatch = '';
+  let unresolved = 0;
+
+  try {
+    await withTenant(tenantId, async (tx) => {
+      const result = await importAttendanceFile(tx, tenantId, buffer, {
+        source: 'upload',
+        filename: file.name,
+        createdBy: session.userId,
+      });
+      await closeCasesExplainedByData(tx, tenantId);
+
+      // Nothing read is never a success. It means the mapping does not match
+      // this file - the wrong column names, the wrong date layout, or the wrong
+      // sheet - and the only useful thing to say is which headings are actually
+      // in there.
+      if (!result.report.employeesSeen || !result.report.daysImported) {
+        const found = pickTable(readWorkbook(buffer)).columns.slice(0, 12).join(', ');
+        mismatch =
+          `Nothing could be read from ${file.name}. The mapping below does not match it. ` +
+          `Its columns are: ${found}${found ? '…' : '(none)'}`;
+        return;
+      }
+
+      summary =
+        `${result.report.daysImported} days for ${result.report.employeesSeen} ` +
+        `${result.report.employeesSeen === 1 ? 'employee' : 'employees'}` +
+        (result.dateFrom ? `, ${result.dateFrom} to ${result.dateTo}` : '') +
+        (result.report.rejected.length ? `, ${result.report.rejected.length} rows skipped` : '');
+      unresolved = Object.keys(result.report.unmappedCodes).length;
     });
-    await closeCasesExplainedByData(tx, tenantId);
-  });
+  } catch (error) {
+    // An unreadable file, or one whose columns do not match the mapping. Saying
+    // so beats a stack trace, and the mapping is right there to correct.
+    redirect(
+      '/mapping?problem=' +
+        encodeURIComponent(`${file.name} could not be read: ${(error as Error).message}`),
+    );
+  }
+
   revalidatePath('/mapping');
   revalidatePath('/');
+  if (mismatch) redirect('/mapping?problem=' + encodeURIComponent(mismatch));
+
+  const params = new URLSearchParams({ imported: summary });
+  if (unresolved) params.set('unresolved', String(unresolved));
+  redirect(`/mapping?${params.toString()}`);
 }
 
 /**

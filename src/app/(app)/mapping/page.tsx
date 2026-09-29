@@ -44,10 +44,13 @@ export default async function MappingPage({
           {problem}
         </div>
       ) : null}
-      {saved ? (
+      {saved || imported ? (
         <div className="notice ok" style={{ margin: '16px 0 0' }}>
-          Mapping saved and in use.{imported ? ` Imported ${imported}.` : ''}
-          {unresolved ? ` ${unresolved} code${unresolved === '1' ? '' : 's'} still need a meaning — below.` : ''}
+          {saved ? 'Mapping saved and in use. ' : ''}
+          {imported ? `Imported ${imported}. ` : ''}
+          {unresolved
+            ? `${unresolved} code${unresolved === '1' ? '' : 's'} in that file have no meaning yet — add them below.`
+            : ''}
         </div>
       ) : null}
 
