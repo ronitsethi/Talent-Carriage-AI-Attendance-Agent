@@ -127,10 +127,10 @@ export async function importAttendanceFile(
     await tx.update(imports).set({ status, report, finishedAt: new Date() }).where(eq(imports.id, importId));
     return { importId, report, dateFrom, dateTo, dryRun: false };
   } catch (error) {
-    await tx
-      .update(imports)
-      .set({ status: 'failed', error: error instanceof Error ? error.message : String(error), finishedAt: new Date() })
-      .where(eq(imports.id, importId));
+    // The transaction is already aborted, so recording the failure on the
+    // import row here would itself fail - and that second failure is all the
+    // caller would ever see. The real error is thrown for the caller to record
+    // outside this transaction.
     throw error;
   }
 }

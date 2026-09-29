@@ -7,11 +7,12 @@ import { MappingForm, type CodeRow, type MappingDraft } from './editor';
 import { ALL_MEANINGS } from '@/lib/mapping/meanings';
 import type { Analysis } from '@/lib/mapping/analyse';
 import type { FieldMap } from '@/db/schema';
+import type { ImportReport } from '@/db/schema';
 
 export default async function MappingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ problem?: string; saved?: string; imported?: string; unresolved?: string }>;
+  searchParams: Promise<{ problem?: string; saved?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -22,7 +23,7 @@ export default async function MappingPage({
     mappingOverview(tenantId),
     searchParams,
   ]);
-  const { imported, unresolved } = await searchParams;
+  const latest = recentImports[0];
   const openUnmapped = unmapped.filter((u) => !u.resolvedAt);
   const analysis = (draft?.detected ?? null) as Analysis | null;
   const editing = toDraft(profile, codes, analysis);
@@ -44,15 +45,11 @@ export default async function MappingPage({
           {problem}
         </div>
       ) : null}
-      {saved || imported ? (
-        <div className="notice ok" style={{ margin: '16px 0 0' }}>
-          {saved ? 'Mapping saved and in use. ' : ''}
-          {imported ? `Imported ${imported}. ` : ''}
-          {unresolved
-            ? `${unresolved} code${unresolved === '1' ? '' : 's'} in that file have no meaning yet — add them below.`
-            : ''}
-        </div>
+      {saved ? (
+        <div className="notice ok" style={{ margin: '16px 0 0' }}>Mapping saved and in use.</div>
       ) : null}
+
+      {latest ? <ImportOutcome row={latest} /> : null}
 
       {openUnmapped.length ? (
         <section className="card pad" style={{ marginTop: 16, borderColor: 'var(--danger-text)' }}>
@@ -288,4 +285,45 @@ function toDraft(
     fields: {},
     codes: [],
   };
+}
+
+/**
+ * What the last import did, taken from the import itself rather than carried in
+ * the URL - a long message in a redirect is how this page started returning
+ * headers too big for the browser to accept.
+ */
+function ImportOutcome({ row }: { row: { filename: string | null; status: string; error: string | null; report: ImportReport | null } }) {
+  if (row.status === 'failed') {
+    return (
+      <div className="notice err" style={{ margin: '16px 0 0' }}>
+        <strong>{row.filename} could not be read.</strong> {row.error}
+      </div>
+    );
+  }
+
+  const report = row.report;
+  if (!report) return null;
+
+  // Nothing read is never a success: it means the mapping does not fit the file.
+  if (!report.employeesSeen || !report.daysImported) {
+    return (
+      <div className="notice err" style={{ margin: '16px 0 0' }}>
+        <strong>Nothing was read from {row.filename}.</strong> The mapping below does not match it — check the column
+        names and the date layout against the file.
+        {report.rejected.length ? ` Every row was skipped: ${report.rejected[0]!.reason}.` : ''}
+      </div>
+    );
+  }
+
+  const unresolved = Object.keys(report.unmappedCodes ?? {});
+  return (
+    <div className={`notice ${unresolved.length ? 'err' : 'ok'}`} style={{ margin: '16px 0 0' }}>
+      Imported {report.daysImported} days for {report.employeesSeen}{' '}
+      {report.employeesSeen === 1 ? 'employee' : 'employees'} from {row.filename}.
+      {report.rejected.length ? ` ${report.rejected.length} rows skipped.` : ''}
+      {unresolved.length
+        ? ` ${unresolved.join(', ')} ${unresolved.length === 1 ? 'has' : 'have'} no meaning yet — nobody is messaged about ${unresolved.length === 1 ? 'it' : 'them'} until you add ${unresolved.length === 1 ? 'it' : 'them'} below.`
+        : ''}
+    </div>
+  );
 }

@@ -318,5 +318,17 @@ export function applyProfile(
     byEmployee.set(empCode, record);
   });
 
-  return { records: [...byEmployee.values()], dayColumns, rejected, unmapped, meaningCounts };
+  // The same employee can appear on more than one row - a register split by
+  // department, a repeated header, a file two months were pasted into. Left
+  // alone that gives one person the same date twice, and Postgres rejects the
+  // whole batch with "ON CONFLICT DO UPDATE command cannot affect row a second
+  // time", which says nothing about the file. The later row wins, as it does
+  // for the employee's own details.
+  const records = [...byEmployee.values()].map((record) => {
+    const byDate = new Map<string, MappedDay>();
+    for (const day of record.days) byDate.set(day.date, day);
+    return byDate.size === record.days.length ? record : { ...record, days: [...byDate.values()] };
+  });
+
+  return { records, dayColumns, rejected, unmapped, meaningCounts };
 }

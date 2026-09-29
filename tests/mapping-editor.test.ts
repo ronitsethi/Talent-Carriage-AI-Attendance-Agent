@@ -161,3 +161,39 @@ describe('a bare "Status" column', () => {
     expect(analysis.codes.map((c) => c.code).sort()).toEqual(['Ab', 'P']);
   });
 });
+
+describe('a file that lists the same employee twice', () => {
+  it('keeps one day per date rather than breaking the whole import', () => {
+    // A register split by department, a repeated header block, or two months
+    // pasted into one sheet. Postgres rejects a batch holding the same
+    // (employee, date) twice, with an error that says nothing about the file.
+    const file = workbook([
+      { 'Emp ID': 'E1', 'Full name': 'Aryan', Mobile: '9718290560', '1 / 9': 'P', '2 / 9': 'A', '3 / 9': 'P', '4 / 9': 'P', '5 / 9': 'P', '6 / 9': 'P' },
+      { 'Emp ID': 'E1', 'Full name': 'Aryan', Mobile: '9718290560', '1 / 9': 'P', '2 / 9': 'WO', '3 / 9': 'P', '4 / 9': 'P', '5 / 9': 'P', '6 / 9': 'P' },
+    ]);
+    const fieldMap = buildFieldMap({
+      sheetName: 'Attendance',
+      fields: { employee_code: ['Emp ID'], employee_name: ['Full name'], mobile: ['Mobile'] },
+      layout: 'column_per_day',
+      year: 2026,
+      separator: null,
+    });
+
+    const result = applyProfile(
+      pickTable(readWorkbook(file)),
+      fieldMap,
+      new Map([
+        ['P', { meaning: 'present' as const, chase: null }],
+        ['A', { meaning: 'absent_full' as const, chase: null }],
+        ['WO', { meaning: 'weekly_off' as const, chase: null }],
+      ]),
+    );
+
+    expect(result.records).toHaveLength(1);
+    const days = result.records[0]!.days;
+    expect(days).toHaveLength(6);
+    expect(new Set(days.map((d) => d.date)).size, 'one row per date').toBe(6);
+    // The later row wins, as it does for the employee's own details.
+    expect(days.find((d) => d.date === '2026-09-02')!.meaning).toBe('weekly_off');
+  });
+});
