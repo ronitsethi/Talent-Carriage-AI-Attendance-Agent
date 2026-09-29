@@ -95,21 +95,30 @@ export function questionXml({
   language = 'en-IN',
   timeoutSeconds = 20,
 }: PromptOptions): string {
-  const listen = (prompt: string | null) =>
-    `  <GetInput action="${escape(actionUrl)}" method="POST" inputType="speech" ` +
-    `language="${language}" speechModel="phone_call" executionTimeout="${Math.min(60, Math.max(5, timeoutSeconds))}" ` +
-    // Long enough to let somebody finish a sentence, and to sit through the
-    // pause in the middle of one.
-    `speechEndTimeout="3" profanityFilter="false" retries="1">\n` +
-    (prompt ? `    <Speak language="${language}">${escape(prompt)}</Speak>\n` : '') +
-    `  </GetInput>`;
+  const timeout = Math.min(60, Math.max(5, timeoutSeconds));
+
+  // Said before the element, never inside it. A prompt nested in a speech-only
+  // GetInput is not played: an incoming call sat answered and silent for
+  // exactly two listening windows, then hung up. Speaking first and listening
+  // second is also what the keypad calls do, and those have always been heard.
+  const say = (text: string) => `  <Speak language="${language}">${escape(text)}</Speak>`;
+  // `dtmf speech`, not speech alone: that is the combination the outbound calls
+  // have always been heard on, and the only one proven on this account. What is
+  // dropped here is the keypad's baggage - numDigits, which completes on one
+  // press, and hints listing "absent, working, one, two, three, four", which
+  // cannot help recognise a sentence.
+  const listen = () =>
+    `  <GetInput action="${escape(actionUrl)}" method="POST" inputType="dtmf speech" ` +
+    `language="${language}" executionTimeout="${timeout}" speechEndTimeout="3" retries="1"/>`;
 
   return xml(
     [
-      intro ? `  <Speak language="${language}">${escape(intro)}</Speak>` : null,
-      listen(speak),
-      listen('Sorry, I did not catch that. Please say it once more.'),
-      `  <Speak language="${language}">I could not hear you. Please call again, or contact your H R team. Goodbye.</Speak>`,
+      intro ? say(intro) : null,
+      say(speak),
+      listen(),
+      say('Sorry, I did not catch that. Please say it once more.'),
+      listen(),
+      say('I could not hear you. Please call again, or contact your H R team. Goodbye.'),
       '  <Hangup/>',
     ]
       .filter(Boolean)
