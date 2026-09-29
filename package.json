@@ -29,11 +29,13 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.3",
     "jose": "^6.2.12",
+    "mupdf": "^1.28.1",
     "next": "^16.2.10",
     "openai": "^6.49.0",
     "pg": "^8.23.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "tesseract.js": "^7.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.6.5"
   },

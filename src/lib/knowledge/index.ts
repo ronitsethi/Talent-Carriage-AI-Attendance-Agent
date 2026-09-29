@@ -1,12 +1,9 @@
-import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { attendanceDays, employees, policyPassages, policyDocuments } from '@/db/schema';
 import { MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings';
 import { env } from '@/lib/env';
+import { readPdf } from './ocr';
 
 /**
  * Answering questions from a customer's own documents, and from their own
@@ -48,44 +45,18 @@ async function openai(path: string, body: unknown): Promise<Record<string, unkno
 }
 
 /**
- * Reads a PDF into text with optical character recognition.
+ * Reads a PDF into text. See `ocr.ts` for why this is not a language model.
  *
- * Deliberately not a language model. A model asked to transcribe a policy
- * document produces plausible text, and for numbered clauses carrying figures
- * "plausible" means invented: in testing, one merged two clauses and reported a
- * monthly cap as the annual carry-forward limit, and a better one wrote an
- * encashment clause that does not appear in the document at all. An employee is
- * told these figures as company rule. OCR can misread a character; it cannot
- * make up a rule.
- *
- * On a server this becomes Azure Document Intelligence. Bytes in, text out -
- * the same contract, which is why it is one function.
+ * On a server with volume this becomes Azure Document Intelligence. Bytes in,
+ * text out - the same contract, which is why it is one function.
  */
 export async function extractPdfText(buffer: Buffer, filename: string): Promise<string> {
-  const scratch = await mkdtemp(path.join(tmpdir(), 'policy-'));
-  const file = path.join(scratch, 'document.pdf');
-  try {
-    await writeFile(file, buffer);
-    const text = await new Promise<string>((resolve, reject) => {
-      const child = spawn('python3', [path.resolve('tools/ocr-pdf.py'), file]);
-      let out = '';
-      let err = '';
-      child.stdout.on('data', (chunk) => (out += chunk));
-      child.stderr.on('data', (chunk) => (err += chunk));
-      child.on('error', reject);
-      child.on('close', (code) =>
-        code === 0 ? resolve(out) : reject(new Error(err.trim().slice(0, 300) || `reader exited ${code}`)),
-      );
-    });
-
-    const trimmed = text.trim();
-    if (trimmed.length < 200) {
-      throw new Error(`Almost no text could be read from ${filename}. If it is a photograph, a clearer scan will help.`);
-    }
-    return trimmed;
-  } finally {
-    await rm(scratch, { recursive: true, force: true });
+  const { text } = await readPdf(buffer);
+  const trimmed = text.trim();
+  if (trimmed.length < 200) {
+    throw new Error(`Almost no text could be read from ${filename}. If it is a photograph, a clearer scan will help.`);
   }
+  return trimmed;
 }
 
 /**
