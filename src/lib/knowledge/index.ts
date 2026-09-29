@@ -144,29 +144,52 @@ export async function findPassages(tx: Db, tenantId: string, question: string, l
   return rows.map((row) => ({ text: row.text, title: row.title, score: 1 - Number(row.distance) }));
 }
 
-/** One employee's own attendance, as a few lines the model can read. */
+/**
+ * One employee's own attendance, written out for the model to read.
+ *
+ * Grouped by month and by what each day means, with the dates listed for
+ * anything that is not an ordinary present day - those are what people ask
+ * about, and a bare count leaves the model guessing at dates or waffling. A
+ * weekly off is kept apart from an absence, because they are not the same thing
+ * and running them together is how "you were absent twelve days" acquires "which
+ * includes your weekly offs".
+ */
 export async function attendanceSummary(tx: Db, tenantId: string, employeeId: string): Promise<string> {
   const rows = await tx
-    .select({ date: attendanceDays.attDate, meaning: attendanceDays.meaning, raw: attendanceDays.rawStatus })
+    .select({ date: attendanceDays.attDate, meaning: attendanceDays.meaning })
     .from(attendanceDays)
     .where(and(eq(attendanceDays.tenantId, tenantId), eq(attendanceDays.employeeId, employeeId)))
     .orderBy(attendanceDays.attDate);
 
   if (!rows.length) return 'No attendance has been imported for this employee.';
 
-  const counts = new Map<string, string[]>();
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const byMonth = new Map<string, Map<string, string[]>>();
+
   for (const row of rows) {
+    const [year, month, day] = row.date.split('-');
+    const key = `${MONTHS[Number(month) - 1]} ${year}`;
     const label = MEANING_LABELS[row.meaning as Meaning] ?? row.meaning;
-    counts.set(label, [...(counts.get(label) ?? []), row.date]);
+    const months = byMonth.get(key) ?? new Map<string, string[]>();
+    months.set(label, [...(months.get(label) ?? []), String(Number(day))]);
+    byMonth.set(key, months);
   }
 
-  const lines = [...counts.entries()].map(([label, dates]) => {
-    // Dates matter for absences; for a hundred present days a count is plenty.
-    const detail = dates.length <= 12 ? `: ${dates.join(', ')}` : '';
-    return `${label}: ${dates.length} day${dates.length === 1 ? '' : 's'}${detail}`;
-  });
+  const lines: string[] = [];
+  for (const [month, meanings] of byMonth) {
+    lines.push(`${month}:`);
+    for (const [label, days] of meanings) {
+      // Dates for everything except ordinary attendance, which nobody asks after.
+      const listed = /present|weekly off|holiday/i.test(label) ? '' : ` — on the ${days.join(', ')}`;
+      lines.push(`  ${label}: ${days.length} day${days.length === 1 ? '' : 's'}${listed}`);
+    }
+  }
 
-  return `Attendance on record from ${rows[0]!.date} to ${rows[rows.length - 1]!.date}.\n${lines.join('\n')}`;
+  return [
+    `Attendance on record from ${rows[0]!.date} to ${rows[rows.length - 1]!.date}.`,
+    'Each line is a separate kind of day. A weekly off or a holiday is not an absence.',
+    ...lines,
+  ].join('\n');
 }
 
 export type Answer = { text: string; grounded: boolean };

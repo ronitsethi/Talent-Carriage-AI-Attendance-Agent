@@ -849,5 +849,8 @@ export async function askPolicyQuestion(formData: FormData) {
   });
 
   revalidatePath('/knowledge');
-  redirect(`/knowledge?q=${encodeURIComponent(question.slice(0, 200))}&a=${encodeURIComponent(answer.text.slice(0, 600))}`);
+  const params = new URLSearchParams({ q: question.slice(0, 200), a: answer.text.slice(0, 600) });
+  const who = String(formData.get('employeeId') ?? '');
+  if (who) params.set('who', who);
+  redirect(`/knowledge?${params.toString()}`);
 }

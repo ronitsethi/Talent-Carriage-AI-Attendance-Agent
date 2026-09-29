@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { desc, eq } from 'drizzle-orm';
 import { withTenant } from '@/db';
-import { policyDocuments } from '@/db/schema';
+import { employees, policyDocuments } from '@/db/schema';
 import { getActiveTenantId, getSession } from '@/lib/auth';
 import { formatTime } from '@/lib/display';
 import { askPolicyQuestion, deletePolicyDocument, uploadPolicyDocument } from '@/app/actions';
@@ -11,16 +11,24 @@ const TOPICS = ['attendance', 'leave', 'overtime', 'exit', 'other'];
 export default async function KnowledgePage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; a?: string }>;
+  searchParams: Promise<{ q?: string; a?: string; who?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) redirect('/');
 
-  const [docs, { q, a }] = await Promise.all([
+  const [docs, staff, { q, a, who }] = await Promise.all([
     withTenant(tenantId, (tx) =>
       tx.select().from(policyDocuments).where(eq(policyDocuments.tenantId, tenantId)).orderBy(desc(policyDocuments.createdAt)),
+    ),
+    withTenant(tenantId, (tx) =>
+      tx
+        .select({ id: employees.id, name: employees.fullName, code: employees.empCode })
+        .from(employees)
+        .where(eq(employees.tenantId, tenantId))
+        .orderBy(employees.fullName)
+        .limit(200),
     ),
     searchParams,
   ]);
@@ -113,10 +121,22 @@ export default async function KnowledgePage({
               <h2>Try a question</h2>
             </div>
             <p className="hint" style={{ marginBottom: 12 }}>
-              Exactly what the agent would say on a call. Worth checking a few before letting it answer anybody.
+              Exactly what the agent would say on a call. Asking as somebody lets you check the answers about their own
+              attendance, which is what a caller is identified as by their number.
             </p>
             <form action={askPolicyQuestion} className="row" style={{ padding: 0 }}>
-              <div className="field" style={{ flex: 1, minWidth: 260 }}>
+              <div className="field" style={{ minWidth: 200 }}>
+                <label htmlFor="employeeId">Asking as</label>
+                <select className="input" id="employeeId" name="employeeId" defaultValue={who ?? ''}>
+                  <option value="">Nobody — policy questions only</option>
+                  {staff.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.name} · {person.code}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field" style={{ flex: 1, minWidth: 240 }}>
                 <label htmlFor="question">Question</label>
                 <input
                   className="input"
