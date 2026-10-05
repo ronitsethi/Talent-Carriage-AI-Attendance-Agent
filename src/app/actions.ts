@@ -24,7 +24,7 @@ import type { InboundMessage } from '@/lib/channels/types';
 import { handleInbound } from '@/lib/conversation/engine';
 import { selectionId, type OptionNumber } from '@/lib/conversation/flow';
 import { sendDueFollowUps } from '@/lib/conversation/followup';
-import { closeCasesExplainedByData, findGaps, runDailyCheck } from '@/lib/detection/run';
+import { closeCasesExplainedByData, findGaps, runDailyCheckAndContact } from '@/lib/detection/run';
 import { importAttendanceFile } from '@/lib/mapping/import';
 import { analyseFile, buildFieldMap, type Analysis } from '@/lib/mapping/analyse';
 import { PLATFORM_FIELDS, REQUIRED_FIELDS, type PlatformField } from '@/lib/mapping/apply';
@@ -93,13 +93,11 @@ export async function runCheck(formData: FormData) {
   const dates = readRange(formData);
   if (!dates.length) return;
 
-  await withTenant(tenantId, async (tx) => {
-    const ctx = await buildContext(tx, tenantId);
-    for (const date of dates) {
-      await closeCasesExplainedByData(tx, tenantId, date);
-      await runDailyCheck(ctx, { date, trigger: 'manual' });
-    }
-  });
+  for (const date of dates) {
+    await withTenant(tenantId, (tx) => closeCasesExplainedByData(tx, tenantId, date));
+    // Finds everyone, commits, and only then rings them - see the function.
+    await runDailyCheckAndContact(tenantId, { date, trigger: 'manual' });
+  }
   revalidatePath('/');
   revalidatePath('/cases');
 }
@@ -811,13 +809,30 @@ export async function uploadPolicyDocument(formData: FormData) {
     return row!.id;
   });
 
-  // Reading a scanned document takes a while, so it happens outside the insert:
-  // the document appears straight away and turns ready when it is done.
-  try {
-    await withTenant(tenantId, (tx) => ingestDocument(tx, tenantId, documentId, buffer, file.name));
-  } catch {
-    // ingestDocument records the failure on the document itself.
-  }
+  // Reading a scanned document takes a while - minutes, for a long one on a
+  // small instance - and it is deliberately not awaited. App Service cuts a
+  // request off at 230 seconds, so awaiting it means a document that takes
+  // longer than that can never be uploaded at all, and the person is shown a
+  // blank 500 rather than a document that is still being read.
+  //
+  // The row is already committed, so the page shows it as processing straight
+  // away and it turns ready, or failed, by itself.
+  void (async () => {
+    try {
+      await withTenant(tenantId, (tx) => ingestDocument(tx, tenantId, documentId, buffer, file.name));
+    } catch (error) {
+      // ingestDocument writes the failure too, but inside the transaction that
+      // is about to roll back - so it never survives. Recording it here, on a
+      // transaction of its own, is what actually leaves a document saying why
+      // it could not be read instead of sitting at 'processing' for ever.
+      await withTenant(tenantId, (tx) =>
+        tx
+          .update(policyDocuments)
+          .set({ status: 'failed', error: (error as Error).message.slice(0, 500) })
+          .where(and(eq(policyDocuments.tenantId, tenantId), eq(policyDocuments.id, documentId))),
+      ).catch(() => {});
+    }
+  })();
 
   revalidatePath('/knowledge');
 }

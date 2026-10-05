@@ -5,6 +5,7 @@ import { employees, policyDocuments } from '@/db/schema';
 import { getActiveTenantId, getSession } from '@/lib/auth';
 import { formatTime } from '@/lib/display';
 import { askPolicyQuestion, deletePolicyDocument, uploadPolicyDocument } from '@/app/actions';
+import { RefreshWhileReading } from './refresh';
 
 const TOPICS = ['attendance', 'leave', 'overtime', 'exit', 'other'];
 
@@ -38,6 +39,7 @@ export default async function KnowledgePage({
     <>
       <section className="page-head">
         <div className="eyebrow">◆ What the agent knows</div>
+        <RefreshWhileReading active={docs.some((d) => d.status === 'processing')} />
         <h1>Guidelines the agent can answer from</h1>
         <p>
           Their own policy documents. The agent answers questions from these and from the caller&apos;s own attendance,
