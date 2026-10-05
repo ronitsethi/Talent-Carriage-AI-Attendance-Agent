@@ -20,7 +20,8 @@
     "verify:code": "tsx scripts/verification-code.ts",
     "verify:check": "tsx scripts/verify-preflight.ts",
     "voices": "tsx scripts/voices.ts",
-    "tunnel": "bash scripts/retunnel.sh"
+    "tunnel": "bash scripts/retunnel.sh",
+    "deploy": "bash scripts/deploy-azure.sh"
   },
   "engines": {
     "node": ">=20"

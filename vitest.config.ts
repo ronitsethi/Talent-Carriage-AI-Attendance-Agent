@@ -13,6 +13,15 @@ export default defineConfig({
      * had no other explanation. Slower, and worth it for a suite you can trust.
      */
     fileParallelism: false,
+    /*
+     * These are not unit tests. Each one drives real work through a real
+     * Postgres - a week of absences, a whole register imported, a call answered
+     * turn by turn - and the slowest sits a little either side of vitest's
+     * five-second default. That produced a suite which failed roughly one run in
+     * four, always on time and never on an assertion, which is the kind of
+     * failure people learn to ignore. The work is the point; the clock is not.
+     */
+    testTimeout: 20_000,
   },
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
 });

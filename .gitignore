@@ -6,6 +6,7 @@ demo/node_modules/
 .env
 .env.local
 .env*.local
+.env.backup*
 API.txt
 
 # next.js

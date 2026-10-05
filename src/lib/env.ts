@@ -16,6 +16,16 @@ const schema = z.object({
   APP_BASE_URL: z.string().default('http://localhost:3000'),
   DEFAULT_TIMEZONE: z.string().default('Asia/Kolkata'),
 
+  /**
+   * Work the background queue inside the web server. On by default in
+   * production, where there is nothing else to do it; off in development, where
+   * `npm run worker` is run by hand.
+   */
+  BACKGROUND_WORKER: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? process.env.NODE_ENV === 'production' : v === 'true')),
+
   /** Global brake: nothing is delivered to a real person while this is true. */
   DRY_RUN: z
     .enum(['true', 'false'])
