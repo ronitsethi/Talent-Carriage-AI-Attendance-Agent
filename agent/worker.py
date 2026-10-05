@@ -13,6 +13,7 @@ and nobody would know which was right.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -39,6 +40,16 @@ VOICE = os.environ.get("AGENT_VOICE", "ritu")
 VOICE_MODEL = os.environ.get("AGENT_VOICE_MODEL", "bulbul:v3-beta")
 VOICE_PACE = float(os.environ.get("AGENT_VOICE_PACE", "0.95"))
 STT_VENDOR = os.environ.get("AGENT_STT", "sarvam")
+
+
+# About eight seconds in all, which covers a call placed inside a long-running
+# batch without keeping anybody waiting on a call that genuinely does not exist.
+_BACKOFF = (0.3, 0.6, 1.0, 1.5, 2.0, 2.5)
+_RETRIES = len(_BACKOFF)
+
+
+class _NotYet(Exception):
+    """The platform has not finished writing this call down. Worth asking again."""
 
 
 @dataclass
@@ -101,14 +112,42 @@ class TurnApi:
         return await self._raw({"callId": self._call_id, "brief": True})
 
     async def _raw(self, body: dict) -> dict:
-        async with self._http.post(
-            f"{APP_BASE_URL}/api/agent/turn",
-            json=body,
-            headers={"x-agent-token": AGENT_API_TOKEN},
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as response:
-            response.raise_for_status()
-            return await response.json()
+        return await self._send(body, timeout=30)
+
+    async def _send(self, body: dict, *, timeout: int) -> dict:
+        """
+        One request to the platform, retried briefly if the call is not there yet.
+
+        A 404 normally means what it says. On the first turn it can also mean
+        the platform has not finished writing the call down: it inserts the call,
+        asks LiveKit to dial, and commits - and LiveKit hands this worker the job
+        the instant the room exists, which can be before that commit lands. The
+        row is real and on its way; it is simply not visible yet on another
+        connection.
+
+        So a 404 is retried for a few seconds before it is believed. The cost is
+        not symmetric - waiting costs a moment, giving up means somebody answers
+        their phone to silence.
+        """
+        last: Exception | None = None
+        for attempt in range(_RETRIES):
+            try:
+                async with self._http.post(
+                    f"{APP_BASE_URL}/api/agent/turn",
+                    json=body,
+                    headers={"x-agent-token": AGENT_API_TOKEN},
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as response:
+                    if response.status == 404 and attempt < _RETRIES - 1:
+                        raise _NotYet()
+                    response.raise_for_status()
+                    return await response.json()
+            except _NotYet as error:
+                last = error
+                await asyncio.sleep(_BACKOFF[attempt])
+            except aiohttp.ClientResponseError:
+                raise
+        raise RuntimeError(f"call {self._call_id} never appeared on the platform") from last
 
     async def ended(self) -> None:
         """The line has dropped. Without this a call sits 'in progress' for ever."""
@@ -118,14 +157,7 @@ class TurnApi:
             log.exception("could not report the end of call %s", self._call_id)
 
     async def _post(self, body: dict) -> Turn:
-        async with self._http.post(
-            f"{APP_BASE_URL}/api/agent/turn",
-            json={"callId": self._call_id, **body},
-            headers={"x-agent-token": AGENT_API_TOKEN},
-            timeout=aiohttp.ClientTimeout(total=15),
-        ) as response:
-            response.raise_for_status()
-            return Turn.parse(await response.json())
+        return Turn.parse(await self._send({"callId": self._call_id, **body}, timeout=15))
 
 
 class AttendanceAgent(Agent):
@@ -151,7 +183,19 @@ class AttendanceAgent(Agent):
 
     async def on_enter(self) -> None:
         """The employee has picked up. Ask the platform what to say first."""
-        turn = await self._api.opening()
+        try:
+            turn = await self._api.opening()
+        except Exception:
+            # Somebody has their phone to their ear. Whatever went wrong, saying
+            # so and hanging up is better than thirty seconds of nothing.
+            log.exception("could not open the call; apologising instead")
+            await self.session.say(
+                "Sorry, I am not able to continue this call right now. "
+                "Someone from H R will call you back."
+            )
+            await self._hang_up()
+            return
+
         self._case_id = turn.next_case_id
         await self.session.say(turn.say)
         if turn.done:

@@ -2,7 +2,7 @@ import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
 import { approvals, actions, cases, employees, tenants, tenantSettings } from '@/db/schema';
 import { sendDueFollowUps } from '@/lib/conversation/followup';
-import { closeCasesExplainedByData, runDailyCheck } from '@/lib/detection/run';
+import { closeCasesExplainedByData, runDailyCheckAndContact } from '@/lib/detection/run';
 import { buildContext } from '@/lib/runtime';
 import { sendPlainText } from '@/lib/conversation/engine';
 import type { Job, JobKind } from './queue';
@@ -13,12 +13,9 @@ export type JobHandler = (job: Job) => Promise<Record<string, unknown>>;
 const dailyCheck: JobHandler = async (job) => {
   const { date, trigger } = job.payload as { date: string; trigger?: 'schedule' | 'manual' | 'catch_up' };
   const tenantId = job.tenantId!;
-  return withTenant(tenantId, async (tx) => {
-    const ctx = await buildContext(tx, tenantId);
-    await closeCasesExplainedByData(tx, tenantId, date);
-    const result = await runDailyCheck(ctx, { date, trigger: trigger ?? 'schedule' });
-    return result as unknown as Record<string, unknown>;
-  });
+  await withTenant(tenantId, (tx) => closeCasesExplainedByData(tx, tenantId, date));
+  const result = await runDailyCheckAndContact(tenantId, { date, trigger: trigger ?? 'schedule' });
+  return result as unknown as Record<string, unknown>;
 };
 
 /** Day-2 reminders for every case whose clock has run out. */

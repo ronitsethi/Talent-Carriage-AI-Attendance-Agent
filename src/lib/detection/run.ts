@@ -1,11 +1,11 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import type { Db } from '@/db';
+import { withTenant, type Db } from '@/db';
 import { attendanceDays, cases, detectionRuns, employees } from '@/db/schema';
 import { CHASED_BY_DEFAULT, OPTIONALLY_CHASED } from '@/db/schema/enums';
 import { explainsAbsence, shouldChase, type Meaning } from '@/lib/mapping/meanings';
 import { capAllows, outstandingCount, type EngineContext, type TenantSettings } from '@/lib/conversation/engine';
-import { contactCase } from '@/lib/contact';
-import type { FullContext } from '@/lib/runtime';
+import { contactCase, contactCaseById } from '@/lib/contact';
+import { buildContext, type FullContext } from '@/lib/runtime';
 
 export type Gap = {
   preferredChannel: string;
@@ -158,6 +158,12 @@ export type DailyCheckOptions = {
   dryRun?: boolean;
   /** Create cases but send no messages - used to build a backlog safely. */
   createOnly?: boolean;
+  /**
+   * Create the cases, but list who should be contacted instead of contacting
+   * them. See `runDailyCheckAndContact` for why that is not the same thing as
+   * doing it here.
+   */
+  deferContact?: boolean;
   importId?: string;
 };
 
@@ -171,6 +177,8 @@ export type DailyCheckResult = {
   alreadyOpen: number;
   blocked: { employee: string; reason: string }[];
   skipped: Record<string, number>;
+  /** Only with `deferContact`: the cases this run decided are ready to ask. */
+  toContact: { caseId: string; employeeId: string; fullName: string }[];
 };
 
 /**
@@ -209,6 +217,7 @@ export async function runDailyCheck(ctx: FullContext, opts: DailyCheckOptions): 
     alreadyOpen: gaps.filter((g) => g.existingCaseId).length,
     blocked: [],
     skipped,
+    toContact: [],
   };
 
   if (opts.dryRun) return result;
@@ -261,6 +270,11 @@ export async function runDailyCheck(ctx: FullContext, opts: DailyCheckOptions): 
 
     const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, gap.employeeId) });
     if (!employee) continue;
+
+    if (opts.deferContact) {
+      result.toContact.push({ caseId: caseRow.id, employeeId: employee.id, fullName: gap.fullName });
+      continue;
+    }
 
     const contacted = await contactCase(ctx, caseRow, employee);
     if (contacted.contacted) result.messagesSent++;
@@ -369,4 +383,63 @@ export async function closeCasesExplainedByData(tx: Db, tenantId: string, date?:
       .where(eq(cases.id, row.caseId));
   }
   return { closed: toClose.length };
+}
+
+
+/**
+ * The daily check as the platform actually runs it: find everyone first, then
+ * ring them.
+ *
+ * Detection and contact are deliberately not one transaction. Placing a call
+ * tells LiveKit - another system, on another connection - about a call whose row
+ * is still an uncommitted draft here. Inside one long transaction the first
+ * person's phone starts ringing while their call record will not exist for
+ * anyone else until the last person has been processed, and the agent that
+ * answers for them is told there is no such call. It says nothing, and somebody
+ * answers their phone to silence.
+ *
+ * So the cases are created and committed, and only then is each person
+ * contacted, each in a transaction of their own that lasts milliseconds. One
+ * person's failure is also now their own rather than the whole run's.
+ */
+export async function runDailyCheckAndContact(
+  tenantId: string,
+  opts: DailyCheckOptions,
+): Promise<DailyCheckResult> {
+  const result = await withTenant(tenantId, async (tx) =>
+    runDailyCheck(await buildContext(tx, tenantId), { ...opts, deferContact: true }),
+  );
+
+  if (opts.dryRun || opts.createOnly) return result;
+
+  for (const target of result.toContact) {
+    try {
+      const contacted = await withTenant(tenantId, async (tx) =>
+        contactCaseById(await buildContext(tx, tenantId), target.caseId),
+      );
+      if (contacted?.contacted) result.messagesSent++;
+      else {
+        result.casesQueued++;
+        result.blocked.push({
+          employee: target.fullName,
+          reason: contacted?.contacted === false ? contacted.reason : 'Could not be contacted',
+        });
+      }
+    } catch (error) {
+      result.casesQueued++;
+      result.blocked.push({ employee: target.fullName, reason: (error as Error).message });
+    }
+  }
+
+  // The run row was written in the first transaction, before any of this was
+  // known, so the counts it carries are brought up to date here.
+  await withTenant(tenantId, async (tx) => {
+    if (!result.runId) return;
+    await tx
+      .update(detectionRuns)
+      .set({ casesQueued: result.casesQueued, messagesSent: result.messagesSent })
+      .where(eq(detectionRuns.id, result.runId));
+  });
+
+  return result;
 }
