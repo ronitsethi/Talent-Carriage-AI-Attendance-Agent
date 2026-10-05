@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getSession, signIn } from '@/lib/auth';
+import { Wordmark } from '@/components/wordmark';
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   if (await getSession()) redirect('/');
@@ -17,10 +18,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <div className="logo-card" style={{ display: 'inline-block' }}>
-          <div className="logo-main">Talent Carriage</div>
-          <div className="logo-sub">Imagine Innovate Transform</div>
-        </div>
+        <Wordmark width={226} />
         <h1>Attendance Agent</h1>
         <p>Sign in to the HR workspace.</p>
 

@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { Wordmark } from '@/components/wordmark';
 import { getActiveTenantId, getSession, isPlatformAdmin } from '@/lib/auth';
 import { listTenantsForSwitcher, tenantSummary } from '@/lib/queries';
 import { switchTenant, signOutAction } from '@/app/actions';
@@ -23,10 +24,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="logo-card">
-          <div className="logo-main">Talent Carriage</div>
-          <div className="logo-sub">Imagine Innovate Transform</div>
-        </div>
+        <Wordmark />
         <div className="caption">Attendance Agent</div>
 
         <nav className="nav">
