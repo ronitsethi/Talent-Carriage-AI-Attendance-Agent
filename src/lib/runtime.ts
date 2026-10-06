@@ -6,6 +6,8 @@ import { MetaWhatsAppChannel } from '@/lib/channels/meta';
 import type { MessageChannel } from '@/lib/channels/types';
 import { handleApprovalDecision, handleOfferResponse, offerAction, type ActionContext } from '@/lib/actions/engine';
 import { handleFollowUpResponse } from '@/lib/conversation/followup';
+import { handedToHrMessage } from '@/lib/conversation/flow';
+import { answerQuestion } from '@/lib/knowledge';
 import { MockHrms } from '@/lib/hrms/mock';
 import type { HrmsConnector } from '@/lib/hrms/types';
 import { FakeVoiceProvider } from '@/lib/voice/fake';
@@ -152,6 +154,22 @@ export async function buildContext(tx: Db, tenantId: string): Promise<FullContex
       },
       onFollowUpResponse: async (ctx, caseRow, employee, choice) => {
         await handleFollowUpResponse(ctx, caseRow, employee, choice);
+      },
+      answerQuestion: async (ctx, employee, question) => {
+        try {
+          // A savepoint, so a failed search cannot abort the message's own transaction.
+          return await ctx.tx.transaction((tx) =>
+            answerQuestion(tx, ctx.tenantId, question, {
+              employeeId: employee.id,
+              employeeName: employee.fullName,
+              channel: 'chat',
+            }),
+          );
+        } catch (error) {
+          // The model or the search being down is a handover, not a lost message.
+          console.error('[whatsapp] answering failed', error);
+          return { text: handedToHrMessage, answered: false };
+        }
       },
     },
   };

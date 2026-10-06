@@ -62,6 +62,8 @@ export type EngineHooks = {
     employee: EmployeeRow,
     choice: 'done' | 'not_done' | 'help',
   ): Promise<void>;
+  /** Answers a question from the customer's guidelines and the employee's own record. */
+  answerQuestion?(ctx: EngineContext, employee: EmployeeRow, question: string): Promise<{ text: string; answered: boolean }>;
 };
 
 export type EngineContext = {
@@ -529,7 +531,13 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
   }
 
   if (!target.caseRow) {
-    // Nothing open for this person: log it and let HR see it.
+    // Nothing open for this person: whatever they wrote is theirs to ask, so
+    // the guidelines answer it. Without them, log it and let HR see it.
+    if (ctx.hooks?.answerQuestion && inbound.text?.trim()) {
+      const answer = await ctx.hooks.answerQuestion(ctx, employee, inbound.text);
+      await sendText(ctx, employee, answer.text);
+      return { handled: true, caseId: null, classification, action: answer.answered ? 'answered' : 'handed_to_hr' };
+    }
     return { handled: true, caseId: null, classification, action: 'logged' };
   }
 
@@ -539,9 +547,31 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     return { handled: true, caseId: target.caseRow.id, classification, action: 'answered' };
   }
 
+  if (classification.intent === 'question' && ctx.hooks?.answerQuestion) {
+    // Answered from the guidelines; the date stays open for its own answer.
+    // Only what the guidelines do not cover becomes HR's.
+    const question = classification.question ?? inbound.text ?? '';
+    const answer = await ctx.hooks.answerQuestion(ctx, employee, inbound.text ?? question);
+    await sendText(ctx, employee, answer.text, target.caseRow.id);
+    if (answer.answered) {
+      return { handled: true, caseId: target.caseRow.id, classification, action: 'answered' };
+    }
+    await ctx.tx
+      .update(cases)
+      .set({
+        status: 'needs_hr',
+        needsHrReason: `Asked: ${question}`,
+        replyText: inbound.text,
+        aiUsed: true,
+        updatedAt: now(ctx),
+      })
+      .where(eq(cases.id, target.caseRow.id));
+    return { handled: true, caseId: target.caseRow.id, classification, action: 'handed_to_hr' };
+  }
+
   if (classification.intent === 'needs_help' || classification.intent === 'question') {
-    // Policy answering arrives with the policy pack; until then a question is a
-    // handover, which is the honest behaviour rather than an invented answer.
+    // Without the guidelines, a question is a handover: the honest behaviour
+    // rather than an invented answer.
     await ctx.tx
       .update(cases)
       .set({

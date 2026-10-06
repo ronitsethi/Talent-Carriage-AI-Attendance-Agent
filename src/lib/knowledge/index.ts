@@ -197,6 +197,8 @@ export type Answer = {
   grounded: boolean;
   /** True when the caller was saying goodbye rather than asking something. */
   finished: boolean;
+  /** False when the documents did not cover it and HR has to come back to them. */
+  answered: boolean;
 };
 
 const ANSWER_RULES = `You answer an employee's question on a phone call, on behalf of their employer.
@@ -218,7 +220,20 @@ markdown, no numbering.
 Also judge whether they were ending the call rather than asking anything - thanking you,
 saying goodbye, saying that is all, in English or Hindi. If they were, set finished and
 make the reply a short goodbye. Somebody who thanks you and then asks something is not
-finished.`;
+finished.
+
+Set answered to false only when you had to send them to HR because nothing given to you
+covers it.`;
+
+/** The same rules, for a WhatsApp chat instead of a phone call. */
+const CHAT_RULES = ANSWER_RULES.replace('on a phone call', 'on WhatsApp')
+  .replace(
+    /Answer in a few spoken sentences[\s\S]*?no markdown, no numbering\./,
+    `Answer in a short WhatsApp message, as an Indian HR colleague would write it: plain
+sentences, a short list only where it genuinely helps, no headings, no markdown. Write HR as
+HR. Reply in the language they wrote in.`,
+  )
+  .replace('ending the call', 'ending the chat');
 
 /**
  * Answers one question from the customer's documents and the caller's own record.
@@ -231,17 +246,20 @@ export async function answerQuestion(
   tx: Db,
   tenantId: string,
   question: string,
-  opts: { employeeId?: string | null; employeeName?: string | null } = {},
+  opts: { employeeId?: string | null; employeeName?: string | null; channel?: 'call' | 'chat' } = {},
 ): Promise<Answer> {
+  const chat = opts.channel === 'chat';
+  const hr = chat ? 'HR' : 'H R';
   const passages = await findPassages(tx, tenantId, question);
   const relevant = passages.filter((p) => p.score >= RELEVANCE_FLOOR);
 
   const attendance = opts.employeeId ? await attendanceSummary(tx, tenantId, opts.employeeId) : '';
   if (!relevant.length && !attendance) {
     return {
-      text: 'I do not have that on file, so I will ask H R to come back to you on it.',
+      text: `I do not have that on file, so I will ask ${hr} to come back to you on it.`,
       grounded: false,
       finished: false,
+      answered: false,
     };
   }
 
@@ -255,7 +273,7 @@ export async function answerQuestion(
   const json = await openai('/chat/completions', {
     model: ANSWER_MODEL,
     messages: [
-      { role: 'system', content: ANSWER_RULES },
+      { role: 'system', content: chat ? CHAT_RULES : ANSWER_RULES },
       { role: 'user', content: `${context}\n\nWHAT THEY SAID\n${question}` },
     ],
     temperature: 0.2,
@@ -271,10 +289,11 @@ export async function answerQuestion(
         schema: {
           type: 'object',
           additionalProperties: false,
-          required: ['reply', 'finished'],
+          required: ['reply', 'finished', 'answered'],
           properties: {
-            reply: { type: 'string', description: 'What to say out loud' },
-            finished: { type: 'boolean', description: 'They were ending the call, not asking' },
+            reply: { type: 'string', description: chat ? 'The WhatsApp message to send' : 'What to say out loud' },
+            finished: { type: 'boolean', description: 'They were ending the conversation, not asking' },
+            answered: { type: 'boolean', description: 'False only when you had to send them to HR' },
           },
         },
       },
@@ -283,15 +302,21 @@ export async function answerQuestion(
 
   const choices = json.choices as { message?: { content?: string } }[] | undefined;
   const raw = choices?.[0]?.message?.content?.trim();
-  if (!raw) return { text: 'I will ask H R to come back to you on that.', grounded: false, finished: false };
+  const fallback: Answer = { text: `I will ask ${hr} to come back to you on that.`, grounded: false, finished: false, answered: false };
+  if (!raw) return fallback;
 
   try {
-    const parsed = JSON.parse(raw) as { reply?: string; finished?: boolean };
+    const parsed = JSON.parse(raw) as { reply?: string; finished?: boolean; answered?: boolean };
     const text = parsed.reply?.trim();
     if (!text) throw new Error('empty reply');
-    return { text, grounded: relevant.length > 0 || Boolean(attendance), finished: Boolean(parsed.finished) };
+    return {
+      text,
+      grounded: relevant.length > 0 || Boolean(attendance),
+      finished: Boolean(parsed.finished),
+      answered: parsed.answered !== false,
+    };
   } catch {
-    return { text: 'I will ask H R to come back to you on that.', grounded: false, finished: false };
+    return fallback;
   }
 }
 
