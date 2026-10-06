@@ -407,18 +407,20 @@ export async function contactSelected(formData: FormData) {
 
   const outcomes: ContactResult[] = [];
 
-  await withTenant(tenantId, async (tx) => {
+  // Group by person: ticking five dates for someone on Call must ring them
+  // once, not five times. The call sweeps the backlog by itself.
+  const byEmployee = new Map<string, string[]>();
+  for (const target of targets) {
+    const [employeeId, date] = target.split('|');
+    if (!employeeId || !date) continue;
+    byEmployee.set(employeeId, [...(byEmployee.get(employeeId) ?? []), date]);
+  }
+
+  // The cases are committed before anyone is contacted: a call is answered by
+  // the agent from its own connection, and it must be able to see the case.
+  const toContact = await withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
-
-    // Group by person: ticking five dates for someone on Call must ring them
-    // once, not five times. The call sweeps the backlog by itself.
-    const byEmployee = new Map<string, string[]>();
-    for (const target of targets) {
-      const [employeeId, date] = target.split('|');
-      if (!employeeId || !date) continue;
-      byEmployee.set(employeeId, [...(byEmployee.get(employeeId) ?? []), date]);
-    }
-
+    const plan: string[] = [];
     for (const [employeeId, dates] of byEmployee) {
       const employee = await tx.query.employees.findFirst({ where: eq(employees.id, employeeId) });
       if (!employee) continue;
@@ -433,13 +435,20 @@ export async function contactSelected(formData: FormData) {
 
       if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') {
         // One call, about the most recent date; the older ones follow inside it.
-        outcomes.push(await contactCase(ctx, created[created.length - 1]!, employee));
+        plan.push(created[created.length - 1]!.id);
       } else {
         // WhatsApp stacks in a chat, so each date gets its own message.
-        for (const caseRow of created) outcomes.push(await contactCase(ctx, caseRow, employee));
+        plan.push(...created.map((c) => c.id));
       }
     }
+    return plan;
   });
+
+  // Each contact in its own transaction, so one failure cannot undo the rest.
+  for (const caseId of toContact) {
+    const outcome = await withTenant(tenantId, async (tx) => contactCaseById(await buildContext(tx, tenantId), caseId));
+    if (outcome) outcomes.push(outcome);
+  }
 
   revalidatePath('/');
   revalidatePath('/cases');

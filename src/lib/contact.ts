@@ -24,6 +24,23 @@ export async function contactCase(
   caseRow: CaseRow,
   employee: EmployeeRow,
 ): Promise<ContactResult> {
+  try {
+    return await reach(ctx, caseRow, employee);
+  } catch (error) {
+    // A provider refusing - an unapproved template, a number not on WhatsApp -
+    // is an outcome to report on the case, not a reason to lose the whole batch.
+    const reason = (error as Error).message;
+    await ctx.tx.update(cases).set({ error: reason, updatedAt: new Date() }).where(eq(cases.id, caseRow.id));
+    return {
+      contacted: false,
+      channel: channelFor(employee, ctx.settings.defaultChannel),
+      purpose: callPurposeFor(caseRow),
+      reason,
+    };
+  }
+}
+
+async function reach(ctx: FullContext, caseRow: CaseRow, employee: EmployeeRow): Promise<ContactResult> {
   const channel = channelFor(employee, ctx.settings.defaultChannel);
 
   // Record the channel on the case, so history shows how someone was reached
