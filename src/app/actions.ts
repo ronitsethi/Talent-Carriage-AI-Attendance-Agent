@@ -874,7 +874,7 @@ export async function askPolicyQuestion(formData: FormData) {
     // The model being unavailable is something to say on the page, not a crash.
     console.error('[knowledge] answering failed:', error.message);
     const reason = /credit|quota/i.test(error.message)
-      ? 'the OpenAI account has no credits left'
+      ? 'the model account has no credits or quota left'
       : error.message.slice(0, 200);
     return { text: `Could not answer right now: ${reason}.` };
   });

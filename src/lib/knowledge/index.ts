@@ -18,8 +18,9 @@ import { readPdf } from './ocr';
  */
 
 const EMBED_MODEL = 'text-embedding-3-small';
-const ANSWER_MODEL = 'gpt-4o-mini';
-const OPENAI = 'https://api.openai.com/v1';
+const ANSWER_MODEL = env.OPENAI_MODEL;
+/** Azure OpenAI's v1 API takes the same requests, with deployment names as models. */
+const OPENAI = (env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/+$/, '');
 
 /**
  * Low on purpose. A cosine score is a poor judge of whether a passage answers a
