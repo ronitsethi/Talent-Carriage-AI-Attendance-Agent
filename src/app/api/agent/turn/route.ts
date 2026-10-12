@@ -91,6 +91,7 @@ export async function POST(request: Request) {
           const reply = await answerQuestion(t, tenant.id, question, {
             employeeId: employee.id,
             employeeName: employee.fullName,
+            budget: 'call',
           });
           return {
             say: reply.text,

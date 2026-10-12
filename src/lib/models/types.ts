@@ -6,6 +6,8 @@
  * for Indian languages and for speech. A tenant can pin its own choice.
  */
 
+import type { AiBudget } from './budget';
+
 export type ModelTask =
   | 'classify_reply' // what did the employee mean?
   | 'extract_details' // dates, leave type, reason, from free text
@@ -27,6 +29,8 @@ export type ModelRequest = {
   language?: string;
   maxTokens?: number;
   temperature?: number;
+  /** The allowance an Azure OpenAI answer is charged to; none for admin work. */
+  budget?: AiBudget;
 };
 
 export type ModelUsage = { inputTokens?: number; outputTokens?: number };

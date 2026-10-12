@@ -3,6 +3,7 @@ import type { Db } from '@/db';
 import { attendanceDays, employees, policyPassages, policyDocuments } from '@/db/schema';
 import { MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings';
 import { env } from '@/lib/env';
+import { assertBudget, BudgetExhausted, chargeBudget, type AiBudget } from '@/lib/models/budget';
 import { readPdf } from './ocr';
 
 /**
@@ -33,7 +34,7 @@ const OPENAI = (env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/+
  */
 const RELEVANCE_FLOOR = 0.12;
 
-async function openai(path: string, body: unknown): Promise<Record<string, unknown>> {
+async function openai(path: string, body: { model: string; [key: string]: unknown }, budget?: AiBudget): Promise<Record<string, unknown>> {
   const response = await fetch(`${OPENAI}${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -42,6 +43,12 @@ async function openai(path: string, body: unknown): Promise<Record<string, unkno
   });
   const json = (await response.json()) as Record<string, unknown>;
   if (!response.ok) throw new Error(JSON.stringify((json as { error?: unknown }).error ?? json).slice(0, 300));
+  if (budget) {
+    const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    await chargeBudget(budget, body.model, { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }).catch(
+      (error) => console.error('[budget] could not record the cost:', (error as Error).message),
+    );
+  }
   return json;
 }
 
@@ -85,8 +92,8 @@ export function splitIntoPassages(text: string, target = 1200): string[] {
   return passages;
 }
 
-export async function embed(texts: string[]): Promise<number[][]> {
-  const json = await openai('/embeddings', { model: EMBED_MODEL, input: texts });
+export async function embed(texts: string[], budget?: AiBudget): Promise<number[][]> {
+  const json = await openai('/embeddings', { model: EMBED_MODEL, input: texts }, budget);
   return (json.data as { embedding: number[] }[]).map((d) => d.embedding);
 }
 
@@ -125,8 +132,14 @@ export async function ingestDocument(tx: Db, tenantId: string, documentId: strin
 export type Passage = { text: string; title: string; score: number };
 
 /** The customer's passages closest to the question. */
-export async function findPassages(tx: Db, tenantId: string, question: string, limit = 10): Promise<Passage[]> {
-  const [vector] = await embed([question]);
+export async function findPassages(
+  tx: Db,
+  tenantId: string,
+  question: string,
+  limit = 10,
+  budget?: AiBudget,
+): Promise<Passage[]> {
+  const [vector] = await embed([question], budget);
   if (!vector) return [];
   const literal = `[${vector.join(',')}]`;
 
@@ -247,11 +260,30 @@ export async function answerQuestion(
   tx: Db,
   tenantId: string,
   question: string,
-  opts: { employeeId?: string | null; employeeName?: string | null; channel?: 'call' | 'chat' } = {},
+  opts: {
+    employeeId?: string | null;
+    employeeName?: string | null;
+    channel?: 'call' | 'chat';
+    /** Which allowance this costs; none for questions asked in the portal. */
+    budget?: AiBudget;
+  } = {},
 ): Promise<Answer> {
   const chat = opts.channel === 'chat';
   const hr = chat ? 'HR' : 'H R';
-  const passages = await findPassages(tx, tenantId, question);
+  const fallback: Answer = { text: `I will ask ${hr} to come back to you on that.`, grounded: false, finished: false, answered: false };
+
+  // With the allowance spent, the question goes to HR, as one the documents do
+  // not cover does.
+  if (opts.budget) {
+    try {
+      await assertBudget(opts.budget);
+    } catch (error) {
+      if (error instanceof BudgetExhausted) return fallback;
+      throw error;
+    }
+  }
+
+  const passages = await findPassages(tx, tenantId, question, 10, opts.budget);
   const relevant = passages.filter((p) => p.score >= RELEVANCE_FLOOR);
 
   const attendance = opts.employeeId ? await attendanceSummary(tx, tenantId, opts.employeeId) : '';
@@ -271,39 +303,42 @@ export async function answerQuestion(
     .filter(Boolean)
     .join('\n\n');
 
-  const json = await openai('/chat/completions', {
-    model: ANSWER_MODEL,
-    messages: [
-      { role: 'system', content: chat ? CHAT_RULES : ANSWER_RULES },
-      { role: 'user', content: `${context}\n\nWHAT THEY SAID\n${question}` },
-    ],
-    temperature: 0.2,
-    max_tokens: 260,
-    // Whether they are finished is judged in the same breath as the answer: it
-    // is a question about what somebody meant, which is what this model is for
-    // and which no list of phrases will ever get right.
-    response_format: {
-      type: 'json_schema',
-      json_schema: {
-        name: 'reply',
-        strict: true,
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['reply', 'finished', 'answered'],
-          properties: {
-            reply: { type: 'string', description: chat ? 'The WhatsApp message to send' : 'What to say out loud' },
-            finished: { type: 'boolean', description: 'They were ending the conversation, not asking' },
-            answered: { type: 'boolean', description: 'False only when you had to send them to HR' },
+  const json = await openai(
+    '/chat/completions',
+    {
+      model: ANSWER_MODEL,
+      messages: [
+        { role: 'system', content: chat ? CHAT_RULES : ANSWER_RULES },
+        { role: 'user', content: `${context}\n\nWHAT THEY SAID\n${question}` },
+      ],
+      temperature: 0.2,
+      max_tokens: 260,
+      // Whether they are finished is judged in the same breath as the answer: it
+      // is a question about what somebody meant, which is what this model is for
+      // and which no list of phrases will ever get right.
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'reply',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['reply', 'finished', 'answered'],
+            properties: {
+              reply: { type: 'string', description: chat ? 'The WhatsApp message to send' : 'What to say out loud' },
+              finished: { type: 'boolean', description: 'They were ending the conversation, not asking' },
+              answered: { type: 'boolean', description: 'False only when you had to send them to HR' },
+            },
           },
         },
       },
     },
-  });
+    opts.budget,
+  );
 
   const choices = json.choices as { message?: { content?: string } }[] | undefined;
   const raw = choices?.[0]?.message?.content?.trim();
-  const fallback: Answer = { text: `I will ask ${hr} to come back to you on that.`, grounded: false, finished: false, answered: false };
   if (!raw) return fallback;
 
   try {

@@ -497,6 +497,7 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     pendingDateLabels: pending.map((c) => dateLabel(c.attDate, c.meaning as Meaning)),
     language: employee.language ?? ctx.settings.defaultLanguage,
     tenantModelOverride: ctx.settings.modelOverrides?.classify_reply,
+    budget: 'whatsapp',
   });
 
   if (classification.source === 'model') {

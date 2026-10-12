@@ -34,7 +34,8 @@ import { buildContext } from '@/lib/runtime';
 import { channelFor, contactCase, contactCaseById, type ContactResult } from '@/lib/contact';
 import { ensureCase } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
-import { canManageSettings, getActiveTenantId, getSession, setActiveTenant, signOut } from '@/lib/auth';
+import { canManageSettings, getActiveTenantId, getSession, isPlatformAdmin, setActiveTenant, signOut } from '@/lib/auth';
+import { AI_BUDGETS, topUpBudget, type AiBudget } from '@/lib/models/budget';
 import { env } from '@/lib/env';
 import { DEFAULT_AGENT_VOICE, isAgentVoice } from '@/lib/voice/voices';
 import { datesInRange } from '@/lib/dates';
@@ -572,6 +573,20 @@ export async function switchTenant(formData: FormData) {
   if (!session || session.tenantId) return;
   await setActiveTenant(String(formData.get('tenantId') ?? ''));
   revalidatePath('/', 'layout');
+}
+
+/** Allows WhatsApp or calls to spend more of the Azure OpenAI credits. Talent Carriage staff only. */
+export async function topUpAiBudget(formData: FormData) {
+  const session = await getSession();
+  if (!session || !isPlatformAdmin(session)) throw new Error('Only Talent Carriage staff can top up');
+
+  const budget = String(formData.get('budget') ?? '') as AiBudget;
+  const dollars = Number(formData.get('dollars') ?? 0);
+  if (!AI_BUDGETS.includes(budget)) throw new Error('Unknown budget');
+  if (!Number.isFinite(dollars) || dollars <= 0 || dollars > 1000) throw new Error('Top up between $0.01 and $1,000');
+
+  await topUpBudget(budget, Math.round(dollars * 1_000_000), session.userId);
+  revalidatePath('/admin');
 }
 
 export async function signOutAction() {

@@ -163,6 +163,7 @@ export async function buildContext(tx: Db, tenantId: string): Promise<FullContex
               employeeId: employee.id,
               employeeName: employee.fullName,
               channel: 'chat',
+              budget: 'whatsapp',
             }),
           );
         } catch (error) {

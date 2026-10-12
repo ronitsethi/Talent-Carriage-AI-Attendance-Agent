@@ -71,6 +71,13 @@
       "when": 1790483187269,
       "tag": "0009_policy_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790483188269,
+      "tag": "0010_ai_budgets",
+      "breakpoints": true
     }
   ]
 }

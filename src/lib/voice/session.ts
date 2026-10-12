@@ -292,6 +292,7 @@ export async function handleTurn(
       dateLabel: dateLabel(caseRow.attDate, caseRow.meaning as Meaning),
       language: employee.language ?? ctx.settings.defaultLanguage,
       tenantModelOverride: ctx.settings.modelOverrides?.classify_reply,
+      budget: 'call',
     });
     option = classified.option;
     usedSpeech = true;
@@ -305,6 +306,7 @@ export async function handleTurn(
       const answer = await answerQuestion(ctx.tx, ctx.tenantId, asked, {
         employeeId: employee.id,
         employeeName: employee.fullName,
+        budget: 'call',
       });
       const question = datePrompt(spokenFor(caseRow), styleOf(call));
       await appendTurn(ctx, callId, 'agent', `${answer.text} ${question}`);
@@ -385,6 +387,7 @@ async function followUpTurn(
         dateLabel: dateLabel(caseRow.attDate, caseRow.meaning as Meaning),
         language: employee.language ?? ctx.settings.defaultLanguage,
         tenantModelOverride: ctx.settings.modelOverrides?.classify_reply,
+        budget: 'call',
       });
       if (classified.intent === 'needs_help') choice = 'help';
     }

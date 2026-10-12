@@ -3,6 +3,11 @@ import { getSession, isPlatformAdmin } from '@/lib/auth';
 import { platformOverview } from '@/lib/queries';
 import { capabilities } from '@/lib/env';
 import { models } from '@/lib/models/gateway';
+import { budgetStatus } from '@/lib/models/budget';
+import { topUpAiBudget } from '@/app/actions';
+
+const BUDGET_LABELS = { whatsapp: 'WhatsApp', call: 'Calls' } as const;
+const dollars = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
 
 export default async function AdminPage() {
   const session = await getSession();
@@ -11,6 +16,7 @@ export default async function AdminPage() {
 
   const tenants = await platformOverview();
   const caps = capabilities();
+  const budgets = await budgetStatus();
 
   return (
     <>
@@ -64,6 +70,72 @@ export default async function AdminPage() {
           </tbody>
         </table>
       </div>
+
+      <section className="card pad" style={{ marginTop: 18 }}>
+        <div className="section-head">
+          <h2>AI spending</h2>
+          <span className="hint">Azure OpenAI credits these features may use. When one is used up, its replies go to HR until it is topped up.</span>
+        </div>
+        <table className="data">
+          <thead>
+            <tr>
+              <th>Budget</th>
+              <th>Spent</th>
+              <th>Allowed</th>
+              <th>Left</th>
+              <th>Top up</th>
+            </tr>
+          </thead>
+          <tbody>
+            {budgets.map((b) => {
+              const left = Math.max(0, b.allowanceMicros - b.spentMicros);
+              const used = b.allowanceMicros ? Math.min(1, b.spentMicros / b.allowanceMicros) : 1;
+              return (
+                <tr key={b.budget}>
+                  <td>
+                    <div className="employee">{BUDGET_LABELS[b.budget]}</div>
+                    {left === 0 ? <span className="pill call">Used up</span> : null}
+                  </td>
+                  <td>
+                    {dollars(b.spentMicros)}
+                    <div style={{ height: 6, width: 120, borderRadius: 3, background: 'var(--border-soft)', marginTop: 6 }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${used * 100}%`,
+                          borderRadius: 3,
+                          background: left === 0 ? 'var(--danger-text)' : 'var(--accent)',
+                        }}
+                      />
+                    </div>
+                  </td>
+                  <td>{dollars(b.allowanceMicros)}</td>
+                  <td>{dollars(left)}</td>
+                  <td>
+                    <form action={topUpAiBudget} className="btn-row" style={{ alignItems: 'center' }}>
+                      <input type="hidden" name="budget" value={b.budget} />
+                      <input
+                        className="input"
+                        type="number"
+                        name="dollars"
+                        min="0.01"
+                        max="1000"
+                        step="0.01"
+                        defaultValue="10"
+                        aria-label={`Dollars to add to ${BUDGET_LABELS[b.budget]}`}
+                        style={{ width: 90 }}
+                      />
+                      <button className="btn small primary" type="submit">
+                        Top up
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
 
       <section className="card pad" style={{ marginTop: 18 }}>
         <div className="section-head">
