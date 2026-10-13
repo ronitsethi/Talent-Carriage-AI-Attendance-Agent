@@ -83,6 +83,12 @@ export function RowCheckbox({ value }: { value: string }) {
   );
 }
 
+/** "3 selected", beside the button that acts on them. */
+export function SelectedCount() {
+  const { selectedCount } = useSelection();
+  return <span className="selected-count">{selectedCount} selected</span>;
+}
+
 /** The header tick box: selects or clears every row, and reflects their state. */
 export function SelectAll() {
   const { total, selectedCount, setAll } = useSelection();

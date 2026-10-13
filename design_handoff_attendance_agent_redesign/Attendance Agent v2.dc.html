@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Sansation:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#EAEEF4;color:#26344A;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:15.3px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:#17488A;text-decoration:none}
+a:hover{color:#123A70;text-decoration:underline}
+button,input,select,textarea{font-family:inherit}
+input[type=checkbox]{accent-color:#1E5AA9;width:18px;height:18px;margin:0;cursor:pointer}
+:focus-visible{outline:3px solid #1E5AA9;outline-offset:2px}
+</style>
+</helmet>
+
+<sc-if value="{{ isLogin }}" hint-placeholder-val="{{ false }}">
+<div style="min-height:100vh; display:grid; grid-template-columns:minmax(0,46fr) minmax(0,54fr); background:#ffffff;">
+  <div style="display:flex; flex-direction:column; justify-content:space-between; padding:56px; background:linear-gradient(160deg, #16437E 0%, #0E2A52 100%); color:#ffffff;">
+    <img src="brand/tc-logo-white-tagline.png" alt="Talent Carriage — Imagine Innovate Transform" style="width:200px; height:auto; display:block;">
+    <div style="max-width:420px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.06em; text-transform:uppercase; color:#C5DAF1; margin-bottom:14px;">Attendance Agent</div>
+      <div style="font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:36px; line-height:1.15; font-weight:700; letter-spacing:-0.4px; color:#ffffff; text-wrap:pretty;">AI attendance follow-up across every customer, in one place.</div>
+    </div>
+    <div style="font-size:14.5px; color:#C5DAF1;">Talent Carriage HR workspace</div>
+  </div>
+  <div style="display:grid; place-items:center; padding:32px;">
+    <div style="width:100%; max-width:360px;">
+      <h1 style="color:#0E1726; font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.4px; margin:0 0 4px;">Sign in</h1>
+      <p style="margin:0 0 24px; color:#3D4C63;">Sign in to the HR workspace.</p>
+      <sc-if value="{{ loginError }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:10px 12px; border-radius:10px; background:#FDECEA; color:#A01B14; font-size:14.5px; margin-bottom:14px;">That email and password did not match.</div>
+      </sc-if>
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Email</label><input type="email" value="{{ loginEmail }}" onChange="{{ setLoginEmail }}" style="width:100%; height:48px; padding:0 14px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:15.3px; outline:none;"></div>
+        <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Password</label><input type="password" value="{{ loginPw }}" onChange="{{ setLoginPw }}" style="width:100%; height:48px; padding:0 14px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:15.3px; outline:none;"></div>
+        <button onClick="{{ signIn }}" style="height:50px; border-radius:14px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:16.2px; font-weight:500; cursor:pointer;" style-hover="background:#123A70; border-color:#123A70">Sign in</button>
+      </div>
+      <div style="margin-top:28px; padding-top:18px; border-top:1px solid #DDE3EC; font-size:13.5px; color:#56657D; line-height:1.8;">
+        Seeded logins: <span style="font-family:'IBM Plex Mono',monospace; color:#0E1726;">admin@talentcarriage.test</span> (all customers), <span style="font-family:'IBM Plex Mono',monospace; color:#0E1726;">hr@dpod-lifestyle.test</span>, <span style="font-family:'IBM Plex Mono',monospace; color:#0E1726;">hr@northwind-retail.test</span>, <span style="font-family:'IBM Plex Mono',monospace; color:#0E1726;">hr@sunrise-logistics.test</span> — password <span style="font-family:'IBM Plex Mono',monospace; color:#0E1726;">attendance123</span>.
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isApp }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex; min-height:100vh;">
+  <aside style="width:264px; flex:0 0 264px; background:#ffffff; border-right:1px solid #DDE3EC; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; padding:0 16px 16px;">
+    <div style="padding:20px 8px 18px; border-bottom:1px solid #ECF0F6; margin:0 -16px 16px; padding-left:24px;">
+      <img src="brand/tc-logo.png" alt="Talent Carriage" style="height:48px; width:auto; display:block;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.08em; text-transform:uppercase; color:#56657D; margin-top:12px;">Attendance Agent</div>
+    </div>
+    <nav style="display:flex; flex-direction:column; gap:2px;">
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="5">
+        <button onClick="{{ n.go }}" style="{{ n.style }}">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:0 0 21px;"><path d="{{ n.icon }}"></path></svg>
+          <span>{{ n.label }}</span>
+          <sc-if value="{{ n.hasCount }}" hint-placeholder-val="{{ false }}"><span style="margin-left:auto; min-width:24px; height:24px; padding:0 7px; border-radius:999px; background:#A01B14; color:#ffffff; font-size:13.5px; font-weight:600; display:grid; place-items:center;">{{ n.count }}</span></sc-if>
+        </button>
+      </sc-for>
+    </nav>
+    <sc-if value="{{ isAdmin }}" hint-placeholder-val="{{ true }}">
+      <div style="margin-top:22px; padding:0 8px;">
+        <label style="display:block; font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.08em; text-transform:uppercase; color:#56657D; margin-bottom:8px;">Viewing customer</label>
+        <select value="{{ tenant }}" onChange="{{ switchTenant }}" style="width:100%; height:44px; padding:0 8px; border-radius:10px; border:1px solid #78869C; background:#F8FAFC; font-size:14.5px; font-weight:500; color:#0E1726; outline:none;">
+          <sc-for list="{{ tenants }}" as="t" hint-placeholder-count="3"><option value="{{ t.name }}">{{ t.name }}</option></sc-for>
+        </select>
+      </div>
+    </sc-if>
+    <div style="margin-top:auto; padding:14px 8px 0; border-top:1px solid #ECF0F6; display:flex; align-items:center; gap:10px;">
+      <div style="width:32px; height:40px; border-radius:50%; background:#16437E; display:grid; place-items:center; font-size:14.5px; font-weight:600; color:#ffffff; flex:0 0 32px;">{{ initials }}</div>
+      <div style="min-width:0; flex:1;">
+        <div style="font-size:14.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ tenant }}</div>
+        <div style="font-size:13.5px; color:#56657D; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ userLine }}</div>
+      </div>
+      <button onClick="{{ signOut }}" title="Sign out" style="border:none; background:none; color:#56657D; font-size:13.5px; cursor:pointer; padding:4px;" style-hover="color:#0E1726">Sign out</button>
+    </div>
+  </aside>
+
+  <main style="flex:1; min-width:0; display:flex; flex-direction:column;">
+    <div style="position:sticky; top:0; z-index:5; background:#ffffff; border-bottom:1px solid #DDE3EC; padding:10px 32px; display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; font-size:13.5px;">
+      <sc-for list="{{ flags }}" as="f" hint-placeholder-count="5">
+        <span title="{{ f.title }}" style="display:inline-flex; align-items:center; gap:7px; color:#3D4C63; white-space:nowrap;"><span style="width:7px; height:7px; border-radius:50%; background:{{ f.dot }};"></span>{{ f.text }}</span>
+      </sc-for>
+    </div>
+
+    <div style="padding:28px 32px 56px; max-width:1360px; width:100%;">
+
+      <sc-if value="{{ hasNotice }}" hint-placeholder-val="{{ false }}">
+        <div style="{{ noticeStyle }}"><span style="flex:1;">{{ noticeText }}</span><button onClick="{{ clearNotice }}" style="border:none; background:none; color:inherit; cursor:pointer; font-size:13.5px; opacity:.8;">Dismiss</button></div>
+      </sc-if>
+
+      <!-- DASHBOARD -->
+      <sc-if value="{{ s.dashboard }}" hint-placeholder-val="{{ true }}">
+        <sc-if value="{{ sendingOff }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; gap:12px; align-items:flex-start; padding:14px 16px; border-radius:10px; background:#FDECEA; border:1px solid #F4C2BD; color:#A01B14; margin-bottom:20px; font-size:14.5px;">
+            <div><strong>Sending is switched off for {{ tenant }}.</strong> Cases are still created, but no message or call will go out however many times you press Contact. Turn it back on in <a href="#" onClick="{{ goSettings }}" style="color:inherit; text-decoration:underline;">Settings</a> — “Allow messages to be sent at all”.</div>
+          </div>
+        </sc-if>
+
+        <div style="display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:22px;">
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.08em; text-transform:uppercase; color:#56657D; margin-bottom:8px;">HR Command Center</div>
+            <h1 style="color:#0E1726; font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.4px; margin:0 0 6px;">{{ tenant }}</h1>
+            <p style="margin:0; color:#3D4C63; max-width:70ch; text-wrap:pretty;">Everyone absent or on half-day in these dates. Set how each person is contacted, tick the ones you want, and send. Attendance data covers 2026-09-01 to 2026-09-14.</p>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); background:#fff; border:1px solid #DDE3EC; border-radius:14px; margin-bottom:22px;">
+          <sc-for list="{{ stats }}" as="st" hint-placeholder-count="6">
+            <div style="padding:16px 18px; border-right:1px solid #ECF0F6;">
+              <div style="font-size:13.5px; color:#56657D; margin-bottom:6px;">{{ st.label }}</div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:30px; font-weight:600; line-height:1.1; font-feature-settings:'tnum'; color:{{ st.color }};">{{ st.value }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; overflow:hidden;">
+          <div style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; padding:14px 16px; border-bottom:1px solid #DDE3EC;">
+            <div style="min-width:160px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">From date</label><input type="date" defaultValue="2026-09-14" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"></div>
+            <div style="min-width:160px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">To date</label><input type="date" defaultValue="2026-09-14" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"></div>
+            <button style="height:44px; padding:0 14px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Show</button>
+            <div style="align-self:center; font-size:13.5px; color:#56657D;">{{ flaggedCount }} flagged · {{ notContactedCount }} not contacted yet</div>
+            <div style="margin-left:auto; display:flex; align-items:center; gap:12px;">
+              <span style="font-size:13.5px; color:#3D4C63; font-variant-numeric:tabular-nums;">{{ selectedCount }} selected</span>
+              <button onClick="{{ contactSelected }}" style="height:44px; padding:0 16px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:14.5px; font-weight:500; cursor:pointer;" style-hover="background:#123A70; border-color:#123A70">Contact selected</button>
+            </div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse;">
+              <thead><tr>
+                <th style="width:44px; padding:10px 14px 10px 16px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; text-align:left;"><input type="checkbox" checked="{{ allSelected }}" onChange="{{ toggleAll }}" aria-label="Select all rows" title="Select or clear every row"></th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Employee</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Date</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Attendance</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Status</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Contact by</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Call style</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Mode</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Case</th>
+              </tr></thead>
+              <tbody>
+                <sc-for list="{{ flagged }}" as="r" hint-placeholder-count="8">
+                  <tr style="background:{{ r.rowBg }};" style-hover="background:#F8FAFC">
+                    <td style="padding:{{ cellPad }}; padding-left:16px; border-bottom:1px solid #ECF0F6;"><input type="checkbox" checked="{{ r.checked }}" onChange="{{ r.toggle }}"></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><div style="font-weight:600;">{{ r.name }}</div><div style="font-size:13.5px; color:#56657D; margin-top:1px;">{{ r.code }} · {{ r.dept }}</div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6; white-space:nowrap;">{{ r.label }}<div style="font-size:13.5px; color:#56657D; margin-top:1px; font-family:'IBM Plex Mono',monospace;">{{ r.mobileText }}</div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; padding:2px 7px; border-radius:6px; background:#EEF1F6; color:#0E1726;">{{ r.raw }}</span><div style="font-size:13.5px; color:#56657D; margin-top:3px;">{{ r.meaningText }}</div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;">
+                      <sc-if value="{{ r.hasStatus }}" hint-placeholder-val="{{ true }}"><span style="{{ r.pill }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ r.icon }}"></path></svg>{{ r.statusLabel }}</span></sc-if>
+                      <sc-if value="{{ r.noStatus }}" hint-placeholder-val="{{ false }}"><span style="font-size:13.5px; color:#56657D;">Not contacted</span></sc-if>
+                    </td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><div style="display:inline-flex; gap:2px; padding:2px; border-radius:10px; background:#F1F5F9; border:1px solid #DDE3EC;"><button onClick="{{ r.setWa }}" style="{{ r.waS }}">WhatsApp</button><button onClick="{{ r.setCall }}" style="{{ r.callS }}">Call</button></div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><div style="display:inline-flex; gap:2px; padding:2px; border-radius:10px; background:#F1F5F9; border:1px solid #DDE3EC; opacity:{{ r.cmOpacity }};"><button onClick="{{ r.setKey }}" title="The agent reads the options and they press a key" style="{{ r.keyS }}">Keypad</button><button onClick="{{ r.setTalk }}" title="A spoken conversation: they answer in their own words" style="{{ r.talkS }}">Talk</button></div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><div title="{{ r.modeTitle }}" style="display:inline-flex; gap:2px; padding:2px; border-radius:10px; background:#F1F5F9; border:1px solid #DDE3EC;"><button onClick="{{ r.setMan }}" style="{{ r.manS }}">Manual</button><button onClick="{{ r.setAuto }}" style="{{ r.autoS }}">Auto</button></div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6; white-space:nowrap;">
+                      <sc-if value="{{ r.hasCase }}" hint-placeholder-val="{{ true }}"><button onClick="{{ r.open }}" style="height:40px; padding:0 10px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Open →</button></sc-if>
+                      <sc-if value="{{ r.noCase }}" hint-placeholder-val="{{ false }}"><span title="A case is created when you contact them" style="font-size:13.5px; color:#56657D;">Not started</span></sc-if>
+                    </td>
+                  </tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; margin-top:20px;">
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px; grid-column:span 2;">
+            <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 14px;">How the agent works</h2>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:18px;">
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:#56657D; margin-bottom:8px;">01</div><div style="font-weight:600; font-size:14.5px;">One contact per absent date</div><div style="font-size:13.5px; color:#3D4C63; margin-top:3px;">A WhatsApp message or a call, per the switch against that person.</div></div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:#56657D; margin-bottom:8px;">02</div><div style="font-weight:600; font-size:14.5px;">Ignored dates simply wait</div><div style="font-size:13.5px; color:#3D4C63; margin-top:3px;">No chasing and no repeat calls; they pile up until the employee engages.</div></div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:#56657D; margin-bottom:8px;">03</div><div style="font-weight:600; font-size:14.5px;">One answer clears the backlog</div><div style="font-size:13.5px; color:#3D4C63; margin-top:3px;">Guidance, then what is still pending, then the next date — in the same conversation or call.</div></div>
+              <div><div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:#56657D; margin-bottom:8px;">04</div><div style="font-weight:600; font-size:14.5px;">Automatic chases yesterday</div><div style="font-size:13.5px; color:#3D4C63; margin-top:3px;">Employees set to Auto are contacted the day after the absence, at {{ checkTime }} — change that time in <a href="#" onClick="{{ goSettings }}">Settings</a>, under Daily check.</div></div>
+            </div>
+          </section>
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+            <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 12px;">Housekeeping</h2>
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+              <button onClick="{{ runReminders }}" style="height:44px; padding:0 14px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Send due day-{{ followUpDays }} reminders</button>
+              <button onClick="{{ resetAll }}" style="height:44px; padding:0 14px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; font-weight:600; cursor:pointer; color:#A01B14; border-color:#A01B14;" style-hover="background:#FDECEA">Reset all cases</button>
+            </div>
+            <p style="font-size:13.5px; color:#56657D; margin:10px 0 0;">Resetting clears every case and conversation for this customer. Employees and attendance stay.</p>
+          </section>
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+            <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 12px;">Connections</h2>
+            <dl style="display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:0; font-size:14.5px;">
+              <dt style="color:#56657D;">WhatsApp</dt><dd style="margin:0; font-weight:500;">{{ conn.wa }}</dd>
+              <dt style="color:#56657D;">Calls</dt><dd style="margin:0; font-weight:500;">{{ conn.calls }}</dd>
+              <dt style="color:#56657D;">Conversation</dt><dd style="margin:0; font-weight:500;">LiveKit</dd>
+              <dt style="color:#56657D;">Attendance data</dt><dd style="margin:0; font-weight:500;">CSV or Excel import</dd>
+              <dt style="color:#56657D;">Webhook</dt><dd style="margin:0; font-family:'IBM Plex Mono',monospace; font-size:13.5px; word-break:break-all;">https://attendance.talentcarriage.com/api/webhook</dd>
+            </dl>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- CASES -->
+      <sc-if value="{{ s.cases }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-bottom:22px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.08em; text-transform:uppercase; color:#56657D; margin-bottom:8px;">Follow-up cases</div>
+          <h1 style="color:#0E1726; font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.4px; margin:0 0 6px;">Cases</h1>
+          <p style="margin:0; color:#3D4C63;">One row is one employee and one date. Open a case to read the conversation and act on it.</p>
+        </div>
+        <div style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; overflow:hidden;">
+          <div style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; padding:14px 16px; border-bottom:1px solid #DDE3EC;">
+            <div style="display:inline-flex; gap:2px; padding:2px; border-radius:10px; background:#F1F5F9; border:1px solid #DDE3EC; align-self:flex-end;">
+              <sc-for list="{{ caseTabs }}" as="t" hint-placeholder-count="4"><button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }} <span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; opacity:.7;">{{ t.count }}</span></button></sc-for>
+            </div>
+            <div style="min-width:150px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">From</label><input type="date" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"></div>
+            <div style="min-width:150px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">To</label><input type="date" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"></div>
+            <div style="min-width:220px; flex:1; max-width:320px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Employee</label><input value="{{ q }}" onChange="{{ setQ }}" placeholder="Name or code" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"></div>
+            <button onClick="{{ resetFilters }}" style="height:44px; padding:0 14px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Reset</button>
+            <div style="margin-left:auto; align-self:center; font-size:13.5px; color:#56657D;">{{ caseCountText }}</div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse;">
+              <thead><tr>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px 10px 16px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Employee</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Absent date</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Status</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Reply → action</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Contact by</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Call style</th>
+                <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; border-bottom:1px solid #DDE3EC; background:#F8FAFC; white-space:nowrap;">Mode</th>
+                <th style="border-bottom:1px solid #DDE3EC; background:#F8FAFC;"></th>
+              </tr></thead>
+              <tbody>
+                <sc-for list="{{ caseRows }}" as="r" hint-placeholder-count="6">
+                  <tr style-hover="background:#F8FAFC">
+                    <td style="padding:{{ cellPad }}; padding-left:16px; border-bottom:1px solid #ECF0F6;"><div style="font-weight:600;">{{ r.name }}</div><div style="font-size:13.5px; color:#56657D; margin-top:1px;">{{ r.code }} · {{ r.dept }}</div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6; white-space:nowrap;">{{ r.label }}<div style="margin-top:3px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; padding:2px 7px; border-radius:6px; background:#EEF1F6;">{{ r.raw }}</span></div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6; max-width:240px;"><span style="{{ r.pill }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ r.icon }}"></path></svg>{{ r.statusLabel }}</span><sc-if value="{{ r.hasHr }}" hint-placeholder-val="{{ false }}"><div style="font-size:13.5px; color:#56657D; margin-top:4px;">{{ r.needsHr }}</div></sc-if></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;">
+                      <sc-if value="{{ r.hasReply }}" hint-placeholder-val="{{ false }}"><div style="display:flex; align-items:center; gap:6px;">{{ r.reply }}<sc-if value="{{ r.ai }}" hint-placeholder-val="{{ false }}"><span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; padding:1px 5px; border-radius:4px; background:#E8F0FA; color:#17488A;">AI</span></sc-if></div><div style="font-size:13.5px; color:#56657D; margin-top:1px;">→ {{ r.action }}</div></sc-if>
+                      <sc-if value="{{ r.noReply }}" hint-placeholder-val="{{ true }}"><span style="color:#56657D;">—</span></sc-if>
+                    </td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><div style="display:inline-flex; gap:2px; padding:2px; border-radius:10px; background:#F1F5F9; border:1px solid #DDE3EC;"><button onClick="{{ r.setWa }}" title="{{ r.waTitle }}" style="{{ r.waS }}">WhatsApp</button><button onClick="{{ r.setCall }}" title="{{ r.callTitle }}" style="{{ r.callS }}">Call</button></div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><div style="display:inline-flex; gap:2px; padding:2px; border-radius:10px; background:#F1F5F9; border:1px solid #DDE3EC; opacity:{{ r.cmOpacity }};"><button onClick="{{ r.setKey }}" title="The agent reads the options and they press a key" style="{{ r.keyS }}">Keypad</button><button onClick="{{ r.setTalk }}" title="A spoken conversation: they answer in their own words" style="{{ r.talkS }}">Talk</button></div></td>
+                    <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><div title="{{ r.modeTitle }}" style="display:inline-flex; gap:2px; padding:2px; border-radius:10px; background:#F1F5F9; border:1px solid #DDE3EC;"><button onClick="{{ r.setMan }}" style="{{ r.manS }}">Manual</button><button onClick="{{ r.setAuto }}" style="{{ r.autoS }}">Auto</button></div><div style="font-size:13.5px; color:#56657D; margin-top:3px;">{{ r.at }}</div></td>
+                    <td style="padding:{{ cellPad }}; padding-right:16px; border-bottom:1px solid #ECF0F6; white-space:nowrap; text-align:right;">
+                      <div style="display:inline-flex; gap:6px;">
+                        <sc-if value="{{ r.canSend }}" hint-placeholder-val="{{ false }}"><button onClick="{{ r.send }}" style="height:40px; padding:0 10px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:13.5px; font-weight:500; cursor:pointer;">{{ r.sendLabel }}</button></sc-if>
+                        <button onClick="{{ r.open }}" style="height:40px; padding:0 10px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Open →</button>
+                      </div>
+                    </td>
+                  </tr>
+                </sc-for>
+                <sc-if value="{{ noCases }}" hint-placeholder-val="{{ false }}"><tr><td colSpan="8" style="padding:40px 14px; text-align:center; color:#56657D;">No cases match that filter.</td></tr></sc-if>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- CASE DETAIL -->
+      <sc-if value="{{ s.case }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-bottom:22px;">
+          <a href="#" onClick="{{ goCases }}" style="display:inline-block; font-size:13.5px; margin-bottom:10px;">← All cases</a>
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:12px;">
+            <h1 style="color:#0E1726; font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.4px; margin:0;">{{ cd.name }}</h1>
+            <span style="{{ cd.pill }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ cd.icon }}"></path></svg>{{ cd.statusLabel }}</span>
+          </div>
+          <p style="margin:6px 0 0; color:#3D4C63;">{{ cd.label }} · {{ cd.meaningText }}</p>
+        </div>
+        <div style="display:grid; grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr); gap:16px; align-items:start;">
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; overflow:hidden;">
+            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:14px 18px; border-bottom:1px solid #DDE3EC;">
+              <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0;">Conversation</h2>
+              <span style="font-size:13.5px; color:#56657D; font-family:'IBM Plex Mono',monospace;">{{ cd.phoneLine }}</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:8px; max-height:460px; overflow:auto; padding:18px; background:#F1F5F9;">
+              <sc-for list="{{ cd.msgs }}" as="m" hint-placeholder-count="3">
+                <div style="{{ m.style }}">
+                  <div style="white-space:pre-line;">{{ m.text }}</div>
+                  <sc-if value="{{ m.hasOptions }}" hint-placeholder-val="{{ false }}"><div style="margin-top:8px; padding-top:7px; border-top:1px solid rgba(23,25,28,.08); font-size:13.5px; color:#3D4C63;">{{ m.options }}</div></sc-if>
+                  <div style="font-size:13.5px; color:#56657D; margin-top:5px; text-align:right; font-family:'IBM Plex Mono',monospace;">{{ m.meta }}</div>
+                </div>
+              </sc-for>
+              <sc-if value="{{ cd.empty }}" hint-placeholder-val="{{ false }}"><div style="align-self:center; font-size:13.5px; color:#56657D; padding:20px;">Nothing has been sent yet.</div></sc-if>
+            </div>
+            <sc-if value="{{ simOn }}" hint-placeholder-val="{{ true }}">
+              <div style="padding:16px 18px; border-top:1px solid #DDE3EC;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.06em; text-transform:uppercase; padding:2px 6px; border-radius:4px; background:#FDF2E0; color:#7A4205;">Dry run</span><span style="font-size:13.5px; font-weight:600;">{{ cd.simTitle }}</span></div>
+                <sc-if value="{{ cd.onCall }}" hint-placeholder-val="{{ false }}"><p style="font-size:13.5px; color:#56657D; margin:0 0 10px;">What the employee presses on the keypad. Answering here runs the same flow a real call does, including the summary and the next pending date.</p></sc-if>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px;">
+                  <sc-for list="{{ cd.simOpts }}" as="o" hint-placeholder-count="4"><button onClick="{{ o.go }}" style="min-height:44px; padding:6px 10px; text-align:left; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; cursor:pointer;" style-hover="background:#F1F5F9"><span style="font-family:'IBM Plex Mono',monospace; color:#56657D; margin-right:6px;">{{ o.n }}</span>{{ o.text }}</button></sc-for>
+                </div>
+                <div style="display:flex; gap:6px; margin-top:8px;">
+                  <input value="{{ simText }}" onChange="{{ setSimText }}" placeholder="{{ cd.simPlaceholder }}" style="flex:1; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;">
+                  <button onClick="{{ simFree }}" style="height:44px; padding:0 14px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:13.5px; font-weight:500; cursor:pointer;">{{ cd.simBtn }}</button>
+                </div>
+                <sc-if value="{{ cd.showApproval }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:13.5px; font-weight:600; margin:16px 0 6px;">Simulate {{ cd.manager }}'s decision</div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;"><button onClick="{{ approve }}" style="height:40px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; cursor:pointer;">Approve</button><button onClick="{{ reject }}" style="height:40px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; cursor:pointer;">Reject</button></div>
+                </sc-if>
+                <sc-if value="{{ cd.showOffer }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:13.5px; font-weight:600; margin:16px 0 6px;">Answer the agent's offer</div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;"><button onClick="{{ acceptOffer }}" style="height:40px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; cursor:pointer;">Yes, apply it</button><button onClick="{{ selfOffer }}" style="height:40px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; cursor:pointer;">I'll do it myself</button></div>
+                </sc-if>
+                <sc-if value="{{ cd.showFollowUp }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:13.5px; font-weight:600; margin:16px 0 6px;">Answer the day-2 reminder</div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;"><button onClick="{{ fuDone }}" style="height:40px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; cursor:pointer;">Done</button><button onClick="{{ fuNot }}" style="height:40px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; cursor:pointer;">Not done</button><button onClick="{{ fuHelp }}" style="height:40px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; cursor:pointer;">Need help</button></div>
+                </sc-if>
+              </div>
+            </sc-if>
+            <sc-if value="{{ simOff }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:12px 18px; border-top:1px solid #DDE3EC; font-size:13.5px; color:#3D4C63; background:#F8FAFC;">Simulation is disabled because the platform is live. Replies arrive through the webhook.</div>
+            </sc-if>
+          </section>
+
+          <aside style="display:flex; flex-direction:column; gap:16px;">
+            <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+              <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 12px;">Case</h2>
+              <dl style="display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:0; font-size:14.5px;">
+                <dt style="color:#56657D;">Employee</dt><dd style="margin:0; font-weight:500;">{{ cd.name }} ({{ cd.code }})</dd>
+                <dt style="color:#56657D;">Department</dt><dd style="margin:0; font-weight:500;">{{ cd.dept }}</dd>
+                <dt style="color:#56657D;">Manager</dt><dd style="margin:0; font-weight:500;">{{ cd.manager }}</dd>
+                <dt style="color:#56657D;">Contact by</dt><dd style="margin:0; font-weight:500;">{{ cd.contactBy }}</dd>
+                <dt style="color:#56657D;">Attendance</dt><dd style="margin:0; font-weight:500;">{{ cd.raw }} · {{ cd.meaningText }}</dd>
+                <dt style="color:#56657D;">Asked</dt><dd style="margin:0; font-weight:500;">{{ cd.asked }}</dd>
+                <dt style="color:#56657D;">Answered</dt><dd style="margin:0; font-weight:500;">{{ cd.answered }}</dd>
+                <dt style="color:#56657D;">Reply</dt><dd style="margin:0; font-weight:500;">{{ cd.reply }}</dd>
+                <dt style="color:#56657D;">Action needed</dt><dd style="margin:0; font-weight:500;">{{ cd.action }}</dd>
+              </dl>
+              <sc-if value="{{ cd.hasHr }}" hint-placeholder-val="{{ false }}"><div style="margin-top:12px; padding:10px 12px; border-radius:10px; background:#FDECEA; color:#A01B14; font-size:13.5px;"><strong>Needs HR:</strong> {{ cd.needsHr }}</div></sc-if>
+              <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:16px; padding-top:14px; border-top:1px solid #ECF0F6;">
+                <button onClick="{{ cdSend }}" style="height:40px; padding:0 12px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:13.5px; font-weight:500; cursor:pointer;">{{ cd.sendLabel }}</button>
+                <button onClick="{{ cdClose }}" style="height:40px; padding:0 12px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Close case</button>
+                <button onClick="{{ cdFlag }}" style="height:40px; padding:0 12px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Flag for HR</button>
+                <button onClick="{{ cdReset }}" title="Clears the conversation and makes this an unasked case again" style="height:40px; padding:0 12px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Reset case</button>
+              </div>
+            </section>
+            <sc-if value="{{ cd.hasCalls }}" hint-placeholder-val="{{ false }}">
+              <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px;"><h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0;">Calls</h2><span style="font-size:13.5px; color:#56657D;">{{ cd.callsHint }}</span></div>
+                <dl style="display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:0; font-size:14.5px;">
+                  <dt style="color:#56657D;">When</dt><dd style="margin:0; font-weight:500;">14 Sep, 10:38</dd>
+                  <dt style="color:#56657D;">Status</dt><dd style="margin:0; font-weight:500;">completed · answered</dd>
+                </dl>
+              </section>
+            </sc-if>
+            <sc-if value="{{ cd.hasActions }}" hint-placeholder-val="{{ false }}">
+              <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+                <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 12px;">Actions</h2>
+                <dl style="display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:0; font-size:14.5px;">
+                  <dt style="color:#56657D;">Type</dt><dd style="margin:0; font-weight:500;">{{ cd.actionType }}</dd>
+                  <dt style="color:#56657D;">Status</dt><dd style="margin:0; font-weight:500;">{{ cd.actionStatus }}</dd>
+                  <dt style="color:#56657D;">HRMS reference</dt><dd style="margin:0; font-family:'IBM Plex Mono',monospace; font-size:13.5px;">TO-REG-20260914-1107</dd>
+                </dl>
+              </section>
+            </sc-if>
+            <sc-if value="{{ cd.hasPending }}" hint-placeholder-val="{{ false }}">
+              <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;"><h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0;">Also pending</h2><span style="font-size:13.5px; color:#56657D;">Chained, oldest first</span></div>
+                <div style="display:flex; flex-direction:column;">
+                  <sc-for list="{{ cd.pending }}" as="p" hint-placeholder-count="1"><div style="display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-top:1px solid #ECF0F6; font-size:14.5px;"><a href="#" onClick="{{ p.open }}" style="font-family:'IBM Plex Mono',monospace; font-size:13.5px;">{{ p.date }}</a><span style="color:#56657D; font-size:13.5px;">{{ p.status }}</span></div></sc-for>
+                </div>
+              </section>
+            </sc-if>
+          </aside>
+        </div>
+      </sc-if>
+
+      <!-- MAPPING -->
+      <sc-if value="{{ s.mapping }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-bottom:22px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.08em; text-transform:uppercase; color:#56657D; margin-bottom:8px;">Mapping &amp; import</div>
+          <h1 style="color:#0E1726; font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.4px; margin:0 0 6px;">How this customer's data is read</h1>
+          <p style="margin:0; color:#3D4C63; max-width:76ch; text-wrap:pretty;">Their columns and codes are translated into the platform's own vocabulary once. Everything after that — detection, messaging, actions and reporting — is identical for every customer.</p>
+        </div>
+        <div style="display:flex; gap:10px; align-items:flex-start; padding:12px 16px; border-radius:10px; background:#E7F4EC; border:1px solid #B5DDC5; color:#10653C; margin-bottom:16px; font-size:14.5px;">Imported 392 days for 28 employees from DPOD_Sep_2026.xlsx. 2 rows skipped.</div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; margin-bottom:16px;">
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+            <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 6px;">Import attendance</h2>
+            <p style="font-size:13.5px; color:#3D4C63; margin:0 0 14px;">Read with the mapping below. Re-importing is safe: a corrected day overwrites the old one and can close an open case.</p>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="flex:1; display:flex; align-items:center; gap:10px; height:46px; padding:0 12px; border-radius:10px; border:1px dashed #78869C; background:#F8FAFC; font-size:13.5px; color:#3D4C63; cursor:pointer;"><span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:#56657D;">.xlsx .xls .csv</span>Choose attendance file<input type="file" accept=".xlsx,.xls,.csv" style="display:none;"></label>
+              <button onClick="{{ doImport }}" style="height:46px; padding:0 16px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:14.5px; font-weight:500; cursor:pointer;">Import</button>
+            </div>
+          </section>
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+            <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 6px;">Fill the form from a file</h2>
+            <p style="font-size:13.5px; color:#3D4C63; margin:0 0 14px;">Optional. Upload one of their files and the form below is filled in with what it can work out — the column names it recognises and the codes it finds. Nothing is imported and nothing is saved until you press Save mapping.</p>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="flex:1; display:flex; align-items:center; gap:10px; height:46px; padding:0 12px; border-radius:10px; border:1px dashed #78869C; background:#F8FAFC; font-size:13.5px; color:#3D4C63; cursor:pointer;"><span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:#56657D;">.xlsx .xls .csv</span>Their file<input type="file" accept=".xlsx,.xls,.csv" style="display:none;"></label>
+              <button style="height:46px; padding:0 14px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Fill in the form</button>
+            </div>
+          </section>
+        </div>
+
+        <sc-if value="{{ hasUnmapped }}" hint-placeholder-val="{{ true }}">
+          <section style="background:#fff; border:1px solid #F4C2BD; border-radius:14px; overflow:hidden; margin-bottom:16px;">
+            <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:8px; padding:14px 18px; background:#FDECEA; border-bottom:1px solid #F4C2BD;">
+              <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0; color:#A01B14;">Codes nobody has explained</h2>
+              <span style="font-size:13.5px; color:#A01B14;">never messaged about until they have a meaning</span>
+            </div>
+            <sc-for list="{{ unmapped }}" as="u" hint-placeholder-count="2">
+              <div style="display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:10px 18px; border-bottom:1px solid #ECF0F6;">
+                <span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; padding:3px 8px; border-radius:6px; background:#EEF1F6; min-width:56px; text-align:center;">{{ u.code }}</span>
+                <span style="font-size:13.5px; color:#56657D; width:70px;">seen {{ u.seen }}×</span>
+                <select value="{{ u.meaning }}" onChange="{{ u.setMeaning }}" style="height:40px; padding:0 8px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; max-width:280px; flex:1; outline:none;">
+                  <sc-for list="{{ meaningOpts }}" as="mo" hint-placeholder-count="5"><option value="{{ mo.value }}">{{ mo.label }}</option></sc-for>
+                </select>
+                <button onClick="{{ u.save }}" style="height:40px; padding:0 12px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">Save</button>
+              </div>
+            </sc-for>
+          </section>
+        </sc-if>
+
+        <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; margin-bottom:16px;">
+          <div style="padding:18px 20px; border-bottom:1px solid #DDE3EC;">
+            <h2 style="color:#0E1726; font-size:20px; font-weight:600; margin:0 0 4px;">The mapping for this customer</h2>
+            <p style="font-size:13.5px; color:#3D4C63; margin:0;">Change anything here and save. Nothing already imported is altered; the next import is read with the new rules.</p>
+          </div>
+          <div style="display:grid; grid-template-columns:200px minmax(0,1fr); border-bottom:1px solid #ECF0F6;">
+            <div style="padding:18px 20px; font-size:14.5px; font-weight:600;">Name</div>
+            <div style="padding:18px 20px 18px 0; display:flex; flex-wrap:wrap; gap:12px;">
+              <div style="min-width:240px; flex:1;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Name this mapping</label><input defaultValue="DPOD monthly register" placeholder="e.g. Aastha monthly register" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+              <div style="min-width:200px; flex:1;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Which HRMS (optional)</label><input defaultValue="TimeOffice" placeholder="TimeOffice, greytHR…" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:200px minmax(0,1fr); border-bottom:1px solid #ECF0F6;">
+            <div style="padding:18px 20px; font-size:14.5px; font-weight:600;">How their file lays out the dates</div>
+            <div style="padding:18px 20px 18px 0;">
+              <div style="display:inline-flex; gap:2px; padding:2px; border-radius:10px; background:#F1F5F9; border:1px solid #DDE3EC; margin-bottom:14px;"><button onClick="{{ setColLayout }}" style="{{ colLayoutS }}">A column for each day</button><button onClick="{{ setRowLayout }}" style="{{ rowLayoutS }}">A row for each day</button></div>
+              <sc-if value="{{ isColLayout }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex; flex-wrap:wrap; gap:12px;">
+                  <div style="min-width:290px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">What their day headings look like</label><select style="width:100%; height:44px; padding:0 8px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"><option>Day then month — “1 / 8”, “1-8 | Sat”</option><option>Just the day number — “1”, “2”, “3”</option><option>Day then month name — “01-Sep”</option></select></div>
+                  <div style="width:150px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Which year</label><input type="number" defaultValue="2026" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+                </div>
+                <p style="font-size:13.5px; color:#56657D; margin:8px 0 0; max-width:60ch;">Fixed. Headings like “1 / 8” carry no year, and the wrong one files every absence twelve months out.</p>
+              </sc-if>
+              <sc-if value="{{ isRowLayout }}" hint-placeholder-val="{{ false }}">
+                <div style="max-width:320px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Their date column is called</label><input placeholder="Date" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+              </sc-if>
+              <div style="max-width:380px; margin-top:14px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Two halves of the day in one cell?</label>
+                <select value="{{ separator }}" onChange="{{ setSeparator }}" style="width:100%; height:44px; padding:0 8px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"><option value="">No — one code per day</option><option value="|">Yes, split on | — as in A|P</option><option value="/">Yes, split on / — as in A/P</option><option value="-">Yes, split on - — as in A-P</option></select>
+              </div>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:200px minmax(0,1fr); border-bottom:1px solid #ECF0F6;">
+            <div style="padding:18px 20px;"><div style="font-size:14.5px; font-weight:600;">What their columns are called</div><p style="font-size:13.5px; color:#56657D; margin:6px 0 0;">Type the heading exactly as it appears in their file. Leave anything they do not send blank — only the first three are needed.</p></div>
+            <div style="padding:18px 20px 18px 0;">
+              <div style="border:1px solid #DDE3EC; border-radius:10px; overflow:hidden;">
+                <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); background:#F8FAFC; border-bottom:1px solid #DDE3EC; font-size:13.5px; font-weight:500; color:#56657D;"><div style="padding:8px 12px;">We call it</div><div style="padding:8px 12px;">They call it</div></div>
+                <sc-for list="{{ fields }}" as="fd" hint-placeholder-count="6">
+                  <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); align-items:center; border-bottom:1px solid #ECF0F6;">
+                    <div style="padding:8px 12px;"><div style="display:flex; align-items:center; gap:6px; font-size:14.5px;">{{ fd.label }}<sc-if value="{{ fd.req }}" hint-placeholder-val="{{ false }}"><span style="font-size:13.5px; font-weight:500; padding:1px 6px; border-radius:4px; background:#FDECEA; color:#A01B14;">needed</span></sc-if></div><sc-if value="{{ fd.hasNote }}" hint-placeholder-val="{{ false }}"><div style="font-size:13.5px; color:#56657D; margin-top:1px;">{{ fd.note }}</div></sc-if></div>
+                    <div style="padding:6px 12px 6px 0;"><input defaultValue="{{ fd.value }}" placeholder="—" style="width:100%; height:40px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:13.5px; font-family:'IBM Plex Mono',monospace; outline:none;"></div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:200px minmax(0,1fr);">
+            <div style="padding:18px 20px;"><div style="font-size:14.5px; font-weight:600;">What their codes mean</div><p style="font-size:13.5px; color:#56657D; margin:6px 0 0;">Every code that can appear in their file. Anything not listed is never messaged about, so a code you are unsure of is safest left out until you have asked them.</p></div>
+            <div style="padding:18px 20px 18px 0;">
+              <sc-if value="{{ hasSeparator }}" hint-placeholder-val="{{ true }}">
+                <p style="font-size:13.5px; color:#3D4C63; margin:0 0 12px; padding:10px 12px; background:#F8FAFC; border:1px solid #ECF0F6; border-radius:10px; text-wrap:pretty;"><strong>Their cells hold two halves.</strong> A cell reading <span style="font-family:'IBM Plex Mono',monospace;">A{{ separator }}P</span> is absent in the morning and present in the afternoon, which is how a half day is told from a full one. So each half is given a meaning on its own — <span style="font-family:'IBM Plex Mono',monospace;">A</span> and <span style="font-family:'IBM Plex Mono',monospace;">P</span> — and a code that only ever appears doubled, like <span style="font-family:'IBM Plex Mono',monospace;">HO{{ separator }}HO</span>, is still mapped as <span style="font-family:'IBM Plex Mono',monospace;">HO</span>. A pair typed here is split for you.</p>
+              </sc-if>
+              <div style="border:1px solid #DDE3EC; border-radius:10px; overflow:hidden;">
+                <div style="display:grid; grid-template-columns:120px minmax(0,1fr) 64px 84px; background:#F8FAFC; border-bottom:1px solid #DDE3EC; font-size:13.5px; font-weight:500; color:#56657D;"><div style="padding:8px 12px;">Their code</div><div style="padding:8px 12px;">Means</div><div style="padding:8px 12px;">Chase</div><div></div></div>
+                <sc-for list="{{ codes }}" as="c" hint-placeholder-count="5">
+                  <div style="display:grid; grid-template-columns:120px minmax(0,1fr) 64px 84px; align-items:center; border-bottom:1px solid #ECF0F6;">
+                    <div style="padding:6px 12px;"><input value="{{ c.code }}" onChange="{{ c.setCode }}" placeholder="A" style="width:100%; height:40px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:13.5px; font-family:'IBM Plex Mono',monospace; outline:none;"></div>
+                    <div style="padding:6px 12px 6px 0;"><select value="{{ c.meaning }}" onChange="{{ c.setMeaning }}" style="width:100%; height:40px; padding:0 8px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:13.5px; outline:none;"><sc-for list="{{ meaningOpts }}" as="mo" hint-placeholder-count="5"><option value="{{ mo.value }}">{{ mo.label }}</option></sc-for></select></div>
+                    <div style="padding:6px 12px;"><input type="checkbox" checked="{{ c.chase }}" onChange="{{ c.toggleChase }}" title="Chase this code even when its meaning is not normally chased"></div>
+                    <div style="padding:6px 12px 6px 0; text-align:right;"><button onClick="{{ c.remove }}" style="height:40px; padding:0 9px; border-radius:10px; border:1px solid transparent; background:none; font-size:13.5px; color:#56657D; cursor:pointer;" style-hover="background:#F1F5F9; color:#26344A">Remove</button></div>
+                  </div>
+                </sc-for>
+              </div>
+              <button onClick="{{ addCode }}" style="margin-top:10px; height:40px; padding:0 12px; border-radius:10px; border:1px dashed #78869C; background:#fff; font-size:13.5px; font-weight:500; cursor:pointer;" style-hover="background:#F1F5F9">+ Add a code</button>
+            </div>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:14px 20px; border-top:1px solid #DDE3EC; background:#F8FAFC; border-radius:0 0 14px 14px;">
+            <button onClick="{{ saveMapping }}" style="height:46px; padding:0 16px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:14.5px; font-weight:500; cursor:pointer;">Save mapping</button>
+            <span style="font-size:13.5px; color:#56657D;">Saving changes nothing already imported. Import a file afterwards to read it with these rules.</span>
+          </div>
+        </section>
+
+        <div style="display:grid; grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr); gap:16px; align-items:start;">
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; overflow:hidden;">
+            <div style="padding:14px 18px; border-bottom:1px solid #DDE3EC;"><h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0;">Recent imports</h2></div>
+            <table style="width:100%; border-collapse:collapse; font-size:14.5px;">
+              <thead><tr><th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:9px 18px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">When</th><th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:9px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Source</th><th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:9px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Covering</th><th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:9px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Result</th></tr></thead>
+              <tbody>
+                <sc-for list="{{ imports }}" as="im" hint-placeholder-count="2"><tr><td style="padding:10px 18px; border-bottom:1px solid #ECF0F6; white-space:nowrap;">{{ im.when }}</td><td style="padding:10px 14px; border-bottom:1px solid #ECF0F6;">{{ im.source }}<div style="font-size:13.5px; color:#56657D; font-family:'IBM Plex Mono',monospace;">{{ im.file }}</div></td><td style="padding:10px 14px; border-bottom:1px solid #ECF0F6; white-space:nowrap; font-family:'IBM Plex Mono',monospace; font-size:13.5px;">{{ im.range }}</td><td style="padding:10px 14px; border-bottom:1px solid #ECF0F6;">{{ im.result }}<div style="font-size:13.5px; color:#56657D;">{{ im.rejected }}</div></td></tr></sc-for>
+              </tbody>
+            </table>
+          </section>
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+            <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 12px;">Layout</h2>
+            <dl style="display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:0; font-size:14.5px;">
+              <dt style="color:#56657D;">HRMS</dt><dd style="margin:0; font-weight:500;">TimeOffice</dd>
+              <dt style="color:#56657D;">Dates</dt><dd style="margin:0; font-weight:500;">{{ layoutText }}</dd>
+              <dt style="color:#56657D;">Status</dt><dd style="margin:0; font-weight:500;">{{ statusLayoutText }}</dd>
+              <dt style="color:#56657D;">Fields mapped</dt><dd style="margin:0; font-weight:500;">8</dd>
+            </dl>
+            <p style="font-size:13.5px; color:#56657D; margin:12px 0 0;">Monthly muster export, one row per employee.</p>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- GUIDELINES -->
+      <sc-if value="{{ s.knowledge }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-bottom:22px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.08em; text-transform:uppercase; color:#56657D; margin-bottom:8px;">What the agent knows</div>
+          <h1 style="color:#0E1726; font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.4px; margin:0 0 6px;">Guidelines the agent can answer from</h1>
+          <p style="margin:0; color:#3D4C63; max-width:76ch; text-wrap:pretty;">Their own policy documents. The agent answers questions from these and from the caller's own attendance, and says it will refer to HR when the answer is not here — it never fills a gap with a guess.</p>
+        </div>
+        <div style="display:grid; grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr); gap:16px; align-items:start;">
+          <div style="display:flex; flex-direction:column; gap:16px;">
+            <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+              <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 4px;">Try a question</h2>
+              <p style="font-size:13.5px; color:#3D4C63; margin:0 0 14px;">Exactly what the agent would say on a call. Asking as somebody lets you check the answers about their own attendance, which is what a caller is identified as by their number.</p>
+              <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                <div style="min-width:200px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Asking as</label><select style="width:100%; height:46px; padding:0 8px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"><option value="">Nobody — policy questions only</option><sc-for list="{{ staff }}" as="p" hint-placeholder-count="4"><option>{{ p.name }} · {{ p.code }}</option></sc-for></select></div>
+                <div style="flex:1; min-width:240px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Question</label><input value="{{ question }}" onChange="{{ setQuestion }}" placeholder="How much notice do I have to give when resigning?" style="width:100%; height:46px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+                <button onClick="{{ ask }}" style="height:46px; padding:0 18px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:14.5px; font-weight:500; cursor:pointer;">Ask</button>
+              </div>
+              <sc-if value="{{ hasAnswer }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:14px; padding:14px 16px; border-radius:10px; background:#F1F5F9;">
+                  <div style="font-weight:600; font-size:14.5px;">{{ askedQ }}</div>
+                  <div style="margin-top:6px; font-size:14.5px; color:#26344A; text-wrap:pretty;">{{ answer }}</div>
+                </div>
+              </sc-if>
+            </section>
+            <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; overflow:hidden;">
+              <div style="display:flex; justify-content:space-between; align-items:baseline; padding:14px 18px; border-bottom:1px solid #DDE3EC;"><h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0;">Documents</h2><span style="font-size:13.5px; color:#56657D;">{{ docsReady }} ready of {{ docsTotal }}</span></div>
+              <sc-for list="{{ docs }}" as="d" hint-placeholder-count="3">
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid #ECF0F6;">
+                  <div style="width:34px; height:48px; border-radius:6px; border:1px solid #DDE3EC; background:#F8FAFC; display:grid; place-items:center; font-family:'IBM Plex Mono',monospace; font-size:12px; color:#56657D; flex:0 0 34px;">PDF</div>
+                  <div style="flex:1; min-width:180px;"><div style="font-weight:600;">{{ d.title }}</div><div style="font-size:13.5px; color:#56657D;">{{ d.file }} · {{ d.when }}</div></div>
+                  <span style="font-size:13.5px; padding:2px 8px; border-radius:999px; background:#EEF1F6; color:#3D4C63;">{{ d.topic }}</span>
+                  <span style="{{ d.pill }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ d.icon }}"></path></svg>{{ d.state }}</span>
+                  <button onClick="{{ d.remove }}" style="height:40px; padding:0 9px; border-radius:10px; border:1px solid transparent; background:none; font-size:13.5px; color:#56657D; cursor:pointer;" style-hover="background:#F1F5F9; color:#26344A">Remove</button>
+                </div>
+              </sc-for>
+              <sc-if value="{{ noDocs }}" hint-placeholder-val="{{ false }}"><div style="padding:36px 18px; text-align:center; color:#56657D;">No guidelines yet. Until one is added, every question goes to HR.</div></sc-if>
+            </section>
+          </div>
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+            <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 4px;">Add a guideline</h2>
+            <p style="font-size:13.5px; color:#3D4C63; margin:0 0 14px;">A PDF. Scanned documents are fine — they are read as images, which takes a few seconds longer.</p>
+            <div style="display:flex; flex-direction:column; gap:12px;">
+              <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Title</label><input value="{{ newDocTitle }}" onChange="{{ setNewDocTitle }}" placeholder="Leave guidelines" style="width:100%; height:46px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+              <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Topic</label><select value="{{ newDocTopic }}" onChange="{{ setNewDocTopic }}" style="width:100%; height:46px; padding:0 8px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"><option value="attendance">attendance</option><option value="leave">leave</option><option value="overtime">overtime</option><option value="exit">exit</option><option value="other">other</option></select></div>
+              <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">File</label><label style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; height:104px; border-radius:10px; border:1px dashed #78869C; background:#F8FAFC; font-size:13.5px; color:#3D4C63; cursor:pointer;">Choose a PDF<span style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:#56657D;">.pdf</span><input type="file" accept=".pdf" style="display:none;"></label></div>
+              <button onClick="{{ addDoc }}" style="height:46px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:14.5px; font-weight:500; cursor:pointer;">Add and read it</button>
+            </div>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- SETTINGS -->
+      <sc-if value="{{ s.settings }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-bottom:22px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.08em; text-transform:uppercase; color:#56657D; margin-bottom:8px;">Settings</div>
+          <h1 style="color:#0E1726; font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.4px; margin:0 0 6px;">{{ tenant }}</h1>
+          <p style="margin:0; color:#3D4C63;">How the agent behaves for this customer. Everything here is per customer, not global.</p>
+        </div>
+        <div style="display:grid; grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr); gap:16px; align-items:start;">
+          <div style="background:#fff; border:1px solid #DDE3EC; border-radius:14px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; padding:18px 20px; border-bottom:1px solid #DDE3EC; background:{{ masterBg }}; border-radius:14px 12px 0 0;">
+              <div><div style="font-weight:600; font-size:16.2px;">Let the agent contact employees</div><p style="font-size:13.5px; color:#3D4C63; margin:4px 0 0; max-width:60ch; text-wrap:pretty;">The master switch for {{ tenant }}. Turn it off and absences are still found and cases still created, but no WhatsApp message and no call ever goes out — however many times anyone presses Contact. Leave it off while a new customer is being set up, or use it to stop everything at once.</p></div>
+              <button onClick="{{ toggleSending }}" role="switch" aria-checked="{{ sending }}" style="flex:0 0 auto; width:44px; height:24px; border-radius:999px; border:none; padding:2px; background:{{ switchBg }}; cursor:pointer; display:flex; justify-content:{{ switchJustify }};"><span style="width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.2);"></span></button>
+            </div>
+            <div style="padding:20px; border-bottom:1px solid #ECF0F6;">
+              <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 14px;">Daily check</h2>
+              <div style="display:flex; flex-wrap:wrap; gap:12px;">
+                <div style="width:170px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Check time (Asia/Kolkata)</label><input type="time" value="{{ checkTime }}" onChange="{{ setCheckTime }}" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+                <div style="width:140px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Quiet from</label><input type="time" defaultValue="21:00" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+                <div style="width:140px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Quiet until</label><input type="time" defaultValue="08:00" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+              </div>
+              <div style="margin-top:16px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">How the agent runs</label>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; max-width:560px;">
+                  <button onClick="{{ setManual }}" style="{{ manualCard }}"><div style="font-weight:600; font-size:14.5px;">Manual</div><div style="font-size:13.5px; color:#3D4C63; margin-top:2px;">HR starts every check and reminder</div></button>
+                  <button onClick="{{ setAutomatic }}" style="{{ autoCard }}"><div style="font-weight:600; font-size:14.5px;">Automatic</div><div style="font-size:13.5px; color:#3D4C63; margin-top:2px;">The agent runs the daily check itself</div></button>
+                </div>
+                <p style="font-size:13.5px; color:#56657D; margin:8px 0 0; max-width:64ch;">Manual is the default, so a newly configured customer can never message anyone by surprise. In automatic mode the daily check runs at the time above, and due reminders go out on their own.</p>
+              </div>
+            </div>
+            <div style="padding:20px; border-bottom:1px solid #ECF0F6;">
+              <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:14px;"><h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0;">The talking call</h2><span style="display:inline-flex; align-items:center; gap:6px; font-size:13.5px; color:#3D4C63;"><span style="width:7px; height:7px; border-radius:50%; background:#10653C;"></span>LiveKit connected</span></div>
+              <div style="display:flex; flex-wrap:wrap; gap:12px;">
+                <div style="width:240px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Voice</label><select defaultValue="ritu" style="width:100%; height:44px; padding:0 8px; border-radius:10px; border:1px solid #78869C; background:#fff; font-size:14.5px; outline:none;"><optgroup label="Female"><option value="ritu">Ritu</option><option>Pooja</option><option>Priya</option><option>Kavya</option><option>Simran</option><option>Ishita</option><option>Shreya</option></optgroup><optgroup label="Male"><option>Rahul</option><option>Amit</option><option>Dev</option><option>Rohan</option><option>Shubh</option><option>Manan</option><option>Sumit</option></optgroup></select></div>
+                <div style="width:140px;"><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Speed</label><input type="number" step="0.05" min="0.7" max="1.3" defaultValue="0.95" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+              </div>
+              <p style="font-size:13.5px; color:#56657D; margin:10px 0 0; max-width:64ch;">Indian voices, for employees set to Call · Talk. Slightly under 1.0 is easier to follow on a poor line. Run <span style="font-family:'IBM Plex Mono',monospace; color:#0E1726;">npm run voices</span> to hear each one speak the real opening line before choosing.</p>
+            </div>
+            <div style="padding:20px;">
+              <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 14px;">Backlog and escalation</h2>
+              <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px;">
+                <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Outstanding questions cap</label><input type="number" min="0" defaultValue="0" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+                <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Reminder after (days)</label><input type="number" min="1" value="{{ followUpDays }}" onChange="{{ setFollowUp }}" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+                <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Call after (days)</label><input type="number" min="1" defaultValue="3" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+                <div><label style="display:block; font-size:13.5px; font-weight:500; color:#3D4C63; margin-bottom:6px;">Approval timeout (hours)</label><input type="number" min="1" defaultValue="24" style="width:100%; height:44px; padding:0 10px; border-radius:10px; border:1px solid #78869C; font-size:14.5px; outline:none;"></div>
+              </div>
+              <p style="font-size:13.5px; color:#56657D; margin:10px 0 0; max-width:70ch;">0 means no cap: every absent date is asked as it is found, and unanswered dates pile up until the employee starts answering. With a cap, the extras wait and are asked one at a time as earlier dates are answered.</p>
+              <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
+                <label style="display:flex; gap:10px; align-items:center; font-size:14.5px; font-weight:500; cursor:pointer;"><input type="checkbox" defaultChecked="{{ true }}">Send the "N days still pending" summary after each answer</label>
+                <label style="display:flex; gap:10px; align-items:center; font-size:14.5px; font-weight:500; cursor:pointer;"><input type="checkbox" defaultChecked="{{ true }}">Let the agent apply leave and regularisation in the HRMS</label>
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:12px; padding:14px 20px; border-top:1px solid #DDE3EC; background:#F8FAFC; border-radius:0 0 14px 14px;">
+              <sc-if value="{{ canEdit }}" hint-placeholder-val="{{ true }}"><button onClick="{{ saveSettings }}" style="height:46px; padding:0 16px; border-radius:10px; border:1px solid #1E5AA9; background:#1E5AA9; color:#fff; font-weight:600; font-size:14.5px; font-weight:500; cursor:pointer;">Save settings</button></sc-if>
+              <sc-if value="{{ readOnly }}" hint-placeholder-val="{{ false }}"><span style="font-size:13.5px; color:#3D4C63;">Your role can view these settings but not change them.</span></sc-if>
+            </div>
+          </div>
+          <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px;">
+            <h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0 0 12px;">Connection</h2>
+            <dl style="display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:0; font-size:14.5px;">
+              <dt style="color:#56657D;">Mode</dt><dd style="margin:0; font-weight:500;">{{ conn.mode }}</dd>
+              <dt style="color:#56657D;">Webhook URL</dt><dd style="margin:0; font-family:'IBM Plex Mono',monospace; font-size:13.5px; word-break:break-all;">https://attendance.talentcarriage.com/api/webhook</dd>
+              <dt style="color:#56657D;">Verify token</dt><dd style="margin:0; font-weight:500;">configured</dd>
+              <dt style="color:#56657D;">Language</dt><dd style="margin:0; font-weight:500;">en</dd>
+              <dt style="color:#56657D;">HRMS connector</dt><dd style="margin:0; font-weight:500;">timeoffice</dd>
+            </dl>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- ADMIN -->
+      <sc-if value="{{ s.admin }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-bottom:22px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:13.5px; letter-spacing:.08em; text-transform:uppercase; color:#56657D; margin-bottom:8px;">Talent Carriage console</div>
+          <h1 style="color:#0E1726; font-family:Sansation,'IBM Plex Sans',sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.4px; margin:0 0 6px;">All customers</h1>
+          <p style="margin:0; color:#3D4C63;">Health across every customer on the platform, so problems are found before anyone reports them.</p>
+        </div>
+        <div style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; overflow:auto; margin-bottom:16px;">
+          <table style="width:100%; border-collapse:collapse; font-size:14.5px;">
+            <thead><tr>
+              <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 16px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Customer</th>
+              <th style="text-align:right; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Employees</th>
+              <th style="text-align:right; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Cases</th>
+              <th style="text-align:right; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Awaiting reply</th>
+              <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Needs HR</th>
+              <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Sending</th>
+              <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Mode</th>
+              <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Actions</th>
+              <th style="text-align:left; font-size:13.5px; font-weight:500; color:#56657D; padding:10px 14px; background:#F8FAFC; border-bottom:1px solid #DDE3EC;">Cap</th>
+            </tr></thead>
+            <tbody>
+              <sc-for list="{{ tenants }}" as="t" hint-placeholder-count="3">
+                <tr style-hover="background:#F8FAFC">
+                  <td style="padding:{{ cellPad }}; padding-left:16px; border-bottom:1px solid #ECF0F6;"><div style="font-weight:600;">{{ t.name }}</div><div style="font-size:13.5px; color:#56657D; font-family:'IBM Plex Mono',monospace;">{{ t.slug }}</div></td>
+                  <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6; text-align:right; font-variant-numeric:tabular-nums;">{{ t.employees }}</td>
+                  <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6; text-align:right; font-variant-numeric:tabular-nums;">{{ t.cases }}</td>
+                  <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6; text-align:right; font-variant-numeric:tabular-nums;">{{ t.awaiting }}</td>
+                  <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><span style="{{ t.hrPill }}">{{ t.attention }}</span></td>
+                  <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><span style="{{ t.sendPill }}">{{ t.sendText }}</span></td>
+                  <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><span style="{{ t.modePill }}">{{ t.modeText }}</span><div style="font-size:13.5px; color:#56657D; margin-top:2px;">{{ t.checkTime }}</div></td>
+                  <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6;"><span style="{{ t.actPill }}">{{ t.actText }}</span></td>
+                  <td style="padding:{{ cellPad }}; border-bottom:1px solid #ECF0F6; color:#56657D;">{{ t.cap }}</td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+        <section style="background:#fff; border:1px solid #DDE3EC; border-radius:14px; padding:18px 20px; max-width:640px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px;"><h2 style="color:#0E1726; font-size:18px; font-weight:600; margin:0;">Platform connections</h2><span style="font-size:13.5px; color:#56657D;">What is wired up right now</span></div>
+          <dl style="display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:0; font-size:14.5px;">
+            <dt style="color:#56657D;">Delivery</dt><dd style="margin:0; font-weight:500;">{{ conn.delivery }}</dd>
+            <dt style="color:#56657D;">WhatsApp</dt><dd style="margin:0; font-weight:500;">Meta Cloud API configured</dd>
+            <dt style="color:#56657D;">Webhook signature</dt><dd style="margin:0; font-weight:500;">Checked</dd>
+            <dt style="color:#56657D;">Models available</dt><dd style="margin:0; font-weight:500;">anthropic, stub</dd>
+            <dt style="color:#56657D;">HRMS</dt><dd style="margin:0; font-weight:500;">timeoffice</dd>
+            <dt style="color:#56657D;">Voice</dt><dd style="margin:0; font-weight:500;">plivo</dd>
+          </dl>
+        </section>
+      </sc-if>
+
+    </div>
+  </main>
+</div>
+</sc-if>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;dryRun&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Platform&quot;},&quot;platformAdmin&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Platform&quot;},&quot;readOnly&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Platform&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Display&quot;}}">
+const C0 = 'M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20Z ';
+const ICON = { waiting: C0 + 'M12 7v5l3 2', pending: C0 + 'M8 12h8 M13 9l3 3-3 3', done: C0 + 'M8.5 12.5l2.5 2.5 4.5-5', call: C0 + 'M12 7.5v5 M12 16.5h.01', idle: C0 + 'M8 12h8' };
+const BORDER = { waiting: '#C5DAF1', pending: '#EFD3A0', done: '#B5DDC5', call: '#F4C2BD', idle: '#D6DDE7' };
+const TONE = {
+  waiting: ['#E8F0FA', '#17488A'],
+  pending: ['#FDF2E0', '#7A4205'],
+  done: ['#E7F4EC', '#10653C'],
+  call: ['#FDECEA', '#A01B14'],
+  idle: ['#ECF0F6', '#3D4C63'],
+};
+const STATUS = {
+  queued: ['Not contacted', 'idle'], asked: ['Asked · awaiting reply', 'waiting'], delivered: ['Delivered · awaiting reply', 'waiting'],
+  read: ['Read · awaiting reply', 'waiting'], answered: ['Answered · guidance sent', 'pending'], awaiting_action: ['Offer sent', 'pending'],
+  awaiting_approval: ['With the manager', 'pending'], resolved: ['Resolved', 'done'], needs_hr: ['Needs HR', 'call'],
+  failed: ['Send failed', 'call'], cancelled: ['Cancelled', 'idle'],
+};
+const OPTIONS = {
+  1: { label: 'Yes, I was absent', title: 'Yes, I was absent', action: 'Apply leave or unpaid leave' },
+  2: { label: 'No, I was working', title: 'No, I was working', action: 'Apply regularisation' },
+  3: { label: 'I have already applied leave', title: 'Already applied leave', action: 'Manager to approve leave' },
+  4: { label: 'I have already sent regularisation request', title: 'Sent regularisation', action: 'Manager to approve regularisation' },
+};
+const MEANINGS = { present: 'Present', absent_full: 'Absent (full day)', absent_first_half: 'Absent (first half)', absent_second_half: 'Absent (second half)', absent_half_unspecified: 'Absent (half day)', missed_punch: 'Missed punch', short_hours: 'Short hours', late_in: 'Late in', early_out: 'Early out', leave_approved: 'Leave approved', leave_pending: 'Leave pending approval', leave_rejected: 'Leave rejected', leave_unpaid: 'Leave without pay', on_duty: 'On duty', work_from_home: 'Work from home', travel: 'Travel', training: 'Training', comp_off: 'Compensatory off', weekly_off: 'Weekly off', holiday: 'Holiday', optional_holiday: 'Optional holiday', suspension: 'Suspension', long_leave: 'Long leave', not_employed: 'Not employed on that date', unknown: 'Unknown code' };
+const FIELDS = [
+  ['employee_code', 'Employee code', 'Emp Code'], ['employee_name', 'Employee name', 'First Name, Last Name'], ['mobile', 'Mobile number', 'Mobile No'],
+  ['attendance_status', 'Attendance status', ''], ['email', 'Email', 'Email ID'], ['department', 'Department', 'Department'], ['branch', 'Branch', ''],
+  ['location', 'Location', 'Location'], ['designation', 'Designation', 'Designation'], ['shift_code', 'Shift', ''], ['calendar_code', 'Calendar', ''],
+  ['manager_ref', 'Manager (code)', 'Reporting To'], ['manager_mobile', 'Manager mobile', ''], ['date_of_joining', 'Date of joining', 'DOJ'],
+  ['exit_date', 'Exit date', ''], ['employment_status', 'Employment status', ''], ['language', 'Language', ''],
+];
+const NOTES = { employee_name: 'Two columns? Separate with a comma: First Name, Last Name', attendance_status: 'Only when their file has a row for each day', manager_ref: "The manager's employee code, not their name", exit_date: 'Stops the agent ever ringing somebody who has left' };
+const REQ = ['employee_code', 'employee_name', 'mobile'];
+
+const pill = (tone) => ({ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px', borderRadius: 8, border: `1px solid ${BORDER[tone]}`, fontSize: 13.5, fontWeight: 600, whiteSpace: 'nowrap', background: TONE[tone][0], color: TONE[tone][1] });
+const SB = { border: 'none', height: 36, padding: '0 12px', borderRadius: 8, fontSize: 13.5, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
+const seg = (on) => on ? { ...SB, background: '#ffffff', color: '#123A70', fontWeight: 600, boxShadow: 'inset 0 0 0 1.5px #1E5AA9' } : { ...SB, background: 'transparent', color: '#3D4C63' };
+
+const EMPS = [
+  { id: 'e1', name: 'Aarav Sharma', code: 'TC1042', dept: 'Warehouse', mobile: '919812340142', channel: 'whatsapp', callMode: null, mode: null },
+  { id: 'e2', name: 'Priya Nair', code: 'TC1088', dept: 'Accounts', mobile: '919812340188', channel: 'whatsapp', callMode: null, mode: null },
+  { id: 'e3', name: 'Rohan Mehta', code: 'TC1107', dept: 'Sales', mobile: '919812340207', channel: 'voice', callMode: 'agent', mode: null },
+  { id: 'e4', name: 'Sneha Kulkarni', code: 'TC1123', dept: 'HR Ops', mobile: '919812340223', channel: 'whatsapp', callMode: null, mode: null },
+  { id: 'e5', name: 'Vikram Singh', code: 'TC1150', dept: 'Warehouse', mobile: '919812340250', channel: 'voice', callMode: 'keypad', mode: null },
+  { id: 'e6', name: 'Kavya Iyer', code: 'TC1166', dept: 'Design', mobile: null, channel: 'whatsapp', callMode: null, mode: null },
+  { id: 'e7', name: 'Imran Qureshi', code: 'TC1171', dept: 'Logistics', mobile: '919812340271', channel: 'whatsapp', callMode: null, mode: 'automatic' },
+  { id: 'e8', name: 'Meera Joshi', code: 'TC1194', dept: 'Sales', mobile: '919812340294', channel: 'whatsapp', callMode: null, mode: null },
+];
+const CASES = [
+  { id: 'c1', emp: 'e2', date: '2026-09-14', label: 'Mon 14 Sep · first half', raw: 'A|P', meaning: 'absent_first_half', status: 'asked', reply: null, ai: false, asked: '14 Sep, 10:30' },
+  { id: 'c2', emp: 'e3', date: '2026-09-14', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', status: 'answered', reply: 2, ai: true, asked: '14 Sep, 10:38', answered: '14 Sep, 10:42' },
+  { id: 'c3', emp: 'e4', date: '2026-09-14', label: 'Mon 14 Sep · second half', raw: 'P|A', meaning: 'absent_second_half', status: 'queued', reply: null },
+  { id: 'c4', emp: 'e5', date: '2026-09-14', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', status: 'needs_hr', reply: null, needsHr: 'Said “I was at the hospital” — not one of the four options', asked: '14 Sep, 10:31' },
+  { id: 'c5', emp: 'e7', date: '2026-09-14', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', status: 'resolved', reply: 3, asked: '14 Sep, 09:30', answered: '14 Sep, 09:51' },
+  { id: 'c6', emp: 'e8', date: '2026-09-14', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', status: 'awaiting_approval', reply: 3, asked: '14 Sep, 10:30', answered: '14 Sep, 11:05' },
+  { id: 'c7', emp: 'e3', date: '2026-09-11', label: 'Fri 11 Sep', raw: 'A', meaning: 'absent_full', status: 'asked', reply: null, asked: '12 Sep, 10:30' },
+  { id: 'c8', emp: 'e1', date: '2026-09-12', label: 'Sat 12 Sep', raw: 'A', meaning: 'absent_full', status: 'failed', reply: null, asked: '13 Sep, 10:30' },
+  { id: 'c9', emp: 'e6', date: '2026-09-11', label: 'Fri 11 Sep · half day', raw: 'HD', meaning: 'absent_half_unspecified', status: 'delivered', reply: null, asked: '12 Sep, 10:30' },
+];
+const FLAGGED = [
+  { emp: 'e1', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', caseId: null },
+  { emp: 'e2', label: 'Mon 14 Sep · first half', raw: 'A|P', meaning: 'absent_first_half', caseId: 'c1' },
+  { emp: 'e3', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', caseId: 'c2' },
+  { emp: 'e4', label: 'Mon 14 Sep · second half', raw: 'P|A', meaning: 'absent_second_half', caseId: 'c3' },
+  { emp: 'e5', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', caseId: 'c4' },
+  { emp: 'e6', label: 'Mon 14 Sep · half day', raw: 'HD', meaning: 'absent_half_unspecified', caseId: null },
+  { emp: 'e7', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', caseId: 'c5' },
+  { emp: 'e8', label: 'Mon 14 Sep', raw: 'A', meaning: 'absent_full', caseId: 'c6' },
+];
+const MSGS = {
+  c1: [{ dir: 'out', text: 'Hi Priya, our records show you as absent for the first half on Mon 14 Sep. Could you tell us what happened?', options: 'Yes, I was absent · No, I was working · Already applied leave · Sent regularisation', meta: '14 Sep, 10:30 · template · read' }],
+  c2: [
+    { dir: 'out', text: 'Hello Rohan, this is the attendance assistant from DPOD Lifestyle. Our records show you absent on Monday the 14th. Were you at work that day?', meta: 'agent, on the call · 14 Sep, 10:38' },
+    { dir: 'in', text: 'I was working, I was at a client site in Andheri all day.', meta: 'employee · 14 Sep, 10:39' },
+    { dir: 'out', text: 'Thanks. Since you were working, please raise a regularisation request in TimeOffice for the 14th. You also have one more date pending — Friday the 11th.', meta: 'agent, on the call · 14 Sep, 10:40' },
+  ],
+  c4: [
+    { dir: 'out', text: 'Hi Vikram, our records show you as absent on Mon 14 Sep. Press 1 if you were absent, 2 if you were working…', meta: 'agent, on the call · 14 Sep, 10:31' },
+    { dir: 'in', text: 'I was at the hospital', meta: 'employee · 14 Sep, 10:32' },
+  ],
+  c6: [
+    { dir: 'out', text: 'Hi Meera, our records show you as absent on Mon 14 Sep. Could you tell us what happened?', options: 'Yes, I was absent · No, I was working · Already applied leave · Sent regularisation', meta: '14 Sep, 10:30 · template · read' },
+    { dir: 'in', text: 'Already applied leave', meta: '14 Sep, 11:05 · interactive' },
+    { dir: 'out', text: 'Thanks Meera. Your manager Arjun Rao has been asked to approve the leave for 14 Sep.', meta: '14 Sep, 11:05 · text · delivered' },
+  ],
+};
+
+class Component extends DCLogic {
+  state = {
+    screen: 'dashboard', emps: EMPS, cases: CASES, flagged: FLAGGED, msgs: MSGS,
+    sel: Object.fromEntries(FLAGGED.map((r) => { const c = CASES.find((x) => x.id === r.caseId); return [r.emp, !c || c.status === 'queued']; })),
+    notice: null, caseFilter: 'open', q: '', caseId: 'c1', simText: '',
+    tenant: 'DPOD Lifestyle', sending: true, mode: 'manual', checkTime: '09:30', followUpDays: 2,
+    layout: 'column_per_day', separator: '|',
+    codes: [
+      { code: 'P', meaning: 'present', chase: false }, { code: 'A', meaning: 'absent_full', chase: false }, { code: 'HD', meaning: 'absent_half_unspecified', chase: false },
+      { code: 'WO', meaning: 'weekly_off', chase: false }, { code: 'H', meaning: 'holiday', chase: false }, { code: 'L', meaning: 'leave_approved', chase: false }, { code: 'MIS', meaning: 'missed_punch', chase: true },
+    ],
+    unmapped: [{ code: 'SL', seen: 6, meaning: 'unknown' }, { code: 'ODX', seen: 2, meaning: 'unknown' }],
+    docs: [
+      { id: 'd1', title: 'Leave policy 2026', file: 'DPOD_Leave_Policy_2026.pdf', when: '02 Sep, 14:12', topic: 'leave', status: 'ready', passages: 42 },
+      { id: 'd2', title: 'Attendance & regularisation', file: 'Attendance_SOP.pdf', when: '02 Sep, 14:15', topic: 'attendance', status: 'ready', passages: 18 },
+      { id: 'd3', title: 'Exit and notice period', file: 'Exit_Policy_scan.pdf', when: '14 Sep, 09:58', topic: 'exit', status: 'processing' },
+    ],
+    question: '', askedQ: '', answer: '', newDocTitle: '', newDocTopic: 'other',
+    loginEmail: 'hr@dpod-lifestyle.test', loginPw: '', loginError: false,
+  };
+
+  emp(id) { return this.state.emps.find((e) => e.id === id); }
+  caseOf(id) { return this.state.cases.find((c) => c.id === id); }
+  updEmp(id, patch) { this.setState((s) => ({ emps: s.emps.map((e) => (e.id === id ? { ...e, ...patch } : e)) })); }
+  updCase(id, patch) { this.setState((s) => ({ cases: s.cases.map((c) => (c.id === id ? { ...c, ...patch } : c)) })); }
+  go(screen) { this.setState({ screen, notice: null }); window.scrollTo(0, 0); }
+  note(tone, text) { this.setState({ notice: { tone, text } }); }
+  addMsg(id, m) { this.setState((s) => ({ msgs: { ...s.msgs, [id]: [...(s.msgs[id] || []), m] } })); }
+
+  switches(e) {
+    const st = this.state;
+    const cm = e.callMode ?? 'keypad';
+    const om = e.mode ?? st.mode;
+    return {
+      waS: seg(e.channel === 'whatsapp'), callS: seg(e.channel === 'voice'),
+      keyS: seg(cm === 'keypad'), talkS: seg(cm === 'agent'), cmOpacity: e.channel === 'voice' ? 1 : 0.45,
+      manS: seg(om === 'manual'), autoS: seg(om === 'automatic'),
+      modeTitle: e.mode ? 'Set for this person, whatever the customer default is' : `Following the customer default (${st.mode})`,
+      setWa: () => this.updEmp(e.id, { channel: 'whatsapp' }), setCall: () => this.updEmp(e.id, { channel: 'voice' }),
+      setKey: () => this.updEmp(e.id, { callMode: 'keypad' }), setTalk: () => this.updEmp(e.id, { callMode: 'agent' }),
+      setMan: () => this.updEmp(e.id, { mode: 'manual' }), setAuto: () => this.updEmp(e.id, { mode: 'automatic' }),
+      waTitle: `Contact ${e.name} by WhatsApp`, callTitle: `Contact ${e.name} by call`,
+    };
+  }
+
+  contactSelected() {
+    const st = this.state;
+    const targets = st.flagged.filter((r) => st.sel[r.emp]);
+    if (!targets.length) return this.note('err', 'Nothing sent: no one is selected.');
+    if (!st.sending) return this.note('err', `Nothing sent: sending is switched off for ${st.tenant}.`);
+    let cases = [...st.cases]; const flagged = st.flagged.map((r) => {
+      if (!st.sel[r.emp]) return r;
+      if (r.caseId) { cases = cases.map((c) => (c.id === r.caseId ? { ...c, status: 'asked', asked: '14 Sep, 12:04' } : c)); return r; }
+      const id = 'n' + r.emp; cases.push({ id, emp: r.emp, date: '2026-09-14', label: r.label, raw: r.raw, meaning: r.meaning, status: 'asked', reply: null, asked: '14 Sep, 12:04' });
+      return { ...r, caseId: id };
+    });
+    const n = targets.length;
+    this.setState({ cases, flagged, sel: Object.fromEntries(flagged.map((r) => [r.emp, false])), notice: { tone: 'ok', text: `Contacted ${n} ${n === 1 ? 'person' : 'people'}.` } });
+  }
+
+  simulate(caseId, n, free) {
+    const c = this.caseOf(caseId); const e = this.emp(c.emp); const onCall = e.channel === 'voice';
+    const text = free || OPTIONS[n].title;
+    this.addMsg(caseId, { dir: 'in', text, meta: onCall ? 'employee · now' : 'now · ' + (free ? 'text' : 'interactive') });
+    if (n) {
+      this.addMsg(caseId, { dir: 'out', text: `Thanks ${e.name.split(' ')[0]}. Next step: ${OPTIONS[n].action.toLowerCase()}.`, meta: onCall ? 'agent, on the call · now' : 'now · text · sent' });
+      this.updCase(caseId, { status: n >= 3 ? 'awaiting_approval' : 'answered', reply: n, answered: '14 Sep, 12:10' });
+    } else {
+      this.updCase(caseId, { status: 'answered', reply: 1, ai: true, answered: '14 Sep, 12:10' });
+      this.addMsg(caseId, { dir: 'out', text: 'Understood — I have recorded that you were absent. Please apply leave or unpaid leave for that date.', meta: onCall ? 'agent, on the call · now' : 'now · text · sent' });
+    }
+    this.setState({ simText: '' });
+  }
+
+  renderVals() {
+    const st = this.state;
+    const dry = this.props.dryRun ?? true;
+    const admin = this.props.platformAdmin ?? true;
+    const compact = (this.props.density ?? 'comfortable') === 'compact';
+    const sc = st.screen;
+    const statusOf = (c) => STATUS[c.status] || [c.status, 'idle'];
+    const openCount = st.cases.filter((c) => !['resolved', 'cancelled'].includes(c.status)).length;
+
+    const navDefs = [['dashboard', 'Dashboard', 'M3 3h7v9H3z M14 3h7v5h-7z M14 12h7v9h-7z M3 16h7v5H3z'], ['cases', 'Follow-up cases', 'M9 2h6v4H9z M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2 M9 14l2 2 4-4', openCount], ['mapping', 'Mapping & import', 'M8 3 4 7l4 4 M4 7h16 M16 21l4-4-4-4 M20 17H4'], ['knowledge', 'Guidelines', 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z'], ['settings', 'Settings', 'M21 4h-7 M10 4H3 M21 12h-9 M8 12H3 M21 20h-5 M12 20H3 M14 2v4 M8 10v4 M16 18v4']];
+    if (admin) navDefs.push(['admin', 'All customers', 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75']);
+    const nav = navDefs.map(([k, label, icon, count]) => {
+      const active = sc === k || (k === 'cases' && sc === 'case');
+      return { label, icon, count, hasCount: count != null, go: () => this.go(k), iconColor: active ? '#0E1726' : '#56657D',
+        style: { display: 'flex', alignItems: 'center', gap: 14, width: '100%', height: 48, padding: '0 14px', borderRadius: 10, border: 'none', textAlign: 'left', fontSize: 15.3, fontWeight: active ? 600 : 500, cursor: 'pointer', background: active ? '#E8F0FA' : 'transparent', boxShadow: active ? 'inset 4px 0 0 #1E5AA9' : 'none', color: active ? '#123A70' : '#26344A', fontFamily: 'inherit' } };
+    });
+
+    const green = '#10653C', amber = '#C98A2B', grey = '#78869C', red = '#A01B14';
+    const flags = [
+      { text: dry ? 'Dry run · nothing is delivered' : 'Live · messages and calls go out', dot: dry ? amber : green },
+      { text: st.sending ? 'Sending enabled' : 'Sending switched off', dot: st.sending ? green : red },
+      { text: 'AI: anthropic', dot: green },
+      { text: st.mode === 'automatic' ? `Automatic at ${st.checkTime} · except rows set to Manual` : 'Manual · nothing goes out on its own, whatever the rows say', dot: st.mode === 'automatic' ? green : grey },
+      { text: 'Calls from +91 80 4718 2200', dot: grey },
+    ];
+
+    const statusCount = (fn) => st.cases.filter(fn).length;
+    const needs = statusCount((c) => c.status === 'needs_hr');
+    const stats = [
+      { label: 'Total cases', value: st.cases.length, color: '#0E1726' },
+      { label: 'Awaiting reply', value: statusCount((c) => ['asked', 'delivered', 'read'].includes(c.status)), color: '#7A4205' },
+      { label: 'Answered', value: statusCount((c) => ['answered', 'awaiting_action', 'awaiting_approval'].includes(c.status)), color: '#0E1726' },
+      { label: 'Resolved', value: statusCount((c) => c.status === 'resolved'), color: '#0E1726' },
+      { label: 'Needs HR', value: needs, color: needs ? '#A01B14' : '#0E1726' },
+      { label: 'Employees', value: 28, color: '#0E1726' },
+    ];
+
+    const flagged = st.flagged.map((r) => {
+      const e = this.emp(r.emp); const c = r.caseId ? this.caseOf(r.caseId) : null; const d = c ? statusOf(c) : null;
+      return { ...e, ...this.switches(e), label: r.label, raw: r.raw, meaningText: MEANINGS[r.meaning],
+        mobileText: e.mobile ? '+' + e.mobile : 'No number', checked: !!st.sel[r.emp],
+        toggle: (ev) => { const v = ev.target.checked; this.setState((s) => ({ sel: { ...s.sel, [r.emp]: v } })); },
+        rowBg: st.sel[r.emp] ? '#E8F0FA' : '#ffffff',
+        hasStatus: !!d, noStatus: !d, pill: d ? pill(d[1]) : null, icon: d ? ICON[d[1]] : null, statusLabel: d ? d[0] : '',
+        hasCase: !!c, noCase: !c, open: () => this.setState({ screen: 'case', caseId: c.id, notice: null }) };
+    });
+    const selectedCount = Object.values(st.sel).filter(Boolean).length;
+    const notContacted = st.flagged.filter((r) => { const c = r.caseId && this.caseOf(r.caseId); return !c || c.status === 'queued'; }).length;
+
+    const filt = { open: (c) => !['resolved', 'cancelled'].includes(c.status), attention: (c) => ['needs_hr', 'failed'].includes(c.status), resolved: (c) => c.status === 'resolved', all: () => true };
+    const q = st.q.trim().toLowerCase();
+    const caseRows = st.cases.filter(filt[st.caseFilter]).filter((c) => { if (!q) return true; const e = this.emp(c.emp); return e.name.toLowerCase().includes(q) || e.code.toLowerCase().includes(q); })
+      .map((c) => { const e = this.emp(c.emp); const d = statusOf(c);
+        return { ...e, ...this.switches(e), label: c.label, raw: c.raw, pill: pill(d[1]), icon: ICON[d[1]], statusLabel: d[0], hasHr: !!c.needsHr, needsHr: c.needsHr,
+          hasReply: !!c.reply, noReply: !c.reply, reply: c.reply ? `${c.reply} · ${OPTIONS[c.reply].label}` : '', action: c.reply ? OPTIONS[c.reply].action : '', ai: !!c.ai,
+          at: c.answered || c.asked || '', canSend: ['queued', 'failed'].includes(c.status), sendLabel: e.channel === 'voice' ? 'Call now' : 'Send now',
+          send: () => { if (!st.sending) return this.note('err', `Nothing sent: sending is switched off for ${st.tenant}.`); this.updCase(c.id, { status: 'asked', asked: '14 Sep, 12:04' }); this.note('ok', `Contacted ${e.name}.`); },
+          open: () => this.setState({ screen: 'case', caseId: c.id, notice: null }) }; });
+    const caseTabs = [['open', 'Open'], ['attention', 'Needs HR'], ['resolved', 'Resolved'], ['all', 'All']].map(([k, label]) => ({ label, count: st.cases.filter(filt[k]).length, style: seg(st.caseFilter === k), go: () => this.setState({ caseFilter: k }) }));
+
+    const c = this.caseOf(st.caseId) || st.cases[0]; const ce = this.emp(c.emp); const cdS = statusOf(c); const onCall = ce.channel === 'voice';
+    const bubble = (dir) => ({ maxWidth: '82%', padding: '10px 14px', borderRadius: 14, fontSize: 15.3, alignSelf: dir === 'out' ? 'flex-end' : 'flex-start', background: dir === 'out' ? '#E4F2F2' : '#ffffff', border: dir === 'out' ? '1px solid #B8DEDE' : '1px solid #DDE3EC', borderBottomRightRadius: dir === 'out' ? 4 : 12, borderBottomLeftRadius: dir === 'out' ? 12 : 4 });
+    const msgs = (st.msgs[c.id] || []).map((m) => ({ ...m, style: bubble(m.dir), hasOptions: !!m.options }));
+    const reminder = !!c.answered && c.status !== 'resolved';
+    const others = st.cases.filter((x) => x.emp === c.emp && x.id !== c.id && !['resolved', 'cancelled'].includes(x.status)).sort((a, b) => a.date.localeCompare(b.date));
+    const cd = {
+      name: ce.name, code: ce.code, dept: ce.dept, pill: pill(cdS[1]), icon: ICON[cdS[1]], statusLabel: cdS[0], label: c.label, meaningText: MEANINGS[c.meaning], raw: c.raw,
+      phoneLine: (onCall ? 'On the phone · ' : '') + (ce.mobile ? '+' + ce.mobile : 'No number on record'),
+      msgs, empty: !msgs.length, onCall, manager: 'Arjun Rao', contactBy: onCall ? 'Call' : 'WhatsApp',
+      asked: c.asked || '—', answered: (c.answered || 'Not yet') + (c.ai ? '  · AI' : ''), reply: c.reply ? `${c.reply} · ${OPTIONS[c.reply].label}` : '—', action: c.reply ? OPTIONS[c.reply].action : '—',
+      hasHr: !!c.needsHr, needsHr: c.needsHr,
+      sendLabel: reminder ? (onCall ? 'Call about the action' : 'Send the reminder') : onCall ? 'Call now' : 'Send now',
+      simTitle: onCall ? 'Simulate the call' : "Simulate the employee's reply", simPlaceholder: onCall ? 'Or say something, e.g. "I was working"' : 'Type anything, e.g. "I was sick"', simBtn: onCall ? 'Speak' : 'Send',
+      simOpts: [1, 2, 3, 4].map((n) => ({ n: onCall ? `Press ${n}` : n, text: OPTIONS[n].title, go: () => this.simulate(c.id, n) })),
+      showApproval: c.status === 'awaiting_approval' && !onCall, showOffer: c.status === 'awaiting_action' && !onCall, showFollowUp: false,
+      hasCalls: onCall && msgs.length > 0, callsHint: onCall ? 'This employee is set to Call' : 'Earlier calls',
+      hasActions: c.reply === 2, actionType: 'apply regularisation', actionStatus: 'awaiting employee',
+      hasPending: others.length > 0, pending: others.map((o) => ({ date: o.date, status: statusOf(o)[0], open: () => this.setState({ caseId: o.id }) })),
+    };
+
+    const mOpts = Object.entries(MEANINGS).map(([value, label]) => ({ value, label: value === 'unknown' ? 'Not recognised — never chase' : label }));
+    const codes = st.codes.map((row, i) => ({ ...row,
+      setCode: (ev) => { const v = ev.target.value; this.setState((s) => ({ codes: s.codes.map((r, j) => (j === i ? { ...r, code: v } : r)) })); },
+      setMeaning: (ev) => { const v = ev.target.value; this.setState((s) => ({ codes: s.codes.map((r, j) => (j === i ? { ...r, meaning: v } : r)) })); },
+      toggleChase: (ev) => { const v = ev.target.checked; this.setState((s) => ({ codes: s.codes.map((r, j) => (j === i ? { ...r, chase: v } : r)) })); },
+      remove: () => this.setState((s) => ({ codes: s.codes.filter((_, j) => j !== i) })) }));
+    const unmapped = st.unmapped.map((u, i) => ({ ...u,
+      setMeaning: (ev) => { const v = ev.target.value; this.setState((s) => ({ unmapped: s.unmapped.map((r, j) => (j === i ? { ...r, meaning: v } : r)) })); },
+      save: () => this.setState((s) => ({ unmapped: s.unmapped.filter((_, j) => j !== i), codes: [...s.codes, { code: u.code, meaning: u.meaning, chase: false }] })) }));
+
+    const docs = st.docs.map((d) => { const t = d.status === 'ready' ? 'done' : d.status === 'failed' ? 'call' : 'waiting'; return { ...d, pill: pill(t), icon: ICON[t],
+      state: d.status === 'ready' ? `${d.passages} passages` : d.status === 'failed' ? 'Could not be read' : 'Reading…',
+      remove: () => this.setState((s) => ({ docs: s.docs.filter((x) => x.id !== d.id) })) }; });
+
+    const cardOpt = (on) => ({ textAlign: 'left', padding: '14px 16px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', color: '#0E1726', background: on ? '#E8F0FA' : '#ffffff', border: on ? '2px solid #1E5AA9' : '1px solid #78869C' });
+    const tp = (on, t) => pill(on ? t : 'idle');
+    const tenants = [
+      { name: 'DPOD Lifestyle', slug: 'dpod-lifestyle', employees: 28, cases: st.cases.length, awaiting: stats[1].value, attention: needs, sending: st.sending, auto: st.mode === 'automatic', time: st.checkTime, actions: true, cap: 0 },
+      { name: 'Northwind Retail', slug: 'northwind-retail', employees: 64, cases: 31, awaiting: 12, attention: 0, sending: true, auto: true, time: '10:00', actions: true, cap: 3 },
+      { name: 'Sunrise Logistics', slug: 'sunrise-logistics', employees: 112, cases: 0, awaiting: 0, attention: 0, sending: false, auto: false, actions: false, cap: 0 },
+    ].map((t) => ({ ...t, hrPill: tp(t.attention > 0, 'call'), sendPill: tp(t.sending, 'done'), sendText: t.sending ? 'On' : 'Off', modePill: tp(t.auto, 'done'), modeText: t.auto ? 'Automatic' : 'Manual', checkTime: t.auto ? t.time : '', actPill: tp(t.actions, 'done'), actText: t.actions ? 'On' : 'Off', cap: t.cap || 'none' }));
+
+    const nt = st.notice;
+    const nTone = nt ? (nt.tone === 'ok' ? ['#E7F4EC', '#B5DDC5', '#10653C'] : ['#FDECEA', '#F4C2BD', '#A01B14']) : null;
+
+    return {
+      isLogin: sc === 'login', isApp: sc !== 'login', isAdmin: admin,
+      s: { dashboard: sc === 'dashboard', cases: sc === 'cases', case: sc === 'case', mapping: sc === 'mapping', knowledge: sc === 'knowledge', settings: sc === 'settings', admin: sc === 'admin' && admin },
+      cellPad: compact ? '8px 16px' : '12px 16px',
+      nav, flags, stats, tenant: st.tenant, tenants, initials: 'HR', userLine: admin ? 'Platform admin · platform admin' : 'Neha Kapoor · hr manager',
+      switchTenant: (ev) => this.setState({ tenant: ev.target.value }),
+      signOut: () => this.setState({ screen: 'login', loginPw: '', loginError: false }),
+      loginEmail: st.loginEmail, loginPw: st.loginPw, loginError: st.loginError,
+      setLoginEmail: (ev) => this.setState({ loginEmail: ev.target.value }), setLoginPw: (ev) => this.setState({ loginPw: ev.target.value }),
+      signIn: () => (st.loginPw === 'attendance123' || st.loginPw === '' ? this.setState({ screen: 'dashboard', loginError: false }) : this.setState({ loginError: true })),
+      hasNotice: !!nt, noticeText: nt ? nt.text : '', clearNotice: () => this.setState({ notice: null }),
+      noticeStyle: nTone ? { display: 'flex', gap: 12, alignItems: 'center', padding: '12px 16px', borderRadius: 10, background: nTone[0], border: `1px solid ${nTone[1]}`, color: nTone[2], marginBottom: 24, fontSize: 15.3, fontWeight: 500 } : {},
+      sendingOff: !st.sending, goSettings: (ev) => { ev && ev.preventDefault(); this.go('settings'); }, goCases: (ev) => { ev && ev.preventDefault(); this.go('cases'); },
+      flagged, flaggedCount: flagged.length, notContactedCount: notContacted, selectedCount,
+      allSelected: selectedCount === flagged.length && flagged.length > 0,
+      toggleAll: (ev) => { const v = ev.target.checked; this.setState((s) => ({ sel: Object.fromEntries(s.flagged.map((r) => [r.emp, v])) })); },
+      contactSelected: () => this.contactSelected(),
+      checkTime: st.checkTime, followUpDays: st.followUpDays,
+      runReminders: () => this.note('ok', `No day-${st.followUpDays} reminders were due.`),
+      resetAll: () => this.setState({ cases: [], flagged: st.flagged.map((r) => ({ ...r, caseId: null })), msgs: {}, sel: Object.fromEntries(st.flagged.map((r) => [r.emp, true])), notice: { tone: 'ok', text: 'Every case and conversation was cleared. Employees and attendance stay.' } }),
+      conn: { wa: dry ? 'Simulator' : 'Meta Cloud API', calls: dry ? 'Simulator' : 'Plivo', mode: dry ? 'Dry run (simulator)' : 'Live', delivery: dry ? 'Dry run — nothing reaches a real person' : 'Live' },
+      caseRows, noCases: !caseRows.length, caseTabs, caseCountText: `${caseRows.length} case${caseRows.length === 1 ? '' : 's'}`,
+      q: st.q, setQ: (ev) => this.setState({ q: ev.target.value }), resetFilters: () => this.setState({ q: '', caseFilter: 'open' }),
+      cd, simOn: dry, simOff: !dry, simText: st.simText, setSimText: (ev) => this.setState({ simText: ev.target.value }),
+      simFree: () => st.simText.trim() && this.simulate(c.id, null, st.simText.trim()),
+      approve: () => { this.addMsg(c.id, { dir: 'out', text: 'Arjun Rao approved the leave. Nothing more is needed from you.', meta: 'now · text · sent' }); this.updCase(c.id, { status: 'resolved' }); },
+      reject: () => { this.addMsg(c.id, { dir: 'out', text: 'Arjun Rao did not approve the leave. HR will be in touch.', meta: 'now · text · sent' }); this.updCase(c.id, { status: 'needs_hr', needsHr: 'Manager rejected the request' }); },
+      acceptOffer: () => this.updCase(c.id, { status: 'resolved' }), selfOffer: () => this.updCase(c.id, { status: 'answered' }),
+      fuDone: () => {}, fuNot: () => {}, fuHelp: () => {},
+      cdSend: () => { if (!st.sending) return this.note('err', `Nothing sent: sending is switched off for ${st.tenant}.`); this.updCase(c.id, { status: c.answered ? c.status : 'asked', asked: c.asked || '14 Sep, 12:04' }); this.note('ok', reminder ? 'Reminder sent.' : `Contacted ${ce.name}.`); },
+      cdClose: () => this.updCase(c.id, { status: 'resolved', closeReason: 'Closed by HR' }),
+      cdFlag: () => this.updCase(c.id, { status: 'needs_hr', needsHr: 'Flagged by HR' }),
+      cdReset: () => { this.updCase(c.id, { status: 'queued', reply: null, answered: null, asked: null, ai: false, needsHr: null }); this.setState((s) => ({ msgs: { ...s.msgs, [c.id]: [] } })); },
+      meaningOpts: mOpts, codes, unmapped, hasUnmapped: unmapped.length > 0,
+      fields: FIELDS.map(([k, label, value]) => ({ label, value, req: REQ.includes(k), note: NOTES[k], hasNote: !!NOTES[k] })),
+      isColLayout: st.layout === 'column_per_day', isRowLayout: st.layout === 'row_per_day',
+      colLayoutS: seg(st.layout === 'column_per_day'), rowLayoutS: seg(st.layout === 'row_per_day'),
+      setColLayout: () => this.setState({ layout: 'column_per_day' }), setRowLayout: () => this.setState({ layout: 'row_per_day' }),
+      separator: st.separator, hasSeparator: !!st.separator, setSeparator: (ev) => this.setState({ separator: ev.target.value }),
+      layoutText: st.layout.replace(/_/g, ' '), statusLayoutText: st.separator ? 'two session' : 'single code',
+      addCode: () => this.setState((s) => ({ codes: [...s.codes, { code: '', meaning: 'absent_full', chase: false }] })),
+      saveMapping: () => { this.note('ok', 'Mapping saved and in use.'); window.scrollTo(0, 0); },
+      doImport: () => this.note('ok', 'Imported 392 days for 28 employees from DPOD_Sep_2026.xlsx. 2 rows skipped.'),
+      imports: [
+        { when: '14 Sep, 09:12', source: 'upload', file: 'DPOD_Sep_2026.xlsx', range: '2026-09-01 → 2026-09-14', result: '392 days · 0 new employees', rejected: '2 rows rejected' },
+        { when: '01 Sep, 18:40', source: 'upload', file: 'DPOD_Aug_2026.xlsx', range: '2026-08-01 → 2026-08-31', result: '868 days · 28 new employees', rejected: '' },
+      ],
+      staff: st.emps.map((e) => ({ name: e.name, code: e.code })),
+      docs, noDocs: !docs.length, docsReady: st.docs.filter((d) => d.status === 'ready').length, docsTotal: st.docs.length,
+      question: st.question, setQuestion: (ev) => this.setState({ question: ev.target.value }),
+      ask: () => { const qq = st.question.trim() || 'How much notice do I have to give when resigning?'; this.setState({ askedQ: qq, answer: 'The exit policy is still being read, so I can’t answer that from your guidelines yet. I’ll refer this to HR.' }); },
+      hasAnswer: !!st.askedQ, askedQ: st.askedQ, answer: st.answer,
+      newDocTitle: st.newDocTitle, setNewDocTitle: (ev) => this.setState({ newDocTitle: ev.target.value }),
+      newDocTopic: st.newDocTopic, setNewDocTopic: (ev) => this.setState({ newDocTopic: ev.target.value }),
+      addDoc: () => this.setState((s) => ({ docs: [{ id: 'd' + Date.now(), title: s.newDocTitle || 'Untitled guideline', file: 'upload.pdf', when: '14 Sep, 12:20', topic: s.newDocTopic, status: 'processing' }, ...s.docs], newDocTitle: '' })),
+      sending: st.sending, toggleSending: () => this.setState((s) => ({ sending: !s.sending })),
+      switchBg: st.sending ? '#1E5AA9' : '#78869C', switchJustify: st.sending ? 'flex-end' : 'flex-start', masterBg: st.sending ? '#ffffff' : '#FDECEA',
+      manualCard: cardOpt(st.mode === 'manual'), autoCard: cardOpt(st.mode === 'automatic'),
+      setManual: () => this.setState({ mode: 'manual' }), setAutomatic: () => this.setState({ mode: 'automatic' }),
+      setCheckTime: (ev) => this.setState({ checkTime: ev.target.value }), setFollowUp: (ev) => this.setState({ followUpDays: ev.target.value }),
+      canEdit: !(this.props.readOnly ?? false), readOnly: this.props.readOnly ?? false,
+      saveSettings: () => { this.note('ok', 'Settings saved.'); window.scrollTo(0, 0); },
+    };
+  }
+}
+</script>
+</body>
+</html>

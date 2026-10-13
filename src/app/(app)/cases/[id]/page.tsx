@@ -5,6 +5,8 @@ import { caseDetail } from '@/lib/queries';
 import { actionLabel, caseDateLabel, formatTime, meaningLabel, replyLabel, statusDisplay } from '@/lib/display';
 import { OPTIONS, OPTION_NUMBERS } from '@/lib/conversation/flow';
 import { env } from '@/lib/env';
+import { Notice } from '@/components/notice';
+import { StatusPill } from '@/components/status-pill';
 import { closeCase, contactNow, flagForHr, resetCase, simulateCallAnswer, simulateReply } from '@/app/actions';
 import { callPurposeFor } from '@/lib/voice/session';
 
@@ -30,10 +32,8 @@ export default async function CaseDetailPage({
   // Contacting someone about a date they have already answered means the day-2
   // reminder, so the button should not promise to ask the first question again.
   const reminder = callPurposeFor(caseRow) === 'follow_up';
-  const liveCall = calls.find((c) => ['queued', 'ringing', 'in_progress', 'simulated'].includes(c.status));
   // For a voice case the call transcript *is* the conversation.
   const callTurns = calls.flatMap((c) => c.transcript ?? []).sort((a, b) => a.at.localeCompare(b.at));
-  const display = statusDisplay(caseRow.status);
   const label = caseDateLabel(caseRow.attDate, caseRow.meaning);
   const answered = Boolean(caseRow.answeredAt);
   const pendingApproval = approvals.find((a) => a.decision === 'pending');
@@ -41,175 +41,189 @@ export default async function CaseDetailPage({
   return (
     <>
       {blocked ? (
-        <div className="notice err" style={{ marginTop: 16 }}>
+        <Notice tone="err" clear={['blocked']}>
           Nothing was sent: {blocked}.
-        </div>
+        </Notice>
       ) : null}
+
       <section className="page-head">
-        <div className="eyebrow">
-          <Link href="/cases">← All cases</Link>
+        <Link className="back-link" href="/cases">
+          ← All cases
+        </Link>
+        <div className="title-row">
+          <h1>{employee.fullName}</h1>
+          <StatusPill status={caseRow.status} />
         </div>
-        <h1>{employee.fullName}</h1>
-        <p>
-          {label} · {meaningLabel(caseRow.meaning)} · <span className={`pill ${display.tone}`}>{display.label}</span>
+        <p style={{ marginTop: 6 }}>
+          {label} · {meaningLabel(caseRow.meaning)}
         </p>
       </section>
 
       <div className="layout">
-        <div>
-          <section className="card pad">
-            <div className="section-head">
-              <h2>Conversation</h2>
-              <span className="hint">
-                {onCall ? 'On the phone · ' : ''}
-                {employee.mobileE164 ? `+${employee.mobileE164}` : 'No number on record'}
-              </span>
-            </div>
-            <div className="chat">
-              {/* Reversed inside a column-reverse box: reads in order, opens at the newest. */}
-              {onCall && !transcript.length && callTurns.length ? (
-                [...callTurns].reverse().map((turn, index) => (
-                  <div key={index} className={`bubble ${turn.role === 'agent' ? 'outbound' : 'inbound'}`}>
-                    {turn.text}
-                    <span className="meta">
-                      {turn.role === 'agent' ? 'agent, on the call' : 'employee'} · {formatTime(turn.at)}
-                    </span>
-                  </div>
-                ))
-              ) : transcript.length ? (
-                [...transcript].reverse().map((message) => (
-                  <div key={message.id} className={`bubble ${message.direction}`}>
-                    {message.body}
-                    {message.buttons?.length ? (
-                      <span className="options">{message.buttons.map((b) => b.title).join(' · ')}</span>
-                    ) : null}
-                    <span className="meta">
-                      {formatTime(message.createdAt)} · {message.kind}
-                      {message.status ? ` · ${message.status}` : ''}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="bubble outbound">Nothing has been sent yet.</div>
-              )}
-            </div>
-
-            {env.DRY_RUN && onCall ? (
-              <div className="sim">
-                <div className="sim-title">Simulate the call (dry run)</div>
-                <p className="hint" style={{ marginBottom: 8 }}>
-                  What the employee presses on the keypad. Answering here runs the same flow a real call does, including
-                  the summary and the next pending date.
-                </p>
-                <div className="sim-grid">
-                  {OPTION_NUMBERS.map((n) => (
-                    <form key={n} action={simulateCallAnswer}>
-                      <input type="hidden" name="caseId" value={caseRow.id} />
-                      <input type="hidden" name="digits" value={n} />
-                      <button className="btn small" type="submit" style={{ width: '100%' }}>
-                        Press {n} · {OPTIONS[n].listTitle}
-                      </button>
-                    </form>
-                  ))}
+        <section className="card flush">
+          <div className="card-head">
+            <h2>Conversation</h2>
+            <span className="hint mono">
+              {onCall ? 'On the phone · ' : ''}
+              {employee.mobileE164 ? `+${employee.mobileE164}` : 'No number on record'}
+            </span>
+          </div>
+          <div className="chat">
+            {/* Reversed inside a column-reverse box: reads in order, opens at the newest. */}
+            {onCall && !transcript.length && callTurns.length ? (
+              [...callTurns].reverse().map((turn, index) => (
+                <div key={index} className={`bubble ${turn.role === 'agent' ? 'outbound' : 'inbound'}`}>
+                  {turn.text}
+                  <span className="meta">
+                    {turn.role === 'agent' ? 'agent, on the call' : 'employee'} · {formatTime(turn.at)}
+                  </span>
                 </div>
-                <form action={simulateCallAnswer} className="sim-text">
-                  <input type="hidden" name="caseId" value={caseRow.id} />
-                  <input className="input" name="speech" placeholder='Or say something, e.g. "I was working"' required />
-                  <button className="btn small primary" type="submit">
-                    Speak
-                  </button>
-                </form>
-              </div>
-            ) : env.DRY_RUN ? (
-              <div className="sim">
-                <div className="sim-title">Simulate the employee&apos;s reply (dry run)</div>
-                <div className="sim-grid">
-                  {OPTION_NUMBERS.map((n) => (
-                    <form key={n} action={simulateReply}>
-                      <input type="hidden" name="caseId" value={caseRow.id} />
-                      <input type="hidden" name="option" value={n} />
-                      <input type="hidden" name="text" value={OPTIONS[n].listTitle} />
-                      <button className="btn small" type="submit" style={{ width: '100%' }}>
-                        {n} · {OPTIONS[n].listTitle}
-                      </button>
-                    </form>
-                  ))}
+              ))
+            ) : transcript.length ? (
+              [...transcript].reverse().map((message) => (
+                <div key={message.id} className={`bubble ${message.direction}`}>
+                  {message.body}
+                  {message.buttons?.length ? (
+                    <span className="options">{message.buttons.map((b) => b.title).join(' · ')}</span>
+                  ) : null}
+                  <span className="meta">
+                    {formatTime(message.createdAt)} · {message.kind}
+                    {message.status ? ` · ${message.status}` : ''}
+                  </span>
                 </div>
-                <form action={simulateReply} className="sim-text">
-                  <input type="hidden" name="caseId" value={caseRow.id} />
-                  <input className="input" name="text" placeholder='Type anything, e.g. "I was sick"' required />
-                  <button className="btn small primary" type="submit">
-                    Send
-                  </button>
-                </form>
-
-                {pendingApproval && manager?.mobileE164 ? (
-                  <>
-                    <div className="sim-title" style={{ marginTop: 14 }}>
-                      Simulate {manager.fullName}&apos;s decision
-                    </div>
-                    <div className="sim-grid">
-                      {(['approve', 'reject'] as const).map((choice) => (
-                        <form key={choice} action={simulateReply}>
-                          <input type="hidden" name="caseId" value={caseRow.id} />
-                          <input type="hidden" name="from" value={manager.mobileE164 ?? ''} />
-                          <input type="hidden" name="selection" value={`appr:${pendingApproval.id}:${choice}`} />
-                          <button className="btn small" type="submit" style={{ width: '100%' }}>
-                            {choice === 'approve' ? 'Approve' : 'Reject'}
-                          </button>
-                        </form>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-
-                {caseRow.status === 'awaiting_action' ? (
-                  <>
-                    <div className="sim-title" style={{ marginTop: 14 }}>
-                      Answer the agent&apos;s offer
-                    </div>
-                    <div className="sim-grid">
-                      {(['accept', 'self'] as const).map((choice) => (
-                        <form key={choice} action={simulateReply}>
-                          <input type="hidden" name="caseId" value={caseRow.id} />
-                          <input type="hidden" name="selection" value={`offer:${caseRow.id}:${choice}`} />
-                          <button className="btn small" type="submit" style={{ width: '100%' }}>
-                            {choice === 'accept' ? 'Yes, apply it' : "I'll do it myself"}
-                          </button>
-                        </form>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-
-                {caseRow.followUpSentAt && !caseRow.followUpReply ? (
-                  <>
-                    <div className="sim-title" style={{ marginTop: 14 }}>
-                      Answer the day-2 reminder
-                    </div>
-                    <div className="sim-grid">
-                      {(['done', 'not_done', 'help'] as const).map((choice) => (
-                        <form key={choice} action={simulateReply}>
-                          <input type="hidden" name="caseId" value={caseRow.id} />
-                          <input type="hidden" name="selection" value={`fu:${caseRow.id}:${choice}`} />
-                          <button className="btn small" type="submit" style={{ width: '100%' }}>
-                            {choice === 'done' ? 'Done' : choice === 'not_done' ? 'Not done' : 'Need help'}
-                          </button>
-                        </form>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-              </div>
+              ))
             ) : (
-              <div className="notice info" style={{ margin: '14px 0 0' }}>
-                Simulation is disabled because the platform is live. Replies arrive through the webhook.
-              </div>
+              <div className="chat-empty">Nothing has been sent yet.</div>
             )}
-          </section>
-        </div>
+          </div>
 
-        <aside>
+          {env.DRY_RUN && onCall ? (
+            <div className="sim">
+              <div className="sim-title">
+                <span className="chip warn mono caps">Dry run</span>
+                Simulate the call
+              </div>
+              <p className="hint" style={{ marginBottom: 10 }}>
+                What the employee presses on the keypad. Answering here runs the same flow a real call does, including the
+                summary and the next pending date.
+              </p>
+              <div className="sim-grid">
+                {OPTION_NUMBERS.map((n) => (
+                  <form key={n} action={simulateCallAnswer}>
+                    <input type="hidden" name="caseId" value={caseRow.id} />
+                    <input type="hidden" name="digits" value={n} />
+                    <button className="btn sim-option" type="submit">
+                      <span className="n">Press {n}</span>
+                      {OPTIONS[n].listTitle}
+                    </button>
+                  </form>
+                ))}
+              </div>
+              <form action={simulateCallAnswer} className="sim-text">
+                <input type="hidden" name="caseId" value={caseRow.id} />
+                <input
+                  className="input"
+                  name="speech"
+                  aria-label="What the employee says"
+                  placeholder='Or say something, e.g. "I was working"'
+                  required
+                />
+                <button className="btn primary" type="submit">
+                  Speak
+                </button>
+              </form>
+            </div>
+          ) : env.DRY_RUN ? (
+            <div className="sim">
+              <div className="sim-title">
+                <span className="chip warn mono caps">Dry run</span>
+                Simulate the employee&apos;s reply
+              </div>
+              <div className="sim-grid">
+                {OPTION_NUMBERS.map((n) => (
+                  <form key={n} action={simulateReply}>
+                    <input type="hidden" name="caseId" value={caseRow.id} />
+                    <input type="hidden" name="option" value={n} />
+                    <input type="hidden" name="text" value={OPTIONS[n].listTitle} />
+                    <button className="btn sim-option" type="submit">
+                      <span className="n">{n}</span>
+                      {OPTIONS[n].listTitle}
+                    </button>
+                  </form>
+                ))}
+              </div>
+              <form action={simulateReply} className="sim-text">
+                <input type="hidden" name="caseId" value={caseRow.id} />
+                <input
+                  className="input"
+                  name="text"
+                  aria-label="What the employee writes"
+                  placeholder='Type anything, e.g. "I was sick"'
+                  required
+                />
+                <button className="btn primary" type="submit">
+                  Send
+                </button>
+              </form>
+
+              {pendingApproval && manager?.mobileE164 ? (
+                <>
+                  <div className="sim-sub">Simulate {manager.fullName}&apos;s decision</div>
+                  <div className="sim-grid">
+                    {(['approve', 'reject'] as const).map((choice) => (
+                      <form key={choice} action={simulateReply}>
+                        <input type="hidden" name="caseId" value={caseRow.id} />
+                        <input type="hidden" name="from" value={manager.mobileE164 ?? ''} />
+                        <input type="hidden" name="selection" value={`appr:${pendingApproval.id}:${choice}`} />
+                        <button className="btn small" type="submit">
+                          {choice === 'approve' ? 'Approve' : 'Reject'}
+                        </button>
+                      </form>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
+              {caseRow.status === 'awaiting_action' ? (
+                <>
+                  <div className="sim-sub">Answer the agent&apos;s offer</div>
+                  <div className="sim-grid">
+                    {(['accept', 'self'] as const).map((choice) => (
+                      <form key={choice} action={simulateReply}>
+                        <input type="hidden" name="caseId" value={caseRow.id} />
+                        <input type="hidden" name="selection" value={`offer:${caseRow.id}:${choice}`} />
+                        <button className="btn small" type="submit">
+                          {choice === 'accept' ? 'Yes, apply it' : "I'll do it myself"}
+                        </button>
+                      </form>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
+              {caseRow.followUpSentAt && !caseRow.followUpReply ? (
+                <>
+                  <div className="sim-sub">Answer the day-2 reminder</div>
+                  <div className="sim-grid three">
+                    {(['done', 'not_done', 'help'] as const).map((choice) => (
+                      <form key={choice} action={simulateReply}>
+                        <input type="hidden" name="caseId" value={caseRow.id} />
+                        <input type="hidden" name="selection" value={`fu:${caseRow.id}:${choice}`} />
+                        <button className="btn small" type="submit">
+                          {choice === 'done' ? 'Done' : choice === 'not_done' ? 'Not done' : 'Need help'}
+                        </button>
+                      </form>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : (
+            <div className="sim-off">Simulation is disabled because the platform is live. Replies arrive through the webhook.</div>
+          )}
+        </section>
+
+        <aside className="stack">
           <section className="card pad">
             <div className="section-head">
               <h2>Case</h2>
@@ -234,18 +248,16 @@ export default async function CaseDetailPage({
               <dt>Answered</dt>
               <dd>
                 {answered ? formatTime(caseRow.answeredAt) : 'Not yet'}
-                {caseRow.aiUsed ? <span className="pill waiting" style={{ marginLeft: 6 }}>AI</span> : null}
+                {caseRow.aiUsed ? (
+                  <span className="chip info mono" style={{ marginLeft: 6 }}>
+                    AI
+                  </span>
+                ) : null}
               </dd>
               <dt>Reply</dt>
               <dd>{replyLabel(caseRow.replyOption) ?? caseRow.replyText ?? '—'}</dd>
               <dt>Action needed</dt>
               <dd>{actionLabel(caseRow.replyOption) ?? '—'}</dd>
-              {caseRow.needsHrReason ? (
-                <>
-                  <dt>Needs HR</dt>
-                  <dd>{caseRow.needsHrReason}</dd>
-                </>
-              ) : null}
               {caseRow.closeReason ? (
                 <>
                   <dt>Closed</dt>
@@ -254,7 +266,15 @@ export default async function CaseDetailPage({
               ) : null}
             </dl>
 
-            <div className="btn-row" style={{ marginTop: 14 }}>
+            {caseRow.needsHrReason ? (
+              <div className="notice err inline">
+                <div className="notice-body">
+                  <strong>Needs HR:</strong> {caseRow.needsHrReason}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="btn-row card-rule" style={{ gap: 6 }}>
               <form action={contactNow}>
                 <input type="hidden" name="caseId" value={caseRow.id} />
                 <button className="btn small primary" type="submit">
@@ -283,35 +303,39 @@ export default async function CaseDetailPage({
             </div>
           </section>
 
-          {calls.length ? (
+          {calls.length || onCall ? (
             <section className="card pad">
               <div className="section-head">
                 <h2>Calls</h2>
                 <span className="hint">{onCall ? 'This employee is set to Call' : 'Earlier calls'}</span>
               </div>
-              {calls.slice(0, 3).map((call) => (
-                <div key={call.id} style={{ marginBottom: 12 }}>
-                  <dl className="kv">
-                    <dt>When</dt>
-                    <dd>{formatTime(call.startedAt ?? call.endedAt)}</dd>
-                    <dt>Status</dt>
-                    <dd>
-                      {call.status}
-                      {call.outcome ? ` · ${call.outcome.replace(/_/g, ' ')}` : ''}
-                    </dd>
-                  </dl>
-                  {call.transcript?.length ? (
-                    <div className="chat" style={{ maxHeight: 200, marginTop: 8 }}>
-                      {[...call.transcript].reverse().map((turn, index) => (
-                        <div key={index} className={`bubble ${turn.role === 'agent' ? 'outbound' : 'inbound'}`}>
-                          {turn.text}
-                          <span className="meta">{turn.role}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
+              {calls.length ? (
+                calls.slice(0, 3).map((call) => (
+                  <div key={call.id} className="kv-group">
+                    <dl className="kv">
+                      <dt>When</dt>
+                      <dd>{formatTime(call.startedAt ?? call.endedAt)}</dd>
+                      <dt>Status</dt>
+                      <dd>
+                        {call.status}
+                        {call.outcome ? ` · ${call.outcome.replace(/_/g, ' ')}` : ''}
+                      </dd>
+                    </dl>
+                    {call.transcript?.length ? (
+                      <div className="chat" style={{ maxHeight: 200 }}>
+                        {[...call.transcript].reverse().map((turn, index) => (
+                          <div key={index} className={`bubble ${turn.role === 'agent' ? 'outbound' : 'inbound'}`}>
+                            {turn.text}
+                            <span className="meta">{turn.role}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))
+              ) : (
+                <p className="hint">No calls yet.</p>
+              )}
             </section>
           ) : null}
 
@@ -321,7 +345,7 @@ export default async function CaseDetailPage({
                 <h2>Actions</h2>
               </div>
               {actions.map((action) => (
-                <dl className="kv" key={action.id} style={{ marginBottom: 10 }}>
+                <dl className="kv" key={action.id}>
                   <dt>Type</dt>
                   <dd>{action.type.replace(/_/g, ' ')}</dd>
                   <dt>Status</dt>
@@ -329,9 +353,7 @@ export default async function CaseDetailPage({
                   {action.hrmsReference ? (
                     <>
                       <dt>HRMS reference</dt>
-                      <dd>
-                        <code>{action.hrmsReference}</code>
-                      </dd>
+                      <dd className="mono">{action.hrmsReference}</dd>
                     </>
                   ) : null}
                   {action.lastError ? (
@@ -347,18 +369,18 @@ export default async function CaseDetailPage({
 
           {otherPending.length ? (
             <section className="card pad">
-              <div className="section-head">
+              <div className="section-head" style={{ marginBottom: 10 }}>
                 <h2>Also pending</h2>
                 <span className="hint">Chained, oldest first</span>
               </div>
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
+              <div>
                 {otherPending.map((row) => (
-                  <li key={row.id} style={{ marginBottom: 4 }}>
-                    <Link href={`/cases/${row.id}`}>{row.attDate}</Link>{' '}
-                    <span className="sub">{statusDisplay(row.status).label}</span>
-                  </li>
+                  <div key={row.id} className="pending-row">
+                    <Link href={`/cases/${row.id}`}>{row.attDate}</Link>
+                    <span className="hint">{statusDisplay(row.status).label}</span>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </section>
           ) : null}
         </aside>

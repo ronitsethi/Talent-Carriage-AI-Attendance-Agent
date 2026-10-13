@@ -3,6 +3,7 @@ import { getSession, isPlatformAdmin } from '@/lib/auth';
 import { platformOverview } from '@/lib/queries';
 import { capabilities } from '@/lib/env';
 import { models } from '@/lib/models/gateway';
+import { Pill } from '@/components/status-pill';
 
 export default async function AdminPage() {
   const session = await getSession();
@@ -15,57 +16,65 @@ export default async function AdminPage() {
   return (
     <>
       <section className="page-head">
-        <div className="eyebrow">◉ Talent Carriage console</div>
+        <div className="eyebrow">Talent Carriage console</div>
         <h1>All customers</h1>
         <p>Health across every customer on the platform, so problems are found before anyone reports them.</p>
       </section>
 
-      <div className="card table-scroll" style={{ marginTop: 18 }}>
-        <table className="data">
-          <thead>
-            <tr>
-              <th>Customer</th>
-              <th>Employees</th>
-              <th>Cases</th>
-              <th>Awaiting reply</th>
-              <th>Needs HR</th>
-              <th>Sending</th>
-              <th>Mode</th>
-              <th>Actions</th>
-              <th>Cap</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tenants.map((tenant) => (
-              <tr key={tenant.id}>
-                <td>
-                  <div className="employee">{tenant.name}</div>
-                  <div className="sub">{tenant.slug}</div>
-                </td>
-                <td>{tenant.employees}</td>
-                <td>{tenant.cases}</td>
-                <td>{tenant.awaiting}</td>
-                <td>{tenant.attention ? <span className="pill call">{tenant.attention}</span> : '0'}</td>
-                <td>{tenant.sendingEnabled ? <span className="pill done">On</span> : <span className="pill idle">Off</span>}</td>
-                <td className="nowrap">
-                  {tenant.operatingMode === 'automatic' ? (
-                    <>
-                      <span className="pill done">Automatic</span>
-                      <div className="sub">{tenant.checkTime?.slice(0, 5)}</div>
-                    </>
-                  ) : (
-                    <span className="pill idle">Manual</span>
-                  )}
-                </td>
-                <td>{tenant.actionsEnabled ? <span className="pill done">On</span> : <span className="pill idle">Off</span>}</td>
-                <td>{tenant.cap ? tenant.cap : <span className="sub">none</span>}</td>
+      <div className="card flush gap-below">
+        <div className="table-scroll">
+          <table className="data small">
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th className="num">Employees</th>
+                <th className="num">Cases</th>
+                <th className="num">Awaiting reply</th>
+                <th>Needs HR</th>
+                <th>Sending</th>
+                <th>Mode</th>
+                <th>Actions</th>
+                <th>Cap</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {tenants.map((tenant) => (
+                <tr key={tenant.id}>
+                  <td>
+                    <div className="employee">{tenant.name}</div>
+                    <div className="sub mono">{tenant.slug}</div>
+                  </td>
+                  <td className="num">{tenant.employees}</td>
+                  <td className="num">{tenant.cases}</td>
+                  <td className="num">{tenant.awaiting}</td>
+                  <td>
+                    <Pill tone={tenant.attention ? 'call' : 'idle'}>{tenant.attention}</Pill>
+                  </td>
+                  <td>
+                    <Pill tone={tenant.sendingEnabled ? 'done' : 'idle'}>{tenant.sendingEnabled ? 'On' : 'Off'}</Pill>
+                  </td>
+                  <td className="nowrap">
+                    {tenant.operatingMode === 'automatic' ? (
+                      <>
+                        <Pill tone="done">Automatic</Pill>
+                        <div className="sub">{tenant.checkTime?.slice(0, 5)}</div>
+                      </>
+                    ) : (
+                      <Pill tone="idle">Manual</Pill>
+                    )}
+                  </td>
+                  <td>
+                    <Pill tone={tenant.actionsEnabled ? 'done' : 'idle'}>{tenant.actionsEnabled ? 'On' : 'Off'}</Pill>
+                  </td>
+                  <td>{tenant.cap ? tenant.cap : <span className="sub">none</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <section className="card pad" style={{ marginTop: 18 }}>
+      <section className="card pad" style={{ maxWidth: 640 }}>
         <div className="section-head">
           <h2>Platform connections</h2>
           <span className="hint">What is wired up right now</span>

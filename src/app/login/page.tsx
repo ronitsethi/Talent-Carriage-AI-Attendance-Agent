@@ -17,29 +17,45 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
   return (
     <div className="login-wrap">
-      <div className="login-card">
-        <Wordmark width={226} />
-        <h1>Attendance Agent</h1>
-        <p>Sign in to the HR workspace.</p>
+      <div className="login-panel">
+        <Wordmark variant="login" />
+        <div>
+          <div className="eyebrow">Attendance agent</div>
+          <div className="login-headline">AI attendance follow-up across every customer, in one place.</div>
+        </div>
+        <div className="login-foot">Talent Carriage HR workspace</div>
+      </div>
 
-        {error ? <div className="notice err" style={{ margin: '0 0 12px' }}>That email and password did not match.</div> : null}
+      <div className="login-side">
+        <div className="login-card">
+          <h1>Sign in</h1>
+          <p>Sign in to the HR workspace.</p>
 
-        <form action={attempt}>
-          <div className="field">
-            <label htmlFor="email">Email</label>
-            <input className="input" id="email" name="email" type="email" required autoComplete="username" />
+          {error ? (
+            <div className="notice err" role="alert">
+              That email and password did not match.
+            </div>
+          ) : null}
+
+          <form action={attempt}>
+            <div className="field">
+              <label htmlFor="email">Email</label>
+              <input className="input xl" id="email" name="email" type="email" required autoComplete="username" />
+            </div>
+            <div className="field">
+              <label htmlFor="password">Password</label>
+              <input className="input xl" id="password" name="password" type="password" required autoComplete="current-password" />
+            </div>
+            <button className="btn primary xl block" type="submit">
+              Sign in
+            </button>
+          </form>
+
+          <div className="login-hint">
+            Seeded logins: <span className="mono">admin@talentcarriage.test</span> (all customers),{' '}
+            <span className="mono">hr@dpod-lifestyle.test</span>, <span className="mono">hr@northwind-retail.test</span>,{' '}
+            <span className="mono">hr@sunrise-logistics.test</span> — password <span className="mono">attendance123</span>.
           </div>
-          <div className="field">
-            <label htmlFor="password">Password</label>
-            <input className="input" id="password" name="password" type="password" required autoComplete="current-password" />
-          </div>
-          <button className="btn primary" type="submit">Sign in</button>
-        </form>
-
-        <div className="login-hint">
-          Seeded logins: <code>admin@talentcarriage.test</code> (all customers),{' '}
-          <code>hr@dpod-lifestyle.test</code>, <code>hr@northwind-retail.test</code>,{' '}
-          <code>hr@sunrise-logistics.test</code> — password <code>attendance123</code>.
         </div>
       </div>
     </div>

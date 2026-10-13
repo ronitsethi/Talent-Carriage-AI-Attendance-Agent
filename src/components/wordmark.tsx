@@ -1,37 +1,46 @@
 import Image from 'next/image';
 
 /**
- * The Talent Carriage wordmark.
+ * The Talent Carriage logo.
  *
  * One definition for both places it appears, because a logo that is typed out
  * twice is a logo that will eventually disagree with itself. The artwork is the
- * same file the client hub ships, so the two products look like one company.
+ * brand's own, used as supplied: never redrawn, recoloured or stretched.
  *
- * It sits on white rather than on the navy behind it: the mark is drawn in the
- * brand's own teal and blue, and those disappear against a dark background. The
- * white card is what makes it legible, not decoration.
+ * The sidebar is white, so it carries the colour logo with nothing behind it.
+ * The sign-in panel is navy, so it carries the white logo with the tagline.
  */
 
-/** The artwork's own proportions, 1098 x 501. */
-const RATIO = 501 / 1098;
+/** The artwork's own proportions. */
+const COLOUR = { width: 1069, height: 404 };
+const WHITE_TAGLINE = { width: 1098, height: 501 };
 
-/** Asked for at twice the size it is drawn, so it stays sharp on a retina screen. */
-const NATURAL = 440;
+/** 40px high in the sidebar; 200px wide on the sign-in panel. */
+const SIDEBAR_HEIGHT = 40;
+const LOGIN_WIDTH = 200;
 
-export function Wordmark({ width }: { width?: number }) {
-  return (
-    // Without a width it fills whatever it is given - which is what the sidebar
-    // wants. With one, the card is that wide and the artwork follows, rather
-    // than the artwork stretching to a card sized by something else.
-    <div className="logo-card" style={width ? { width, boxSizing: 'border-box' } : undefined}>
+export function Wordmark({ variant }: { variant: 'sidebar' | 'login' }) {
+  if (variant === 'login') {
+    return (
       <Image
-        src="/brand/logo-tagline.png"
+        src="/brand/tc-logo-white-tagline.png"
         alt="Talent Carriage — Imagine Innovate Transform"
-        width={NATURAL}
-        height={Math.round(NATURAL * RATIO)}
+        width={LOGIN_WIDTH}
+        height={Math.round((LOGIN_WIDTH * WHITE_TAGLINE.height) / WHITE_TAGLINE.width)}
         priority
-        style={{ display: 'block', width: '100%', height: 'auto' }}
+        style={{ display: 'block', width: LOGIN_WIDTH, height: 'auto' }}
       />
-    </div>
+    );
+  }
+
+  return (
+    <Image
+      src="/brand/tc-logo.png"
+      alt="Talent Carriage"
+      width={Math.round((SIDEBAR_HEIGHT * COLOUR.width) / COLOUR.height)}
+      height={SIDEBAR_HEIGHT}
+      priority
+      style={{ display: 'block', width: 'auto', height: SIDEBAR_HEIGHT }}
+    />
   );
 }
