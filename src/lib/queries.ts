@@ -44,26 +44,38 @@ export type CaseListItem = {
   mobile: string | null;
 };
 
+/** The Cases page's "Open" and "Needs HR" filters. */
+const OPEN_STATUSES = ['queued', 'asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval'] as const;
+const ATTENTION_STATUSES = ['needs_hr', 'failed'] as const;
+
+type CaseFilters = { date?: string; from?: string; to?: string; search?: string };
+
+/** The date and name filters, shared so a tab's count is what pressing it lists. */
+function caseFilterConditions(tenantId: string, filters: CaseFilters) {
+  const conditions = [eq(cases.tenantId, tenantId)];
+  // A single date is just a range of one, so callers can pass either.
+  const from = filters.from ?? filters.date;
+  const to = filters.to ?? filters.date;
+  if (from) conditions.push(gte(cases.attDate, from));
+  if (to) conditions.push(lte(cases.attDate, to));
+  if (filters.search) {
+    conditions.push(sql`(${employees.fullName} ilike ${`%${filters.search}%`} or ${employees.empCode} ilike ${`%${filters.search}%`})`);
+  }
+  return conditions;
+}
+
 export async function listCases(
   tenantId: string,
-  filters: { date?: string; from?: string; to?: string; status?: string; search?: string; limit?: number } = {},
+  filters: CaseFilters & { status?: string; limit?: number } = {},
 ): Promise<CaseListItem[]> {
   return withTenant(tenantId, async (tx) => {
-    const conditions = [eq(cases.tenantId, tenantId)];
-    // A single date is just a range of one, so callers can pass either.
-    const from = filters.from ?? filters.date;
-    const to = filters.to ?? filters.date;
-    if (from) conditions.push(gte(cases.attDate, from));
-    if (to) conditions.push(lte(cases.attDate, to));
+    const conditions = caseFilterConditions(tenantId, filters);
     if (filters.status === 'open') {
-      conditions.push(inArray(cases.status, ['queued', 'asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval']));
+      conditions.push(inArray(cases.status, [...OPEN_STATUSES]));
     } else if (filters.status === 'attention') {
-      conditions.push(inArray(cases.status, ['needs_hr', 'failed']));
+      conditions.push(inArray(cases.status, [...ATTENTION_STATUSES]));
     } else if (filters.status && filters.status !== 'all') {
       conditions.push(eq(cases.status, filters.status as 'asked'));
-    }
-    if (filters.search) {
-      conditions.push(sql`(${employees.fullName} ilike ${`%${filters.search}%`} or ${employees.empCode} ilike ${`%${filters.search}%`})`);
     }
 
     return tx
@@ -95,6 +107,30 @@ export async function listCases(
       .where(and(...conditions))
       .orderBy(desc(cases.attDate), asc(employees.fullName))
       .limit(filters.limit ?? 200);
+  });
+}
+
+/**
+ * How many cases each of the Cases page's filters holds: the counts on its tabs,
+ * and - unfiltered - the open count on the sidebar.
+ */
+export async function caseCounts(tenantId: string, filters: CaseFilters = {}) {
+  return withTenant(tenantId, async (tx) => {
+    const rows = await tx
+      .select({ status: cases.status, total: count() })
+      .from(cases)
+      .innerJoin(employees, eq(employees.id, cases.employeeId))
+      .where(and(...caseFilterConditions(tenantId, filters)))
+      .groupBy(cases.status);
+
+    const sum = (statuses: readonly string[]) =>
+      rows.filter((row) => statuses.includes(row.status)).reduce((total, row) => total + row.total, 0);
+    return {
+      open: sum(OPEN_STATUSES),
+      attention: sum(ATTENTION_STATUSES),
+      resolved: sum(['resolved']),
+      all: rows.reduce((total, row) => total + row.total, 0),
+    };
   });
 }
 

@@ -3,7 +3,10 @@ import { OPTIONS, dateLabel, type OptionNumber } from '@/lib/conversation/flow';
 
 /** Presentation helpers shared by the portal pages. */
 
-export const STATUS_DISPLAY: Record<string, { label: string; tone: 'waiting' | 'pending' | 'done' | 'call' | 'idle' }> = {
+/** waiting = info, pending = warning, done = success, call = needs attention, idle = neutral. */
+export type Tone = 'waiting' | 'pending' | 'done' | 'call' | 'idle';
+
+export const STATUS_DISPLAY: Record<string, { label: string; tone: Tone }> = {
   // Not "Queued": nothing is waiting in a queue. The case exists because the
   // absence was found, and nobody has been contacted about it yet.
   queued: { label: 'Not contacted', tone: 'idle' },
