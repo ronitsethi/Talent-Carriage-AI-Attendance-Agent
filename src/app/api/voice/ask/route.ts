@@ -35,6 +35,7 @@ export async function POST(request: Request) {
         const answer = await answerQuestion(t, tenant.id, said, {
           employeeId: employee.id,
           employeeName: employee.fullName,
+          budget: 'call',
         });
         const settings = await t.query.tenantSettings.findFirst({ where: eq(tenantSettings.tenantId, tenant.id) });
         return {

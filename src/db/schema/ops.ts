@@ -250,3 +250,25 @@ export const consentEvents = pgTable(
   },
   (t) => [index('consent_events_employee_idx').on(t.employeeId, t.createdAt)],
 );
+
+/**
+ * Dollars the Azure OpenAI features may spend, one row per budget (whatsapp,
+ * call). Platform-wide, not per tenant: the credits behind the resource are
+ * shared with other services, and this is what stops these features using
+ * them up. Money is in micro-dollars so a single reply's cost is not rounded away.
+ */
+export const aiBudgets = pgTable('ai_budgets', {
+  budget: text('budget').primaryKey(), // whatsapp | call
+  allowanceMicros: bigint('allowance_micros', { mode: 'number' }).notNull(),
+  spentMicros: bigint('spent_micros', { mode: 'number' }).notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Every top-up, so it is clear who allowed more spending and when. */
+export const aiBudgetTopups = pgTable('ai_budget_topups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  budget: text('budget').notNull(),
+  amountMicros: bigint('amount_micros', { mode: 'number' }).notNull(),
+  addedBy: uuid('added_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

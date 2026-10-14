@@ -4,7 +4,7 @@ import { isIndic, ModelError, type ModelProvider, type ModelRequest, type Provid
 
 const TIMEOUT_MS = 20_000;
 
-/** GPT-4o mini: the default for English and Hinglish classification and dialogue. */
+/** GPT-4.1 mini on Azure OpenAI: the default for English and Hinglish classification and dialogue. */
 export class OpenAIProvider implements ModelProvider {
   readonly name = 'openai';
   private client: OpenAI | null = null;
@@ -20,7 +20,7 @@ export class OpenAIProvider implements ModelProvider {
 
   async json<T>(request: ModelRequest): Promise<ProviderResult<T>> {
     if (!this.available()) throw new ModelError('OPENAI_API_KEY is not set', this.name, false);
-    this.client ??= new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: TIMEOUT_MS, maxRetries: 1 });
+    this.client ??= new OpenAI({ apiKey: env.OPENAI_API_KEY, baseURL: env.OPENAI_BASE_URL, timeout: TIMEOUT_MS, maxRetries: 1 });
 
     try {
       const response = await this.client.chat.completions.create({

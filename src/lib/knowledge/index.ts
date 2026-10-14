@@ -3,6 +3,7 @@ import type { Db } from '@/db';
 import { attendanceDays, employees, policyPassages, policyDocuments } from '@/db/schema';
 import { MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings';
 import { env } from '@/lib/env';
+import { assertBudget, BudgetExhausted, chargeBudget, type AiBudget } from '@/lib/models/budget';
 import { readPdf } from './ocr';
 
 /**
@@ -18,8 +19,9 @@ import { readPdf } from './ocr';
  */
 
 const EMBED_MODEL = 'text-embedding-3-small';
-const ANSWER_MODEL = 'gpt-4o-mini';
-const OPENAI = 'https://api.openai.com/v1';
+const ANSWER_MODEL = env.OPENAI_MODEL;
+/** Azure OpenAI's v1 API takes the same requests, with deployment names as models. */
+const OPENAI = (env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/+$/, '');
 
 /**
  * Low on purpose. A cosine score is a poor judge of whether a passage answers a
@@ -32,7 +34,7 @@ const OPENAI = 'https://api.openai.com/v1';
  */
 const RELEVANCE_FLOOR = 0.12;
 
-async function openai(path: string, body: unknown): Promise<Record<string, unknown>> {
+async function openai(path: string, body: { model: string; [key: string]: unknown }, budget?: AiBudget): Promise<Record<string, unknown>> {
   const response = await fetch(`${OPENAI}${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -41,6 +43,12 @@ async function openai(path: string, body: unknown): Promise<Record<string, unkno
   });
   const json = (await response.json()) as Record<string, unknown>;
   if (!response.ok) throw new Error(JSON.stringify((json as { error?: unknown }).error ?? json).slice(0, 300));
+  if (budget) {
+    const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    await chargeBudget(budget, body.model, { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }).catch(
+      (error) => console.error('[budget] could not record the cost:', (error as Error).message),
+    );
+  }
   return json;
 }
 
@@ -84,8 +92,8 @@ export function splitIntoPassages(text: string, target = 1200): string[] {
   return passages;
 }
 
-export async function embed(texts: string[]): Promise<number[][]> {
-  const json = await openai('/embeddings', { model: EMBED_MODEL, input: texts });
+export async function embed(texts: string[], budget?: AiBudget): Promise<number[][]> {
+  const json = await openai('/embeddings', { model: EMBED_MODEL, input: texts }, budget);
   return (json.data as { embedding: number[] }[]).map((d) => d.embedding);
 }
 
@@ -124,8 +132,14 @@ export async function ingestDocument(tx: Db, tenantId: string, documentId: strin
 export type Passage = { text: string; title: string; score: number };
 
 /** The customer's passages closest to the question. */
-export async function findPassages(tx: Db, tenantId: string, question: string, limit = 10): Promise<Passage[]> {
-  const [vector] = await embed([question]);
+export async function findPassages(
+  tx: Db,
+  tenantId: string,
+  question: string,
+  limit = 10,
+  budget?: AiBudget,
+): Promise<Passage[]> {
+  const [vector] = await embed([question], budget);
   if (!vector) return [];
   const literal = `[${vector.join(',')}]`;
 
@@ -197,6 +211,8 @@ export type Answer = {
   grounded: boolean;
   /** True when the caller was saying goodbye rather than asking something. */
   finished: boolean;
+  /** False when the documents did not cover it and HR has to come back to them. */
+  answered: boolean;
 };
 
 const ANSWER_RULES = `You answer an employee's question on a phone call, on behalf of their employer.
@@ -218,7 +234,20 @@ markdown, no numbering.
 Also judge whether they were ending the call rather than asking anything - thanking you,
 saying goodbye, saying that is all, in English or Hindi. If they were, set finished and
 make the reply a short goodbye. Somebody who thanks you and then asks something is not
-finished.`;
+finished.
+
+Set answered to false only when you had to send them to HR because nothing given to you
+covers it.`;
+
+/** The same rules, for a WhatsApp chat instead of a phone call. */
+const CHAT_RULES = ANSWER_RULES.replace('on a phone call', 'on WhatsApp')
+  .replace(
+    /Answer in a few spoken sentences[\s\S]*?no markdown, no numbering\./,
+    `Answer in a short WhatsApp message, as an Indian HR colleague would write it: plain
+sentences, a short list only where it genuinely helps, no headings, no markdown. Write HR as
+HR. Reply in the language they wrote in.`,
+  )
+  .replace('ending the call', 'ending the chat');
 
 /**
  * Answers one question from the customer's documents and the caller's own record.
@@ -231,17 +260,39 @@ export async function answerQuestion(
   tx: Db,
   tenantId: string,
   question: string,
-  opts: { employeeId?: string | null; employeeName?: string | null } = {},
+  opts: {
+    employeeId?: string | null;
+    employeeName?: string | null;
+    channel?: 'call' | 'chat';
+    /** Which allowance this costs; none for questions asked in the portal. */
+    budget?: AiBudget;
+  } = {},
 ): Promise<Answer> {
-  const passages = await findPassages(tx, tenantId, question);
+  const chat = opts.channel === 'chat';
+  const hr = chat ? 'HR' : 'H R';
+  const fallback: Answer = { text: `I will ask ${hr} to come back to you on that.`, grounded: false, finished: false, answered: false };
+
+  // With the allowance spent, the question goes to HR, as one the documents do
+  // not cover does.
+  if (opts.budget) {
+    try {
+      await assertBudget(opts.budget);
+    } catch (error) {
+      if (error instanceof BudgetExhausted) return fallback;
+      throw error;
+    }
+  }
+
+  const passages = await findPassages(tx, tenantId, question, 10, opts.budget);
   const relevant = passages.filter((p) => p.score >= RELEVANCE_FLOOR);
 
   const attendance = opts.employeeId ? await attendanceSummary(tx, tenantId, opts.employeeId) : '';
   if (!relevant.length && !attendance) {
     return {
-      text: 'I do not have that on file, so I will ask H R to come back to you on it.',
+      text: `I do not have that on file, so I will ask ${hr} to come back to you on it.`,
       grounded: false,
       finished: false,
+      answered: false,
     };
   }
 
@@ -252,46 +303,56 @@ export async function answerQuestion(
     .filter(Boolean)
     .join('\n\n');
 
-  const json = await openai('/chat/completions', {
-    model: ANSWER_MODEL,
-    messages: [
-      { role: 'system', content: ANSWER_RULES },
-      { role: 'user', content: `${context}\n\nWHAT THEY SAID\n${question}` },
-    ],
-    temperature: 0.2,
-    max_tokens: 260,
-    // Whether they are finished is judged in the same breath as the answer: it
-    // is a question about what somebody meant, which is what this model is for
-    // and which no list of phrases will ever get right.
-    response_format: {
-      type: 'json_schema',
-      json_schema: {
-        name: 'reply',
-        strict: true,
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['reply', 'finished'],
-          properties: {
-            reply: { type: 'string', description: 'What to say out loud' },
-            finished: { type: 'boolean', description: 'They were ending the call, not asking' },
+  const json = await openai(
+    '/chat/completions',
+    {
+      model: ANSWER_MODEL,
+      messages: [
+        { role: 'system', content: chat ? CHAT_RULES : ANSWER_RULES },
+        { role: 'user', content: `${context}\n\nWHAT THEY SAID\n${question}` },
+      ],
+      temperature: 0.2,
+      max_tokens: 260,
+      // Whether they are finished is judged in the same breath as the answer: it
+      // is a question about what somebody meant, which is what this model is for
+      // and which no list of phrases will ever get right.
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'reply',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['reply', 'finished', 'answered'],
+            properties: {
+              reply: { type: 'string', description: chat ? 'The WhatsApp message to send' : 'What to say out loud' },
+              finished: { type: 'boolean', description: 'They were ending the conversation, not asking' },
+              answered: { type: 'boolean', description: 'False only when you had to send them to HR' },
+            },
           },
         },
       },
     },
-  });
+    opts.budget,
+  );
 
   const choices = json.choices as { message?: { content?: string } }[] | undefined;
   const raw = choices?.[0]?.message?.content?.trim();
-  if (!raw) return { text: 'I will ask H R to come back to you on that.', grounded: false, finished: false };
+  if (!raw) return fallback;
 
   try {
-    const parsed = JSON.parse(raw) as { reply?: string; finished?: boolean };
+    const parsed = JSON.parse(raw) as { reply?: string; finished?: boolean; answered?: boolean };
     const text = parsed.reply?.trim();
     if (!text) throw new Error('empty reply');
-    return { text, grounded: relevant.length > 0 || Boolean(attendance), finished: Boolean(parsed.finished) };
+    return {
+      text,
+      grounded: relevant.length > 0 || Boolean(attendance),
+      finished: Boolean(parsed.finished),
+      answered: parsed.answered !== false,
+    };
   } catch {
-    return { text: 'I will ask H R to come back to you on that.', grounded: false, finished: false };
+    return fallback;
   }
 }
 

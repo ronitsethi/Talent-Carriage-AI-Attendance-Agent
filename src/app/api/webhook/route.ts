@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
-import { tenantChannels } from '@/db/schema';
+import { employees, messages as messageLog, tenantChannels } from '@/db/schema';
 import { parseMetaWebhook, verifyMetaSignature } from '@/lib/channels/meta';
 import { applyDeliveryUpdate, handleInbound } from '@/lib/conversation/engine';
 import { buildContext } from '@/lib/runtime';
@@ -55,7 +55,10 @@ async function process(body: unknown) {
   const { phoneNumberId, messages, statuses } = parseMetaWebhook(body);
   if (!messages.length && !statuses.length) return;
 
-  const tenantId = await resolveTenant(phoneNumberId);
+  const tenantId = await resolveTenant(phoneNumberId, {
+    sender: messages[0]?.from,
+    messageIds: statuses.map((s) => s.providerMessageId),
+  });
   if (!tenantId) {
     console.warn(`[webhook] no customer is configured for phone number id ${phoneNumberId ?? 'unknown'}`);
     return;
@@ -75,8 +78,17 @@ async function process(body: unknown) {
   });
 }
 
-/** Which customer owns the number Meta delivered this to. */
-async function resolveTenant(phoneNumberId: string | undefined): Promise<string | null> {
+/**
+ * Which customer this delivery belongs to.
+ *
+ * A customer with its own number is found by that number. Customers sharing the
+ * platform's number are told apart by the conversation itself: a status names a
+ * message we sent, and a reply comes from someone we last wrote to.
+ */
+async function resolveTenant(
+  phoneNumberId: string | undefined,
+  hint: { sender?: string; messageIds: string[] },
+): Promise<string | null> {
   if (phoneNumberId) {
     const match = await withPlatformScope((tx) =>
       tx
@@ -90,5 +102,33 @@ async function resolveTenant(phoneNumberId: string | undefined): Promise<string 
 
   // Single-customer installs (and the first pilot) need no mapping at all.
   const all = await withPlatformScope((tx) => tx.select({ tenantId: tenantChannels.tenantId }).from(tenantChannels).limit(2));
-  return all.length === 1 ? all[0]!.tenantId : null;
+  if (all.length === 1) return all[0]!.tenantId;
+
+  return withPlatformScope(async (tx) => {
+    if (hint.messageIds.length) {
+      const [sent] = await tx
+        .select({ tenantId: messageLog.tenantId })
+        .from(messageLog)
+        .where(inArray(messageLog.providerMessageId, hint.messageIds))
+        .limit(1);
+      if (sent) return sent.tenantId;
+    }
+    if (!hint.sender) return null;
+
+    const [lastWrittenTo] = await tx
+      .select({ tenantId: messageLog.tenantId })
+      .from(messageLog)
+      .where(and(eq(messageLog.waId, hint.sender), eq(messageLog.direction, 'outbound')))
+      .orderBy(desc(messageLog.createdAt))
+      .limit(1);
+    if (lastWrittenTo) return lastWrittenTo.tenantId;
+
+    // Someone writing first: theirs only if exactly one customer employs them.
+    const employers = await tx
+      .selectDistinct({ tenantId: employees.tenantId })
+      .from(employees)
+      .where(eq(employees.mobileE164, hint.sender))
+      .limit(2);
+    return employers.length === 1 ? employers[0]!.tenantId : null;
+  });
 }

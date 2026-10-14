@@ -40,6 +40,10 @@ VOICE = os.environ.get("AGENT_VOICE", "ritu")
 VOICE_MODEL = os.environ.get("AGENT_VOICE_MODEL", "bulbul:v3-beta")
 VOICE_PACE = float(os.environ.get("AGENT_VOICE_PACE", "0.95"))
 STT_VENDOR = os.environ.get("AGENT_STT", "sarvam")
+# Azure OpenAI deployment names. The base URL comes from OPENAI_BASE_URL, which
+# the OpenAI client reads itself.
+LLM_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+STT_MODEL = os.environ.get("OPENAI_STT_MODEL", "gpt-4o-transcribe")
 
 
 # About eight seconds in all, which covers a call placed inside a long-running
@@ -338,8 +342,8 @@ async def entrypoint(ctx: JobContext) -> None:
         pace = float(brief.get("pace") or VOICE_PACE)
 
         session = AgentSession(
-            stt=(sarvam.STT(language="en-IN") if STT_VENDOR == "sarvam" else openai.STT(model="gpt-4o-transcribe")),
-            llm=openai.LLM(model="gpt-4o-mini"),
+            stt=(sarvam.STT(language="en-IN") if STT_VENDOR == "sarvam" else openai.STT(model=STT_MODEL)),
+            llm=openai.LLM(model=LLM_MODEL),
             tts=sarvam.TTS(target_language_code="en-IN", model=VOICE_MODEL, speaker=voice, pace=pace),
             vad=silero.VAD.load(),
         )
@@ -368,11 +372,11 @@ async def entrypoint(ctx: JobContext) -> None:
         stt=(
             sarvam.STT(language="en-IN")
             if STT_VENDOR == "sarvam"
-            else openai.STT(model="gpt-4o-transcribe")
+            else openai.STT(model=STT_MODEL)
         ),
         # Present because AgentSession expects one, and used only for phrasing.
         # It never decides the flow: every turn is intercepted before it speaks.
-        llm=openai.LLM(model="gpt-4o-mini"),
+        llm=openai.LLM(model=LLM_MODEL),
         tts=sarvam.TTS(
             target_language_code="en-IN",
             model=VOICE_MODEL,

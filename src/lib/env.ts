@@ -41,7 +41,9 @@ const schema = z.object({
 
   // Models
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_MODEL: z.string().default('gpt-4o-mini'),
+  /** Azure OpenAI: https://<resource>.openai.azure.com/openai/v1. Unset means OpenAI itself. */
+  OPENAI_BASE_URL: z.string().url().optional(),
+  OPENAI_MODEL: z.string().default('gpt-4.1-mini'),
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-haiku-4-5-20251001'),
   SARVAM_API_KEY: z.string().optional(),

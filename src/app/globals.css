@@ -372,6 +372,11 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 .chip.mono { font-family: var(--font-mono), ui-monospace, monospace; }
 .chip.caps { text-transform: uppercase; letter-spacing: 0.06em; }
 
+/* How much of an AI budget is spent. */
+.meter { width: 120px; height: 6px; margin: 6px 0 0 auto; border-radius: var(--r-round); background: var(--line-100); overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--primary); }
+.meter.full > span { background: var(--err-ink); }
+
 /* ---------- notices ---------- */
 .notice {
   display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; margin-bottom: 16px; border-radius: var(--r-ctl);

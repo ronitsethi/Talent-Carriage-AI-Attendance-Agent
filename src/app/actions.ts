@@ -34,7 +34,8 @@ import { buildContext } from '@/lib/runtime';
 import { channelFor, contactCase, contactCaseById, type ContactResult } from '@/lib/contact';
 import { ensureCase } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
-import { canManageSettings, getActiveTenantId, getSession, setActiveTenant, signOut } from '@/lib/auth';
+import { canManageSettings, getActiveTenantId, getSession, isPlatformAdmin, setActiveTenant, signOut } from '@/lib/auth';
+import { AI_BUDGETS, topUpBudget, type AiBudget } from '@/lib/models/budget';
 import { env } from '@/lib/env';
 import { DEFAULT_AGENT_VOICE, isAgentVoice } from '@/lib/voice/voices';
 import { datesInRange } from '@/lib/dates';
@@ -407,18 +408,20 @@ export async function contactSelected(formData: FormData) {
 
   const outcomes: ContactResult[] = [];
 
-  await withTenant(tenantId, async (tx) => {
+  // Group by person: ticking five dates for someone on Call must ring them
+  // once, not five times. The call sweeps the backlog by itself.
+  const byEmployee = new Map<string, string[]>();
+  for (const target of targets) {
+    const [employeeId, date] = target.split('|');
+    if (!employeeId || !date) continue;
+    byEmployee.set(employeeId, [...(byEmployee.get(employeeId) ?? []), date]);
+  }
+
+  // The cases are committed before anyone is contacted: a call is answered by
+  // the agent from its own connection, and it must be able to see the case.
+  const toContact = await withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
-
-    // Group by person: ticking five dates for someone on Call must ring them
-    // once, not five times. The call sweeps the backlog by itself.
-    const byEmployee = new Map<string, string[]>();
-    for (const target of targets) {
-      const [employeeId, date] = target.split('|');
-      if (!employeeId || !date) continue;
-      byEmployee.set(employeeId, [...(byEmployee.get(employeeId) ?? []), date]);
-    }
-
+    const plan: string[] = [];
     for (const [employeeId, dates] of byEmployee) {
       const employee = await tx.query.employees.findFirst({ where: eq(employees.id, employeeId) });
       if (!employee) continue;
@@ -433,13 +436,20 @@ export async function contactSelected(formData: FormData) {
 
       if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') {
         // One call, about the most recent date; the older ones follow inside it.
-        outcomes.push(await contactCase(ctx, created[created.length - 1]!, employee));
+        plan.push(created[created.length - 1]!.id);
       } else {
         // WhatsApp stacks in a chat, so each date gets its own message.
-        for (const caseRow of created) outcomes.push(await contactCase(ctx, caseRow, employee));
+        plan.push(...created.map((c) => c.id));
       }
     }
+    return plan;
   });
+
+  // Each contact in its own transaction, so one failure cannot undo the rest.
+  for (const caseId of toContact) {
+    const outcome = await withTenant(tenantId, async (tx) => contactCaseById(await buildContext(tx, tenantId), caseId));
+    if (outcome) outcomes.push(outcome);
+  }
 
   revalidatePath('/');
   revalidatePath('/cases');
@@ -563,6 +573,20 @@ export async function switchTenant(formData: FormData) {
   if (!session || session.tenantId) return;
   await setActiveTenant(String(formData.get('tenantId') ?? ''));
   revalidatePath('/', 'layout');
+}
+
+/** Allows WhatsApp or calls to spend more of the Azure OpenAI credits. Talent Carriage staff only. */
+export async function topUpAiBudget(formData: FormData) {
+  const session = await getSession();
+  if (!session || !isPlatformAdmin(session)) throw new Error('Only Talent Carriage staff can top up');
+
+  const budget = String(formData.get('budget') ?? '') as AiBudget;
+  const dollars = Number(formData.get('dollars') ?? 0);
+  if (!AI_BUDGETS.includes(budget)) throw new Error('Unknown budget');
+  if (!Number.isFinite(dollars) || dollars <= 0 || dollars > 1000) throw new Error('Top up between $0.01 and $1,000');
+
+  await topUpBudget(budget, Math.round(dollars * 1_000_000), session.userId);
+  revalidatePath('/admin');
 }
 
 export async function signOutAction() {
@@ -861,6 +885,13 @@ export async function askPolicyQuestion(formData: FormData) {
       employeeId: employee?.id ?? null,
       employeeName: employee?.fullName ?? null,
     });
+  }).catch((error: Error) => {
+    // The model being unavailable is something to say on the page, not a crash.
+    console.error('[knowledge] answering failed:', error.message);
+    const reason = /credit|quota/i.test(error.message)
+      ? 'the model account has no credits or quota left'
+      : error.message.slice(0, 200);
+    return { text: `Could not answer right now: ${reason}.` };
   });
 
   revalidatePath('/knowledge');

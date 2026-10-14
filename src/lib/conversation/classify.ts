@@ -1,4 +1,5 @@
 import { models as defaultModels, type ModelGateway } from '@/lib/models/gateway';
+import type { AiBudget } from '@/lib/models/budget';
 import type { ModelResult } from '@/lib/models/types';
 import { OPTIONS, OPTION_NUMBERS, type OptionNumber } from './flow';
 
@@ -132,6 +133,8 @@ export type ClassifyContext = {
   pendingDateLabels?: string[];
   language?: string;
   tenantModelOverride?: string;
+  /** Which allowance the model's cost comes out of. */
+  budget?: AiBudget;
   gateway?: ModelGateway;
 };
 
@@ -165,6 +168,7 @@ export async function classifyReply(text: string, ctx: ClassifyContext = {}): Pr
         schema: SCHEMA as unknown as Record<string, unknown>,
         language: ctx.language,
         maxTokens: 300,
+        budget: ctx.budget,
       },
       { tenantOverride: ctx.tenantModelOverride },
     );

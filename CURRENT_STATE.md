@@ -41,7 +41,7 @@ _Populated from the codebase on 2026-10-13. Edit only the section that changed._
 
 ## Database
 
-Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0009` are in `src/db/migrations/`. `src/db/rls.sql` holds the RLS policies and triggers and is re-applied on every migrate.
+Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0010` are in `src/db/migrations/`. `src/db/rls.sql` holds the RLS policies and triggers and is re-applied on every migrate.
 
 **Tenant isolation (RLS)**
 - The app connects as `tc_app`: not a superuser, no `BYPASSRLS`. Migrations use `MIGRATION_DATABASE_URL`, the owner connection.
@@ -65,6 +65,7 @@ Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0009` are in 
 | Voice | `calls` | `provider`, `purpose` (first_contact/follow_up), `status`, `outcome`, transcript jsonb. |
 | Knowledge | `policy_documents`, `policy_passages` (migration 0009) | Uploaded guideline PDFs and their chunks, with `vector(1536)` embeddings. No vector index. Older `policy_packs`, `policy_sources` and `policy_chunks` are also defined. |
 | Ops | `jobs`, `ai_decisions`, `audit_log`, `usage_events`, `consent_events` | `jobs` is the queue (`dedupe_key` unique). `ai_decisions` logs model classifications. `usage_events` meters messages, calls and actions. |
+| AI budgets | `ai_budgets`, `ai_budget_topups` (migration 0010) | Platform-wide, not per tenant. One row per budget (`whatsapp`, `call`) with `allowance_micros` and `spent_micros` (micro-dollars), seeded at $10 each. Top-ups are logged with `added_by`. |
 
 **Key enums** (`src/db/schema/enums.ts`)
 - `attendance_meaning`: 25 canonical meanings.
@@ -142,7 +143,7 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 | `/mapping` | `(app)/mapping/page.tsx` + `editor.tsx` | "Mapping & Import". Upload a file to analyse it into a draft mapping, edit fields, layout and codes, save as a new active version, import attendance, and resolve unmapped codes. |
 | `/knowledge` | `(app)/knowledge/page.tsx` + `refresh.tsx` | "Guidelines". Upload and delete policy PDFs (OCR, then embeddings, in the background; the page auto-refreshes while reading). A test box asks a question the way the agent would. |
 | `/settings` | `(app)/settings/page.tsx` | Per-tenant settings: check time, quiet hours, operating mode, sending/actions switches, cap, follow-up/call/approval timings, agent voice and pace. Read-only unless the user can manage settings. |
-| `/admin` | `(app)/admin/page.tsx` | "All Customers" console for `platform_admin` only: per-tenant health and platform connections. |
+| `/admin` | `(app)/admin/page.tsx` | "All customers" console for `platform_admin` only: per-tenant health, AI spending (spent / allowed / left per budget, with a top-up form → `topUpAiBudget`), and platform connections. |
 
 `(app)/layout.tsx` provides the sidebar navigation, the tenant switcher (platform admins only) and sign-out.
 
@@ -220,8 +221,8 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 | WhatsApp (Meta Cloud API, Graph `v23.0`) | `src/lib/channels/meta.ts`, `fake.ts`, `/api/webhook` | `WA_PHONE_NUMBER_ID`, `WA_ACCESS_TOKEN`, `WA_APP_SECRET`, `WA_VERIFY_TOKEN` (platform fallbacks); per-tenant `tenant_channels.config` | Real sends happen only when `DRY_RUN=false` and credentials exist; otherwise the in-memory `FakeChannel` is used. The template defaults to `attendance_absent_check` (4 buttons). Inside the 24h window it uses interactive lists and buttons. |
 | Plivo voice (keypad calls, inbound line) | `src/lib/voice/plivo.ts`, `xml.ts`, `/api/voice/*`, `/api/plivo/*` | `VOICE_PROVIDER=plivo`, `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`, `PLIVO_FROM_NUMBER`, `PLIVO_FORWARD_NUMBER`; `tenant_settings.caller_id` | Used when `DRY_RUN=false`; otherwise `FakeVoiceProvider`. `exotel` and `acs` are accepted values with no implementation. |
 | LiveKit (spoken "agent" calls) | `src/lib/voice/livekit.ts`, `agent/worker.py`, `/api/agent/turn` | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_SIP_TRUNK_ID`, `AGENT_API_TOKEN` | Creates a room `attendance-call-<callId>` and dials out over a SIP trunk. Used when the employee or tenant `call_mode='agent'`; otherwise falls back to keypad. The worker uses LiveKit agents with OpenAI, Sarvam and Silero plugins. |
-| Model gateway | `src/lib/models/gateway.ts`, `providers.ts` | `OPENAI_API_KEY`/`OPENAI_MODEL` (gpt-4o-mini), `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` (claude-haiku-4-5), `SARVAM_API_KEY` + chat/STT/TTS models | Order: OpenAI → Anthropic → Sarvam, with Sarvam first for Indian languages. A per-tenant `model_overrides` can change it, and a stub fallback answers "unclear". Used for reply classification. |
-| Policy Q&A / RAG | `src/lib/knowledge/index.ts`, `ocr.ts` | `OPENAI_API_KEY` | Calls OpenAI directly: `text-embedding-3-small` embeddings and `gpt-4o-mini` answers. pgvector cosine search is scoped to the tenant. Answers draw only on guideline passages and the caller's own attendance. PDFs are read by MuPDF + Tesseract OCR, not an LLM. |
+| Model gateway | `src/lib/models/gateway.ts`, `providers.ts`, `budget.ts` | `OPENAI_API_KEY`, `OPENAI_BASE_URL` (Azure OpenAI `https://tc-attendance-aoai.openai.azure.com/openai/v1`; unset means OpenAI itself), `OPENAI_MODEL` (gpt-4.1-mini, an Azure deployment name), `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` (claude-haiku-4-5), `SARVAM_API_KEY` + chat/STT/TTS models | Order: OpenAI → Anthropic → Sarvam, with Sarvam first for Indian languages. A per-tenant `model_overrides` can change it, and a stub fallback answers "unclear". Used for reply classification. WhatsApp and call usage is costed from reported tokens at Azure list price and charged to the `whatsapp` / `call` budget. Once a budget is spent, that feature stops calling the model (no fallback provider) and replies go to HR until a platform admin tops it up. |
+| Policy Q&A / RAG | `src/lib/knowledge/index.ts`, `ocr.ts` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` | Calls the OpenAI client (Azure OpenAI when `OPENAI_BASE_URL` is set): `text-embedding-3-small` embeddings and `OPENAI_MODEL` answers. Also answers WhatsApp questions. pgvector cosine search is scoped to the tenant. Answers draw only on guideline passages and the caller's own attendance. PDFs are read by MuPDF + Tesseract OCR, not an LLM. |
 | Sarvam TTS | `src/lib/voice/say.ts`, `voices.ts` | `SARVAM_API_KEY` | Speaks Plivo call lines in the tenant's chosen voice (14 Indian voices, default `ritu`). Falls back to Plivo `<Speak>`. |
 | HRMS | `src/lib/hrms/types.ts`, `mock.ts` | `HRMS_CONNECTOR` (`mock` default, `file`, `rest`, `none`), `MOCK_HRMS_URL` | Only the in-memory `MockHrms` exists; `file` and `rest` fall back to it. The connector declares capabilities (apply leave or regularisation, approve, read status, balances). |
 | Azure | `scripts/deploy-azure.sh`, `scripts/azure-db-setup.ts` | `AZURE_RESOURCE_GROUP`, `AZURE_WEBAPP`; App Settings | App Service web app and a shared PostgreSQL Flexible Server. |
