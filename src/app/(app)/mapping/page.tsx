@@ -5,6 +5,7 @@ import { meaningLabel, formatTime } from '@/lib/display';
 import { analyseMappingFile, importAttendance, saveMapping, setCodeMeaning } from '@/app/actions';
 import { FileDrop } from '@/components/file-drop';
 import { Notice } from '@/components/notice';
+import { Toast } from '@/components/toast';
 import { MappingForm, type CodeRow, type MappingDraft } from './editor';
 import { ALL_MEANINGS } from '@/lib/mapping/meanings';
 import type { Analysis } from '@/lib/mapping/analyse';
@@ -98,11 +99,7 @@ export default async function MappingPage({
           {problem}
         </Notice>
       ) : null}
-      {saved ? (
-        <Notice tone="ok" clear={['saved']}>
-          Mapping saved and in use.
-        </Notice>
-      ) : null}
+      {saved ? <Toast clear={['saved']}>Mapping saved and in use.</Toast> : null}
 
       {latest ? <ImportOutcome row={latest} /> : null}
 
@@ -280,7 +277,21 @@ function toDraft(
  * the URL - a long message in a redirect is how this page started returning
  * headers too big for the browser to accept.
  */
-function ImportOutcome({ row }: { row: { filename: string | null; status: string; error: string | null; report: ImportReport | null } }) {
+/** Within this of finishing, an import is what somebody just did rather than history. */
+const JUST_NOW_MS = 2 * 60_000;
+
+function ImportOutcome({
+  row,
+}: {
+  row: {
+    filename: string | null;
+    status: string;
+    error: string | null;
+    report: ImportReport | null;
+    startedAt: Date;
+    finishedAt: Date | null;
+  };
+}) {
   if (row.status === 'failed') {
     return (
       <Notice tone="err">
@@ -304,14 +315,31 @@ function ImportOutcome({ row }: { row: { filename: string | null; status: string
   }
 
   const unresolved = Object.keys(report.unmappedCodes ?? {});
-  return (
-    <Notice tone={unresolved.length ? 'err' : 'ok'}>
+  const said = (
+    <>
       Imported {report.daysImported} days for {report.employeesSeen}{' '}
       {report.employeesSeen === 1 ? 'employee' : 'employees'} from {row.filename}.
       {report.rejected.length ? ` ${report.rejected.length} rows skipped.` : ''}
-      {unresolved.length
-        ? ` ${unresolved.join(', ')} ${unresolved.length === 1 ? 'has' : 'have'} no meaning yet — nobody is messaged about ${unresolved.length === 1 ? 'it' : 'them'} until you add ${unresolved.length === 1 ? 'it' : 'them'} below.`
+      {report.employeesRestored
+        ? ` ${report.employeesRestored} deleted ${report.employeesRestored === 1 ? 'employee is' : 'employees are'} back, with any cases that were kept when they were deleted.`
         : ''}
-    </Notice>
+    </>
   );
+
+  // Codes with no meaning are work left to do on this page, so they stay put
+  // until somebody deals with them.
+  if (unresolved.length) {
+    return (
+      <Notice tone="err">
+        {said} {unresolved.join(', ')} {unresolved.length === 1 ? 'has' : 'have'} no meaning yet — nobody is messaged
+        about {unresolved.length === 1 ? 'it' : 'them'} until you add {unresolved.length === 1 ? 'it' : 'them'} below.
+      </Notice>
+    );
+  }
+
+  // An import that went through needs no acknowledging: it is said once, in the
+  // corner, and Recent imports below keeps the record.
+  const finished = row.finishedAt ?? row.startedAt;
+  if (Date.now() - finished.getTime() > JUST_NOW_MS) return null;
+  return <Toast>{said}</Toast>;
 }

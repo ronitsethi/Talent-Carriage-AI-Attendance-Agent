@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { withTenant, type Db } from '@/db';
 import { attendanceDays, cases, detectionRuns, employees } from '@/db/schema';
 import { CHASED_BY_DEFAULT, OPTIONALLY_CHASED } from '@/db/schema/enums';
@@ -83,6 +83,9 @@ export async function findGaps(
         eq(attendanceDays.tenantId, tenantId),
         eq(attendanceDays.attDate, date),
         inArray(attendanceDays.meaning, meanings),
+        // A deleted employee is never chased: no case is opened for them, so
+        // the daily run cannot resurrect somebody HR has removed.
+        isNull(employees.deletedAt),
       ),
     )
     .orderBy(asc(employees.fullName));

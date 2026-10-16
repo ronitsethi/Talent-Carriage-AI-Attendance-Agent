@@ -1,3 +1,4 @@
+import { timed } from '@/lib/timing';
 import { assertBudget, chargeBudget } from './budget';
 import { AnthropicProvider, OpenAIProvider, SarvamProvider, StubProvider } from './providers';
 import { isIndic, ModelError, type ModelProvider, type ModelRequest, type ModelResult, type ModelTask } from './types';
@@ -46,7 +47,11 @@ export class ModelGateway {
     return chosen;
   }
 
-  async json<T>(request: ModelRequest, opts: { tenantOverride?: string } = {}): Promise<ModelResult<T>> {
+  json<T>(request: ModelRequest, opts: { tenantOverride?: string } = {}): Promise<ModelResult<T>> {
+    return timed(request.task, () => this.answer<T>(request, opts));
+  }
+
+  private async answer<T>(request: ModelRequest, opts: { tenantOverride?: string }): Promise<ModelResult<T>> {
     // A spent budget stops the request outright, rather than sending it to
     // another provider: the budget exists to stop, not to redirect.
     if (request.budget) await assertBudget(request.budget);
@@ -58,9 +63,10 @@ export class ModelGateway {
       const startedAt = Date.now();
       try {
         const result = await provider.json<T>(request);
-        // Only Azure OpenAI draws on the credits the budget protects.
+        // Only Azure OpenAI draws on the credits the budget protects. Recorded
+        // without waiting: the caller should not hear the bookkeeping.
         if (request.budget && provider.name === 'openai') {
-          await chargeBudget(request.budget, result.model, result.usage).catch((error) =>
+          void chargeBudget(request.budget, result.model, result.usage).catch((error) =>
             console.error('[budget] could not record the cost:', (error as Error).message),
           );
         }

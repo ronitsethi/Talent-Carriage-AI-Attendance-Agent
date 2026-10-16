@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, ne } from 'drizzle-orm';
 import type { Db } from '@/db';
-import { employees, tenantChannels, tenants, tenantSettings } from '@/db/schema';
+import { employees, messages, tenantChannels, tenants, tenantSettings } from '@/db/schema';
 import { FakeChannel } from '@/lib/channels/fake';
 import { MetaWhatsAppChannel } from '@/lib/channels/meta';
 import type { MessageChannel } from '@/lib/channels/types';
@@ -8,6 +8,7 @@ import { handleApprovalDecision, handleOfferResponse, offerAction, type ActionCo
 import { handleFollowUpResponse } from '@/lib/conversation/followup';
 import { handedToHrMessage } from '@/lib/conversation/flow';
 import { answerQuestion } from '@/lib/knowledge';
+import { chatTurn } from '@/lib/conversation/talk';
 import { MockHrms } from '@/lib/hrms/mock';
 import type { HrmsConnector } from '@/lib/hrms/types';
 import { FakeVoiceProvider } from '@/lib/voice/fake';
@@ -154,6 +155,23 @@ export async function buildContext(tx: Db, tenantId: string): Promise<FullContex
       },
       onFollowUpResponse: async (ctx, caseRow, employee, choice) => {
         await handleFollowUpResponse(ctx, caseRow, employee, choice);
+      },
+      converse: async (ctx, { caseRow, employee, text, menu, inboundMessageId }) => {
+        // What has been said lately in this chat, oldest first, without the message being answered.
+        const inbound = await ctx.tx.query.messages.findFirst({ where: eq(messages.id, inboundMessageId) });
+        const recent = inbound?.conversationId
+          ? await ctx.tx
+              .select({ direction: messages.direction, body: messages.body })
+              .from(messages)
+              .where(and(eq(messages.conversationId, inbound.conversationId), ne(messages.id, inboundMessageId)))
+              .orderBy(desc(messages.createdAt))
+              .limit(12)
+          : [];
+        const history = recent
+          .reverse()
+          .filter((m) => m.body?.trim())
+          .map((m) => ({ role: m.direction === 'inbound' ? ('employee' as const) : ('agent' as const), text: m.body! }));
+        return chatTurn(ctx, { employee, caseRow, said: text, history, menu });
       },
       answerQuestion: async (ctx, employee, question) => {
         try {

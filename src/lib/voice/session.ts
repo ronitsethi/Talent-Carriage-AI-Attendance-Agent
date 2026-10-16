@@ -141,6 +141,7 @@ export async function placeCaseCall(
   employee: EmployeeRow,
   purpose: CallPurpose = callPurposeFor(caseRow),
 ) {
+  if (employee.deletedAt) return { placed: false as const, reason: 'This employee has been deleted' };
   if (!ctx.settings.sendingEnabled) return { placed: false as const, reason: 'Sending is switched off for this customer' };
   if (employee.callOptOut) return { placed: false as const, reason: 'Employee has opted out of calls' };
   if (!employee.mobileE164) return { placed: false as const, reason: 'No mobile number on record' };

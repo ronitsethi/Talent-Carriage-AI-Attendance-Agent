@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
 import { approvals, actions, cases, employees, tenants, tenantSettings } from '@/db/schema';
 import { sendDueFollowUps } from '@/lib/conversation/followup';
@@ -107,7 +107,7 @@ const refreshLeaveBalances: JobHandler = async (job) => {
     const people = await tx
       .select({ empCode: employees.empCode })
       .from(employees)
-      .where(eq(employees.tenantId, tenantId))
+      .where(and(eq(employees.tenantId, tenantId), isNull(employees.deletedAt)))
       .limit(500);
     let refreshed = 0;
     for (const person of people) {

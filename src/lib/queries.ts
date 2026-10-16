@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
 import { chasedMeanings } from '@/lib/detection/run';
 import {
@@ -42,13 +42,67 @@ export type CaseListItem = {
   employeeCode: string;
   department: string | null;
   mobile: string | null;
+  /** Set when HR deleted this employee: the case is a record, and nothing may act on it. */
+  employeeDeletedAt: Date | null;
 };
 
-/** The Cases page's "Open" and "Needs HR" filters. */
-const OPEN_STATUSES = ['queued', 'asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval'] as const;
-const ATTENTION_STATUSES = ['needs_hr', 'failed'] as const;
+/*
+ * The states a case can be in, grouped only where the difference is invisible
+ * to HR: a message delivered and a message read are both waiting for the same
+ * reply. Every other distinction the Status column draws is one the filter can
+ * draw too - "Needs HR" and "Send failed" are different problems, and lumping
+ * them together hid which one a customer actually had.
+ */
+type CaseStatus = (typeof cases.$inferSelect)['status'];
+
+const AWAITING_REPLY = ['asked', 'delivered', 'read'] as const;
+const ANSWERED_STATUSES = ['answered', 'awaiting_action', 'awaiting_approval'] as const;
+
+/**
+ * An open case that has actually been asked. These are the ones worth keeping
+ * when HR deletes the employee: there is a conversation behind them. A `queued`
+ * case was never sent, so it records nothing - it is one of the dashboard's
+ * "not contacted" rows and is deleted with them.
+ */
+export const ASKED_STATUSES = [...AWAITING_REPLY, ...ANSWERED_STATUSES] as const;
+
+/** Everything still in play, which is what the sidebar counts. */
+const OPEN_STATUSES = ['queued', ...ASKED_STATUSES] as const;
+
+/**
+ * The Cases page's tabs, in order, and the only place a tab's name, its rows
+ * and its count are decided - so a tab can never show a number it does not
+ * then list. `statuses: null` means every case.
+ */
+export const CASE_FILTERS = [
+  { key: 'open', label: 'Open', statuses: OPEN_STATUSES },
+  { key: 'not_contacted', label: 'Not contacted', statuses: ['queued'] },
+  { key: 'awaiting', label: 'Awaiting reply', statuses: AWAITING_REPLY },
+  { key: 'answered', label: 'Answered', statuses: ANSWERED_STATUSES },
+  { key: 'needs_hr', label: 'Needs HR', statuses: ['needs_hr'] },
+  { key: 'failed', label: 'Send failed', statuses: ['failed'] },
+  { key: 'resolved', label: 'Resolved', statuses: ['resolved'] },
+  { key: 'all', label: 'All', statuses: null },
+] as const satisfies readonly { key: string; label: string; statuses: readonly CaseStatus[] | null }[];
+
+export type CaseFilterKey = (typeof CASE_FILTERS)[number]['key'];
+export const DEFAULT_CASE_FILTER: CaseFilterKey = 'open';
+
+/** What a `status` in the URL selects. An unknown one - or the old "attention"
+ * link, from when Needs HR and Send failed shared a tab - lands somewhere
+ * sensible rather than on an empty table. */
+function statusesFor(status: string | undefined): readonly CaseStatus[] | null {
+  if (!status || status === 'all') return null;
+  if (status === 'attention') return ['needs_hr', 'failed'];
+  return (CASE_FILTERS.find((f) => f.key === status) ?? CASE_FILTERS[0]).statuses;
+}
 
 type CaseFilters = { date?: string; from?: string; to?: string; search?: string };
+
+/** Name or code, matched the same way wherever an "Employee" box is offered. */
+function employeeSearch(search: string) {
+  return sql`(${employees.fullName} ilike ${`%${search}%`} or ${employees.empCode} ilike ${`%${search}%`})`;
+}
 
 /** The date and name filters, shared so a tab's count is what pressing it lists. */
 function caseFilterConditions(tenantId: string, filters: CaseFilters) {
@@ -58,9 +112,7 @@ function caseFilterConditions(tenantId: string, filters: CaseFilters) {
   const to = filters.to ?? filters.date;
   if (from) conditions.push(gte(cases.attDate, from));
   if (to) conditions.push(lte(cases.attDate, to));
-  if (filters.search) {
-    conditions.push(sql`(${employees.fullName} ilike ${`%${filters.search}%`} or ${employees.empCode} ilike ${`%${filters.search}%`})`);
-  }
+  if (filters.search) conditions.push(employeeSearch(filters.search));
   return conditions;
 }
 
@@ -70,13 +122,8 @@ export async function listCases(
 ): Promise<CaseListItem[]> {
   return withTenant(tenantId, async (tx) => {
     const conditions = caseFilterConditions(tenantId, filters);
-    if (filters.status === 'open') {
-      conditions.push(inArray(cases.status, [...OPEN_STATUSES]));
-    } else if (filters.status === 'attention') {
-      conditions.push(inArray(cases.status, [...ATTENTION_STATUSES]));
-    } else if (filters.status && filters.status !== 'all') {
-      conditions.push(eq(cases.status, filters.status as 'asked'));
-    }
+    const statuses = statusesFor(filters.status);
+    if (statuses) conditions.push(inArray(cases.status, [...statuses]));
 
     return tx
       .select({
@@ -101,6 +148,7 @@ export async function listCases(
         employeeCode: employees.empCode,
         department: employees.department,
         mobile: employees.mobileE164,
+        employeeDeletedAt: employees.deletedAt,
       })
       .from(cases)
       .innerJoin(employees, eq(employees.id, cases.employeeId))
@@ -123,14 +171,10 @@ export async function caseCounts(tenantId: string, filters: CaseFilters = {}) {
       .where(and(...caseFilterConditions(tenantId, filters)))
       .groupBy(cases.status);
 
-    const sum = (statuses: readonly string[]) =>
-      rows.filter((row) => statuses.includes(row.status)).reduce((total, row) => total + row.total, 0);
-    return {
-      open: sum(OPEN_STATUSES),
-      attention: sum(ATTENTION_STATUSES),
-      resolved: sum(['resolved']),
-      all: rows.reduce((total, row) => total + row.total, 0),
-    };
+    const all = rows.reduce((total, row) => total + row.total, 0);
+    const sum = (statuses: readonly string[] | null) =>
+      statuses ? rows.filter((row) => statuses.includes(row.status)).reduce((total, row) => total + row.total, 0) : all;
+    return Object.fromEntries(CASE_FILTERS.map((f) => [f.key, sum(f.statuses)])) as Record<CaseFilterKey, number>;
   });
 }
 
@@ -184,7 +228,10 @@ export async function dashboardStats(tenantId: string): Promise<DashboardStats> 
       if (row.replyOption) stats.byOption[row.replyOption] = (stats.byOption[row.replyOption] ?? 0) + row.total;
     }
 
-    const [people] = await tx.select({ total: count() }).from(employees).where(eq(employees.tenantId, tenantId));
+    const [people] = await tx
+      .select({ total: count() })
+      .from(employees)
+      .where(and(eq(employees.tenantId, tenantId), isNull(employees.deletedAt)));
     stats.employees = people?.total ?? 0;
 
     const [range] = await tx
@@ -380,8 +427,16 @@ export type FlaggedRow = {
  * Everyone with an attendance gap in a date range, with their case if one
  * exists. This is what the dashboard shows: the people, their switches, and
  * whether they have been contacted yet.
+ *
+ * A deleted employee never appears: they cannot be contacted, so a row offering
+ * to contact them would be a lie. Their cases live on in Follow-up cases.
  */
-export async function flaggedInRange(tenantId: string, from: string, to: string): Promise<FlaggedRow[]> {
+export async function flaggedInRange(
+  tenantId: string,
+  from: string,
+  to: string,
+  opts: { search?: string } = {},
+): Promise<FlaggedRow[]> {
   const { settings } = await tenantSummary(tenantId);
   if (!settings) return [];
 
@@ -413,6 +468,8 @@ export async function flaggedInRange(tenantId: string, from: string, to: string)
           gte(attendanceDays.attDate, from),
           lte(attendanceDays.attDate, to),
           inArray(attendanceDays.meaning, meanings),
+          isNull(employees.deletedAt),
+          ...(opts.search ? [employeeSearch(opts.search)] : []),
         ),
       )
       .orderBy(desc(attendanceDays.attDate), asc(employees.fullName))
@@ -422,29 +479,78 @@ export async function flaggedInRange(tenantId: string, from: string, to: string)
   });
 }
 
-/** The most recent date that already has cases, for a useful default view. */
-export async function latestCaseDate(tenantId: string): Promise<string | null> {
+export type EmployeeListItem = {
+  id: string;
+  fullName: string;
+  empCode: string;
+  department: string | null;
+  mobile: string | null;
+  preferredChannel: string;
+  callMode: string | null;
+  operatingMode: string | null;
+  /** Open cases with a conversation behind them: what deleting them would offer to keep. */
+  openCases: number;
+  /** Everything else of theirs, which a deletion takes either way. */
+  otherCases: number;
+  attendanceDays: number;
+};
+
+/**
+ * The people this customer employs, with enough of a tally that deleting one
+ * can say exactly what goes. Deleted employees are not listed: they are gone as
+ * far as this page is concerned, and only their cases remain.
+ */
+export async function listEmployees(tenantId: string, opts: { search?: string } = {}): Promise<EmployeeListItem[]> {
   return withTenant(tenantId, async (tx) => {
-    const [row] = await tx
-      .select({ attDate: cases.attDate })
+    const people = await tx
+      .select({
+        id: employees.id,
+        fullName: employees.fullName,
+        empCode: employees.empCode,
+        department: employees.department,
+        mobile: employees.mobileE164,
+        preferredChannel: employees.preferredChannel,
+        callMode: employees.callMode,
+        operatingMode: employees.operatingMode,
+      })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.tenantId, tenantId),
+          isNull(employees.deletedAt),
+          ...(opts.search ? [employeeSearch(opts.search)] : []),
+        ),
+      )
+      .orderBy(asc(employees.fullName))
+      .limit(500);
+    if (!people.length) return [];
+
+    // Tallied for the whole customer in two queries rather than two per person.
+    const caseRows = await tx
+      .select({ employeeId: cases.employeeId, status: cases.status, total: count() })
       .from(cases)
       .where(eq(cases.tenantId, tenantId))
-      .orderBy(desc(cases.attDate))
-      .limit(1);
-    return row?.attDate ?? null;
-  });
-}
-
-/** Dates with attendance data, so the check form can offer sensible choices. */
-export async function availableDates(tenantId: string, limit = 40) {
-  return withTenant(tenantId, async (tx) => {
-    const rows = await tx
-      .select({ attDate: attendanceDays.attDate })
+      .groupBy(cases.employeeId, cases.status);
+    const dayRows = await tx
+      .select({ employeeId: attendanceDays.employeeId, total: count() })
       .from(attendanceDays)
       .where(eq(attendanceDays.tenantId, tenantId))
-      .groupBy(attendanceDays.attDate)
-      .orderBy(desc(attendanceDays.attDate))
-      .limit(limit);
-    return rows.map((r) => r.attDate);
+      .groupBy(attendanceDays.employeeId);
+
+    const open = new Map<string, number>();
+    const other = new Map<string, number>();
+    for (const row of caseRows) {
+      const kept = (ASKED_STATUSES as readonly string[]).includes(row.status);
+      const tally = kept ? open : other;
+      tally.set(row.employeeId, (tally.get(row.employeeId) ?? 0) + row.total);
+    }
+    const days = new Map(dayRows.map((row) => [row.employeeId, row.total]));
+
+    return people.map((person) => ({
+      ...person,
+      openCases: open.get(person.id) ?? 0,
+      otherCases: other.get(person.id) ?? 0,
+      attendanceDays: days.get(person.id) ?? 0,
+    }));
   });
 }

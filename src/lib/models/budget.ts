@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { aiBudgetTopups, aiBudgets } from '@/db/schema';
+import { timed } from '@/lib/timing';
 import { ModelError, type ModelUsage } from './types';
 
 /**
@@ -53,22 +54,38 @@ export class BudgetExhausted extends ModelError {
  * spent even when the work that spent it is rolled back.
  */
 
+/**
+ * The last answer per budget, kept a few seconds. On a call this check sits in
+ * the silence before every reply, and a budget does not run out between one
+ * sentence and the next; a top-up still takes effect within seconds.
+ */
+const CHECK_TTL_MS = 5_000;
+const lastCheck = new Map<AiBudget, { exhausted: boolean; at: number }>();
+
 /** Throws when the budget has nothing left. */
 export async function assertBudget(budget: AiBudget): Promise<void> {
-  const [row] = await db.select().from(aiBudgets).where(eq(aiBudgets.budget, budget));
-  if (row && row.spentMicros >= row.allowanceMicros) throw new BudgetExhausted(budget);
+  const cached = lastCheck.get(budget);
+  let exhausted: boolean;
+  if (cached && Date.now() - cached.at < CHECK_TTL_MS) {
+    exhausted = cached.exhausted;
+  } else {
+    const [row] = await timed('budget_check', () => db.select().from(aiBudgets).where(eq(aiBudgets.budget, budget)));
+    exhausted = Boolean(row && row.spentMicros >= row.allowanceMicros);
+    lastCheck.set(budget, { exhausted, at: Date.now() });
+  }
+  if (exhausted) throw new BudgetExhausted(budget);
 }
 
 export async function chargeBudget(budget: AiBudget, model: string, usage: ModelUsage | undefined): Promise<void> {
   const cost = costMicros(model, usage);
   if (cost <= 0) return;
-  await db
+  await timed('budget_charge', async () => db
     .insert(aiBudgets)
     .values({ budget, allowanceMicros: DEFAULT_ALLOWANCE_MICROS, spentMicros: cost })
     .onConflictDoUpdate({
       target: aiBudgets.budget,
       set: { spentMicros: sql`${aiBudgets.spentMicros} + ${cost}`, updatedAt: new Date() },
-    });
+    }));
 }
 
 export type BudgetStatus = { budget: AiBudget; allowanceMicros: number; spentMicros: number };
@@ -93,4 +110,5 @@ export async function topUpBudget(budget: AiBudget, amountMicros: number, addedB
       });
     await tx.insert(aiBudgetTopups).values({ budget, amountMicros, addedBy });
   });
+  lastCheck.delete(budget);
 }

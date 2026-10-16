@@ -1,17 +1,11 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
-import { caseCounts, listCases, tenantSummary } from '@/lib/queries';
+import { CASE_FILTERS, DEFAULT_CASE_FILTER, caseCounts, listCases, tenantSummary } from '@/lib/queries';
 import { actionLabel, caseDateLabel, formatTime, replyLabel } from '@/lib/display';
 import { StatusPill } from '@/components/status-pill';
+import { ConfirmSubmit } from '@/components/confirm';
 import { contactNow, setCallModeFromRow, setEmployeeChannel, setEmployeeMode } from '@/app/actions';
-
-const FILTERS = [
-  { key: 'open', label: 'Open' },
-  { key: 'attention', label: 'Needs HR' },
-  { key: 'resolved', label: 'Resolved' },
-  { key: 'all', label: 'All' },
-] as const;
 
 export default async function CasesPage({
   searchParams,
@@ -24,7 +18,8 @@ export default async function CasesPage({
   if (!tenantId) return <p style={{ paddingTop: 40 }}>No customer selected.</p>;
 
   const { date, from, to, status, q } = await searchParams;
-  const current = status ?? 'open';
+  // One unknown value in the URL should not empty the table.
+  const current = CASE_FILTERS.some((f) => f.key === status) ? status! : DEFAULT_CASE_FILTER;
   const [rows, counts, { settings }] = await Promise.all([
     listCases(tenantId, { date, from, to, status: current, search: q }),
     caseCounts(tenantId, { date, from, to, search: q }),
@@ -50,18 +45,22 @@ export default async function CasesPage({
         <form className="toolbar" method="get">
           {/* The tabs are links, so the status they chose rides along with the rest of the filter. */}
           <input type="hidden" name="status" value={current} />
-          <nav className="switch-group" aria-label="Status">
-            {FILTERS.map((f) => (
-              <Link
-                key={f.key}
-                href={query({ status: f.key })}
-                className={`switch-option ${current === f.key ? 'on' : ''}`}
-                aria-current={current === f.key ? 'page' : undefined}
-              >
-                {f.label} <span className="count">{counts[f.key]}</span>
-              </Link>
-            ))}
-          </nav>
+          {/* A line of their own: eight states and three fields on one row
+              leaves the tabs wrapping mid-group. */}
+          <div style={{ flexBasis: '100%' }}>
+            <nav className="switch-group wrap" aria-label="Status">
+              {CASE_FILTERS.map((f) => (
+                <Link
+                  key={f.key}
+                  href={query({ status: f.key })}
+                  className={`switch-option ${current === f.key ? 'on' : ''}`}
+                  aria-current={current === f.key ? 'page' : undefined}
+                >
+                  {f.label} <span className="count">{counts[f.key]}</span>
+                </Link>
+              ))}
+            </nav>
+          </div>
           <div className="field" style={{ minWidth: 150 }}>
             <label htmlFor="from">From</label>
             <input className="input" type="date" id="from" name="from" defaultValue={from ?? date ?? ''} />
@@ -105,6 +104,10 @@ export default async function CasesPage({
               {rows.length ? (
                 rows.map((row) => {
                   const reply = replyLabel(row.replyOption);
+                  // Their employee is deleted: the case is readable and nothing
+                  // else. Every control that would act on it is gone, and the
+                  // server actions refuse it as well.
+                  const gone = Boolean(row.employeeDeletedAt);
                   return (
                     <tr key={row.id}>
                       <td>
@@ -112,6 +115,16 @@ export default async function CasesPage({
                         <div className="sub">
                           {row.employeeCode} · {row.department ?? '—'}
                         </div>
+                        {gone ? (
+                          <div style={{ marginTop: 4 }}>
+                            <span
+                              className="chip neutral"
+                              title="Deleted by HR. Kept as a record until an attendance import brings them back."
+                            >
+                              Deleted · record only
+                            </span>
+                          </div>
+                        ) : null}
                       </td>
                       <td className="nowrap">
                         {caseDateLabel(row.attDate, row.meaning)}
@@ -137,89 +150,113 @@ export default async function CasesPage({
                         )}
                       </td>
                       <td className="nowrap">
-                        <div className="switch-group" role="group" aria-label={`Contact ${row.employeeName} by`}>
-                          {(['whatsapp', 'voice'] as const).map((option) => (
-                            <form key={option} action={setEmployeeChannel}>
-                              <input type="hidden" name="employeeId" value={row.employeeId} />
-                              <input type="hidden" name="channel" value={option} />
-                              <button
-                                type="submit"
-                                className={`switch-option ${row.preferredChannel === option ? 'on' : ''}`}
-                                aria-pressed={row.preferredChannel === option}
-                                title={`Contact ${row.employeeName} by ${option === 'voice' ? 'call' : 'WhatsApp'}`}
-                              >
-                                {option === 'voice' ? 'Call' : 'WhatsApp'}
-                              </button>
-                            </form>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="nowrap">
-                        <div
-                          className={`switch-group ${row.preferredChannel === 'voice' ? '' : 'muted'}`}
-                          role="group"
-                          aria-label="Call style"
-                        >
-                          {/* Each switch is its own form on this page: the table
-                              is not wrapped in one, so `formAction` has nothing to
-                              submit. */}
-                          {(['keypad', 'agent'] as const).map((option) => {
-                            const on = (row.callMode ?? settings?.callMode ?? 'keypad') === option;
-                            return (
-                              <form key={option} action={setCallModeFromRow.bind(null, row.employeeId, option)}>
-                                <button
-                                  type="submit"
-                                  className={`switch-option ${on ? 'on' : ''}`}
-                                  aria-pressed={on}
-                                  title={
-                                    option === 'agent'
-                                      ? 'A spoken conversation: they answer in their own words'
-                                      : 'The agent reads the options and they press a key'
-                                  }
-                                >
-                                  {option === 'agent' ? 'Talk' : 'Keypad'}
-                                </button>
-                              </form>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td className="nowrap">
-                        <div className="switch-group" role="group" aria-label="Mode">
-                          {(['manual', 'automatic'] as const).map((option) => {
-                            const on = (row.operatingMode ?? settings?.operatingMode ?? 'manual') === option;
-                            return (
-                              <form key={option} action={setEmployeeMode}>
+                        {gone ? (
+                          <span className="sub">{row.channel === 'voice' ? 'Call' : 'WhatsApp'}</span>
+                        ) : (
+                          <div className="switch-group" role="group" aria-label={`Contact ${row.employeeName} by`}>
+                            {(['whatsapp', 'voice'] as const).map((option) => (
+                              <form key={option} action={setEmployeeChannel}>
                                 <input type="hidden" name="employeeId" value={row.employeeId} />
-                                <input type="hidden" name="mode" value={option} />
+                                <input type="hidden" name="channel" value={option} />
                                 <button
                                   type="submit"
-                                  className={`switch-option ${on ? 'on' : ''}`}
-                                  aria-pressed={on}
-                                  title={
-                                    row.operatingMode
-                                      ? 'Set for this person, whatever the customer default is'
-                                      : `Following the customer default (${settings?.operatingMode ?? 'manual'})`
-                                  }
+                                  className={`switch-option ${row.preferredChannel === option ? 'on' : ''}`}
+                                  aria-pressed={row.preferredChannel === option}
+                                  title={`Contact ${row.employeeName} by ${option === 'voice' ? 'call' : 'WhatsApp'}`}
                                 >
-                                  {option === 'automatic' ? 'Auto' : 'Manual'}
+                                  {option === 'voice' ? 'Call' : 'WhatsApp'}
                                 </button>
                               </form>
-                            );
-                          })}
-                        </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="nowrap">
+                        {gone ? (
+                          <span className="sub">—</span>
+                        ) : (
+                          <div
+                            className={`switch-group ${row.preferredChannel === 'voice' ? '' : 'muted'}`}
+                            role="group"
+                            aria-label="Call style"
+                          >
+                            {/* Each switch is its own form on this page: the table
+                                is not wrapped in one, so `formAction` has nothing to
+                                submit. */}
+                            {(['keypad', 'agent'] as const).map((option) => {
+                              const on = (row.callMode ?? settings?.callMode ?? 'keypad') === option;
+                              return (
+                                <form key={option} action={setCallModeFromRow.bind(null, row.employeeId, option)}>
+                                  <button
+                                    type="submit"
+                                    className={`switch-option ${on ? 'on' : ''}`}
+                                    aria-pressed={on}
+                                    title={
+                                      option === 'agent'
+                                        ? 'A spoken conversation: they answer in their own words'
+                                        : 'The agent reads the options and they press a key'
+                                    }
+                                  >
+                                    {option === 'agent' ? 'Talk' : 'Keypad'}
+                                  </button>
+                                </form>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </td>
+                      <td className="nowrap">
+                        {gone ? null : (
+                          <div className="switch-group" role="group" aria-label="Mode">
+                            {(['manual', 'automatic'] as const).map((option) => {
+                              const on = (row.operatingMode ?? settings?.operatingMode ?? 'manual') === option;
+                              return (
+                                <form key={option} action={setEmployeeMode}>
+                                  <input type="hidden" name="employeeId" value={row.employeeId} />
+                                  <input type="hidden" name="mode" value={option} />
+                                  <button
+                                    type="submit"
+                                    className={`switch-option ${on ? 'on' : ''}`}
+                                    aria-pressed={on}
+                                    title={
+                                      row.operatingMode
+                                        ? 'Set for this person, whatever the customer default is'
+                                        : `Following the customer default (${settings?.operatingMode ?? 'manual'})`
+                                    }
+                                  >
+                                    {option === 'automatic' ? 'Auto' : 'Manual'}
+                                  </button>
+                                </form>
+                              );
+                            })}
+                          </div>
+                        )}
                         {row.answeredAt || row.askedAt ? (
                           <div className="sub">{formatTime(row.answeredAt ?? row.askedAt)}</div>
                         ) : null}
                       </td>
                       <td className="nowrap end">
                         <div className="btn-row" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap', gap: 6 }}>
-                          {['queued', 'failed'].includes(row.status) ? (
+                          {!gone && ['queued', 'failed'].includes(row.status) ? (
                             <form action={contactNow}>
                               <input type="hidden" name="caseId" value={row.id} />
-                              <button className="btn small primary" type="submit">
-                                {row.preferredChannel === 'voice' ? 'Call now' : 'Send now'}
-                              </button>
+                              <ConfirmSubmit
+                                label={row.preferredChannel === 'voice' ? 'Call now' : 'Send now'}
+                                className="btn small primary"
+                                title={
+                                  row.preferredChannel === 'voice'
+                                    ? `Call ${row.employeeName} now?`
+                                    : `Message ${row.employeeName} now?`
+                                }
+                                message={
+                                  <p>
+                                    {row.preferredChannel === 'voice' ? 'Their phone rings' : 'A WhatsApp message goes out'}{' '}
+                                    straight away, asking about{' '}
+                                    <strong>{caseDateLabel(row.attDate, row.meaning)}</strong>. It cannot be taken back.
+                                  </p>
+                                }
+                                confirmLabel={row.preferredChannel === 'voice' ? 'Call now' : 'Send now'}
+                              />
                             </form>
                           ) : null}
                           <Link className="btn small" href={`/cases/${row.id}`}>

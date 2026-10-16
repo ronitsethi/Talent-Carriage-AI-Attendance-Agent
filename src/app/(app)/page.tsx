@@ -1,10 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
-import { availableDates, dashboardStats, flaggedInRange, latestCaseDate, tenantSummary } from '@/lib/queries';
+import { dashboardStats, flaggedInRange, tenantSummary } from '@/lib/queries';
 import { capabilities, env } from '@/lib/env';
 import { caseDateLabel, meaningLabel } from '@/lib/display';
+import { defaultRange } from '@/lib/dates';
 import { Notice } from '@/components/notice';
+import { Toast } from '@/components/toast';
+import { ConfirmSubmit } from '@/components/confirm';
 import { StatusPill } from '@/components/status-pill';
 import {
   contactSelected,
@@ -14,45 +17,50 @@ import {
   setChannelFromRow,
   setModeFromRow,
 } from '@/app/actions';
-import { RowCheckbox, SelectAll, SelectedCount, SelectionProvider } from './selection';
+import { ContactSelected, RowCheckbox, RowSwitch, SelectAll, SelectionProvider } from './selection';
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; sent?: string; blocked?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; q?: string; sent?: string; blocked?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) return <p style={{ paddingTop: 40 }}>No customer has been set up yet.</p>;
 
-  const [{ tenant, settings }, stats, dates, withCases, { from, to, sent, blocked }] = await Promise.all([
+  const [{ tenant, settings }, stats, { from, to, q, sent, blocked }] = await Promise.all([
     tenantSummary(tenantId),
     dashboardStats(tenantId),
-    availableDates(tenantId),
-    latestCaseDate(tenantId),
     searchParams,
   ]);
 
-  // Open on whatever has data, rather than an empty future date.
-  const latest = withCases ?? dates[0] ?? new Date().toISOString().slice(0, 10);
-  const rangeFrom = from ?? latest;
-  const rangeTo = to ?? latest;
+  // Today and the week behind it: what is worth chasing now.
+  const fallback = defaultRange(settings?.timezone);
+  const rangeFrom = from ?? fallback.from;
+  const rangeTo = to ?? fallback.to;
+  const search = q?.trim() ?? '';
 
-  const flagged = await flaggedInRange(tenantId, rangeFrom, rangeTo);
+  const flagged = await flaggedInRange(tenantId, rangeFrom, rangeTo, { search });
   // "Not contacted" means nobody has been asked - which includes a case that
   // exists but has never gone out, as happens when sending is switched off.
   // Judging by the case id alone left such rows unticked, so pressing Contact
   // silently skipped exactly the dates that most needed contacting.
   const awaitingContact = (row: (typeof flagged)[number]) => !row.caseId || row.caseStatus === 'queued';
+  // Only the work that has not started yet. A date somebody has already been
+  // asked about is a case, and a case is followed up in Follow-up cases - two
+  // places showing the same row is two places to act on it twice.
   const notYetContacted = flagged.filter(awaitingContact);
-  // Anyone not yet contacted starts ticked. The signature changes whenever the
-  // table does, which resets the selection to those defaults.
-  const selectionRows = flagged.map((row) => ({
+  const inFollowUp = flagged.length - notYetContacted.length;
+  // Nothing starts ticked: who to contact is a decision, and a page that
+  // arrives with every row ticked makes Contact one slip away from messaging
+  // the lot. The header tick box takes all of them when that is what is wanted.
+  // The signature changes whenever the table does, which resets the selection.
+  const selectionRows = notYetContacted.map((row) => ({
     value: `${row.employeeId}|${row.attDate}`,
-    selected: awaitingContact(row),
+    selected: false,
   }));
-  const selectionKey = selectionRows.map((row) => `${row.value}:${row.selected ? 1 : 0}`).join(',');
+  const selectionKey = selectionRows.map((row) => row.value).join(',');
   const caps = capabilities();
 
   return (
@@ -69,19 +77,24 @@ export default async function DashboardPage({
         </div>
       ) : null}
 
-      {sent || blocked ? (
-        <Notice tone={blocked ? 'err' : 'ok'} clear={['sent', 'blocked']}>
+      {blocked ? (
+        <Notice tone="err" clear={['sent', 'blocked']}>
           {sent ? `Contacted ${sent} ${Number(sent) === 1 ? 'person' : 'people'}. ` : ''}
-          {blocked ? `Nothing sent: ${blocked}.` : ''}
+          Nothing sent: {blocked}.
         </Notice>
+      ) : sent ? (
+        <Toast clear={['sent']}>
+          Contacted {sent} {Number(sent) === 1 ? 'person' : 'people'}.
+        </Toast>
       ) : null}
 
       <section className="page-head">
         <div className="eyebrow">HR command center</div>
         <h1>{tenant?.name}</h1>
         <p style={{ maxWidth: '70ch' }}>
-          Everyone absent or on half-day in these dates. Set how each person is contacted, tick the ones you want, and
-          send.{' '}
+          Everyone absent or on half-day in these dates who has not been contacted yet. Set how each person is
+          contacted, tick the ones you want, and send. Once somebody has been asked, the date becomes a case and is
+          followed up in <Link href="/cases">Follow-up cases</Link>.{' '}
           {stats.dataFrom ? `Attendance data covers ${stats.dataFrom} to ${stats.dataTo}.` : 'No attendance imported yet.'}
         </p>
       </section>
@@ -126,7 +139,7 @@ export default async function DashboardPage({
         valid HTML, so each button names its own action and its own value.
       */}
       <form action={contactSelected}>
-        <SelectionProvider key={selectionKey} rows={selectionRows}>
+        <SelectionProvider key={selectionKey} signature={selectionKey} rows={selectionRows}>
           <div className="card flush">
             <div className="toolbar">
               <div className="field" style={{ minWidth: 160 }}>
@@ -137,17 +150,38 @@ export default async function DashboardPage({
                 <label htmlFor="to">To date</label>
                 <input className="input" type="date" id="to" name="to" form="range" defaultValue={rangeTo} />
               </div>
+              <div className="field" style={{ minWidth: 200, maxWidth: 260, flex: 1 }}>
+                <label htmlFor="q">Employee</label>
+                <input
+                  className="input"
+                  id="q"
+                  name="q"
+                  form="range"
+                  placeholder="Name or code"
+                  defaultValue={search}
+                />
+              </div>
               <button className="btn" type="submit" form="range">
                 Show
               </button>
+              {search || from || to ? (
+                <Link className="btn quiet" href="/">
+                  Reset
+                </Link>
+              ) : null}
               <span className="toolbar-count">
-                {flagged.length} flagged · {notYetContacted.length} not contacted yet
+                {notYetContacted.length} to contact
+                {inFollowUp ? (
+                  <>
+                    {' · '}
+                    <Link href={`/cases?from=${rangeFrom}&to=${rangeTo}${search ? `&q=${encodeURIComponent(search)}` : ''}`}>
+                      {inFollowUp} already in follow-up
+                    </Link>
+                  </>
+                ) : null}
               </span>
               <div className="toolbar-end">
-                <SelectedCount />
-                <button className="btn primary" type="submit">
-                  Contact selected
-                </button>
+                <ContactSelected />
               </div>
             </div>
 
@@ -169,14 +203,14 @@ export default async function DashboardPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {flagged.length ? (
-                    flagged.map((row) => {
+                  {notYetContacted.length ? (
+                    notYetContacted.map((row) => {
                       const key = `${row.employeeId}|${row.attDate}`;
                       return (
                         <tr key={key}>
                           <td>
-                            {/* Already-contacted dates start unticked, so pressing
-                                Contact never repeats a message or a call. */}
+                            {/* Nothing is ticked to begin with - tick the rows you
+                                mean, or use the box in the header for all of them. */}
                             <RowCheckbox value={key} />
                           </td>
                           <td>
@@ -199,47 +233,53 @@ export default async function DashboardPage({
                           <td className="nowrap">
                             <div className="switch-group" role="group" aria-label={`Contact ${row.employeeName} by`}>
                               {(['whatsapp', 'voice'] as const).map((option) => (
-                                <button
+                                <RowSwitch
                                   key={option}
-                                  type="submit"
-                                  formAction={setChannelFromRow.bind(null, row.employeeId, option)}
-                                  className={`switch-option ${row.preferredChannel === option ? 'on' : ''}`}
-                                  aria-pressed={row.preferredChannel === option}
+                                  action={setChannelFromRow.bind(null, row.employeeId, option)}
+                                  on={row.preferredChannel === option}
                                 >
                                   {option === 'voice' ? 'Call' : 'WhatsApp'}
-                                </button>
+                                </RowSwitch>
                               ))}
                             </div>
                           </td>
                           <td className="nowrap">
-                            {/* Only meaningful for someone on Call, so it is shown
-                                greyed out rather than hidden - the column stays
-                                readable as people are switched between channels. */}
-                            <div
-                              className={`switch-group ${row.preferredChannel === 'voice' ? '' : 'muted'}`}
-                              role="group"
-                              aria-label="Call style"
-                            >
-                              {(['keypad', 'agent'] as const).map((option) => {
-                                const on = (row.callMode ?? settings?.callMode ?? 'keypad') === option;
-                                return (
-                                  <button
-                                    key={option}
-                                    type="submit"
-                                    formAction={setCallModeFromRow.bind(null, row.employeeId, option)}
-                                    className={`switch-option ${on ? 'on' : ''}`}
-                                    aria-pressed={on}
-                                    title={
-                                      option === 'agent'
-                                        ? 'A spoken conversation: they answer in their own words'
-                                        : 'The agent reads the options and they press a key'
-                                    }
-                                  >
-                                    {option === 'agent' ? 'Talk' : 'Keypad'}
-                                  </button>
-                                );
-                              })}
-                            </div>
+                            {/* Only meaningful for someone on Call, so on WhatsApp it
+                                is greyed out and dead rather than hidden - the column
+                                stays readable as people are switched between channels,
+                                and a press that would mean nothing does nothing. */}
+                            {(() => {
+                              const onCall = row.preferredChannel === 'voice';
+                              return (
+                                <div
+                                  className={`switch-group ${onCall ? '' : 'muted'}`}
+                                  role="group"
+                                  aria-label="Call style"
+                                  aria-disabled={!onCall}
+                                >
+                                  {(['keypad', 'agent'] as const).map((option) => {
+                                    const on = (row.callMode ?? settings?.callMode ?? 'keypad') === option;
+                                    return (
+                                      <RowSwitch
+                                        key={option}
+                                        action={setCallModeFromRow.bind(null, row.employeeId, option)}
+                                        on={on}
+                                        disabled={!onCall}
+                                        title={
+                                          !onCall
+                                            ? `${row.employeeName} is contacted on WhatsApp — switch them to Call to choose a call style`
+                                            : option === 'agent'
+                                              ? 'A spoken conversation: they answer in their own words'
+                                              : 'The agent reads the options and they press a key'
+                                        }
+                                      >
+                                        {option === 'agent' ? 'Talk' : 'Keypad'}
+                                      </RowSwitch>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="nowrap">
                             <div className="switch-group" role="group" aria-label="Mode">
@@ -250,12 +290,10 @@ export default async function DashboardPage({
                                 // though every row is Manual.
                                 const on = (row.operatingMode ?? settings?.operatingMode ?? 'manual') === option;
                                 return (
-                                  <button
+                                  <RowSwitch
                                     key={option}
-                                    type="submit"
-                                    formAction={setModeFromRow.bind(null, row.employeeId, option)}
-                                    className={`switch-option ${on ? 'on' : ''}`}
-                                    aria-pressed={on}
+                                    action={setModeFromRow.bind(null, row.employeeId, option)}
+                                    on={on}
                                     title={
                                       row.operatingMode
                                         ? `Set for this person, whatever the customer default is`
@@ -263,7 +301,7 @@ export default async function DashboardPage({
                                     }
                                   >
                                     {option === 'automatic' ? 'Auto' : 'Manual'}
-                                  </button>
+                                  </RowSwitch>
                                 );
                               })}
                             </div>
@@ -287,7 +325,11 @@ export default async function DashboardPage({
                   ) : (
                     <tr>
                       <td className="empty" colSpan={9}>
-                        Nobody is absent or on half-day in these dates.
+                        {inFollowUp
+                          ? 'Everyone flagged in these dates has already been contacted.'
+                          : search
+                            ? `Nobody matching "${search}" is absent or on half-day in these dates.`
+                            : 'Nobody is absent or on half-day in these dates.'}
                       </td>
                     </tr>
                   )}
@@ -338,9 +380,17 @@ export default async function DashboardPage({
           </div>
           <div className="btn-row">
             <form action={runFollowUps}>
-              <button className="btn" type="submit">
-                Send due day-{settings?.followUpAfterDays ?? 2} reminders
-              </button>
+              <ConfirmSubmit
+                label={`Send due day-${settings?.followUpAfterDays ?? 2} reminders`}
+                title="Send the reminders now?"
+                message={
+                  <p>
+                    Every case whose day-{settings?.followUpAfterDays ?? 2} reminder is due will be messaged or called,
+                    on whichever channel that person is set to. This goes out straight away.
+                  </p>
+                }
+                confirmLabel="Send reminders"
+              />
             </form>
             <form action={resetAllCases}>
               <button className="btn danger" type="submit">

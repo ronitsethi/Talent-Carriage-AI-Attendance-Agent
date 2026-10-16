@@ -4,6 +4,7 @@ import { closeDb, withTenant } from '@/db';
 import { cases, messages } from '@/db/schema';
 import { handleInbound, pendingCases } from '@/lib/conversation/engine';
 import { selectionId } from '@/lib/conversation/flow';
+import { sheetSelectionId } from '@/lib/conversation/sheet';
 import { runDailyCheck } from '@/lib/detection/run';
 import { giveAttendance, makeScenario, tapOption, typeText, type Scenario } from './helpers/scenario';
 
@@ -80,13 +81,16 @@ describe('one question per absent date, and no reminders', () => {
 describe('answering one date moves the chain along', () => {
   it('sends guidance, then a summary and the next date, in the same conversation', async () => {
     await setupFourAbsences();
-    scenario.channel.clear();
 
     await withTenant(scenario.tenantId, async (tx) => {
       const [second] = await tx.select().from(cases).where(eq(cases.attDate, '2026-08-18'));
+      // Down the flow sheet: working -> missed punch -> the in-punch.
+      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(second!.id, 2)));
+      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, sheetSelectionId(second!.id, 'punch')));
+      scenario.channel.clear();
       const outcome = await handleInbound(
         scenario.context(tx),
-        tapOption(scenario.mobile, selectionId(second!.id, 2)),
+        tapOption(scenario.mobile, sheetSelectionId(second!.id, 'punch_in')),
       );
       expect(outcome).toMatchObject({ handled: true, action: 'answered', caseId: second!.id });
     });
@@ -96,7 +100,7 @@ describe('answering one date moves the chain along', () => {
 
     // 1. the guidance for the date they answered
     expect(sent[0]!.message).toMatchObject({ kind: 'text' });
-    expect((sent[0]!.message as { body: string }).body).toContain('regularization for 18-Aug-2026');
+    expect((sent[0]!.message as { body: string }).body).toContain('missed in-punch on 18-Aug-2026');
 
     // 2. the backlog summary plus the next date's options, as a list
     const next = sent[1]!.message as { kind: string; body: string; rows: { id: string }[] };
@@ -112,7 +116,7 @@ describe('answering one date moves the chain along', () => {
 
     await withTenant(scenario.tenantId, async (tx) => {
       const [last] = await tx.select().from(cases).where(eq(cases.attDate, '2026-08-20'));
-      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(last!.id, 1)));
+      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(last!.id, 3)));
     });
 
     const list = scenario.channel.history().find((s) => s.message.kind === 'list')!;
@@ -135,7 +139,7 @@ describe('answering one date moves the chain along', () => {
           .orderBy(asc(cases.attDate))
           .limit(1);
         expect(next, `expected an outstanding date on round ${i + 1}`).toBeDefined();
-        await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(next!.id, 1)));
+        await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(next!.id, 3)));
       });
     }
 
@@ -181,7 +185,7 @@ describe('the outstanding-question cap', () => {
     scenario.channel.clear();
     await withTenant(scenario.tenantId, async (tx) => {
       const [first] = await tx.select().from(cases).where(eq(cases.attDate, '2026-08-17'));
-      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(first!.id, 1)));
+      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(first!.id, 3)));
 
       const rows = await tx.select().from(cases).orderBy(asc(cases.attDate));
       // The chain asks one date at a time: the next-oldest is re-offered inside
@@ -205,7 +209,7 @@ describe('the outstanding-question cap', () => {
     await withTenant(scenario.tenantId, async (tx) => {
       for (const date of ['2026-08-17', '2026-08-18']) {
         const [row] = await tx.select().from(cases).where(eq(cases.attDate, date));
-        await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(row!.id, 1)));
+        await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(row!.id, 3)));
       }
       const third = await tx.query.cases.findFirst({ where: eq(cases.attDate, '2026-08-19') });
       expect(third!.status).toBe('asked');
@@ -224,8 +228,10 @@ describe('typed replies and duplicates', () => {
       if (outcome.handled) expect(outcome.classification.source).toBe('rules');
     });
 
-    const guidance = scenario.channel.history()[0]!.message as { body: string };
-    expect(guidance.body).toContain('regularization');
+    // "No, I was working" - so the flow sheet asks how.
+    const menu = scenario.channel.history()[0]!.message as { kind: string; body: string };
+    expect(menu.kind).toBe('buttons');
+    expect(menu.body).toContain('What happened on');
   });
 
   it('ignores the same message delivered twice', async () => {

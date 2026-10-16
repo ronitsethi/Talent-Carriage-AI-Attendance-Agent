@@ -7,6 +7,7 @@ import {
   ArrowLeftRight,
   BookOpen,
   ClipboardCheck,
+  ContactRound,
   LayoutDashboard,
   Menu,
   SlidersHorizontal,
@@ -23,6 +24,7 @@ import {
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/cases', label: 'Follow-up cases', icon: ClipboardCheck },
+  { href: '/employees', label: 'Employees', icon: ContactRound },
   { href: '/mapping', label: 'Mapping & import', icon: ArrowLeftRight },
   { href: '/knowledge', label: 'Guidelines', icon: BookOpen },
   { href: '/settings', label: 'Settings', icon: SlidersHorizontal },

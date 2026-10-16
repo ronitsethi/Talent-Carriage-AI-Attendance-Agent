@@ -108,6 +108,8 @@ export type ImportReport = {
   employeesSeen: number;
   employeesCreated: number;
   employeesUpdated: number;
+  /** Deleted employees the file brought back. Absent from reports written before this existed. */
+  employeesRestored?: number;
   daysImported: number;
   rejected: { row: number; employeeCode?: string; reason: string }[];
   unmappedCodes: Record<string, number>;

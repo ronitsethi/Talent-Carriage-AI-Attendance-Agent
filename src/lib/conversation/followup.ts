@@ -15,6 +15,9 @@ import {
 import { channelFor } from '@/lib/channel';
 import { recordFollowUpChoice } from './follow-up-state';
 import { placeCaseCall, type VoiceContext } from '@/lib/voice/session';
+import { today } from '@/lib/dates';
+import { instructionFor, type LeaveChoice, type OutcomeCode } from './outcomes';
+import { writtenFacts } from './sheet';
 import {
   dateLabel,
   followUpAcknowledgement,
@@ -33,7 +36,18 @@ type FollowUpContext = EngineContext & Partial<Pick<VoiceContext, 'voice' | 'bas
 /** Sends one reminder on WhatsApp, with the three buttons it is answered by. */
 export async function sendFollowUpMessage(ctx: EngineContext, caseRow: CaseRow, employee: EmployeeRow, at = new Date()) {
   const label = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
-  const { body, buttons } = followUpMessage(caseRow.replyOption as OptionNumber, label);
+  const reminder = followUpMessage(caseRow.replyOption as OptionNumber, label);
+  const { buttons } = reminder;
+  let body = reminder.body;
+
+  // When the flow sheet settled it, the reminder repeats exactly what they were
+  // told - with the deadline as it was given, counted from the day they answered.
+  const outcome = (caseRow.context as { outcome?: { code: OutcomeCode; leaveChoice: LeaveChoice | null } }).outcome;
+  if (outcome && (caseRow.replyOption === 1 || caseRow.replyOption === 2)) {
+    const answeredOn = caseRow.answeredAt ? today(ctx.settings.timezone, caseRow.answeredAt) : undefined;
+    const facts = await writtenFacts(ctx, caseRow, employee, answeredOn);
+    body = `Reminder about ${label}: "${instructionFor(outcome.code, outcome.leaveChoice, facts)}" Have you done it?`;
+  }
   const ids: FollowUpChoice[] = ['done', 'not_done', 'help'];
 
   await sendButtons(

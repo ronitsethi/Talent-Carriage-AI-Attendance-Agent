@@ -3,9 +3,23 @@ import { eq } from 'drizzle-orm';
 import { calls, cases, employees, tenants, tenantSettings } from '@/db/schema';
 import { closeAnsweredCall, handleTurn, openingTurn } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
-import { withPlatformScope, withTenant } from '@/db';
+import { withPlatformScope, withTenant, type Db } from '@/db';
 import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
 import { env } from '@/lib/env';
+import { collectTimings, mark, timed } from '@/lib/timing';
+import { buildContext } from '@/lib/runtime';
+import {
+  ground,
+  onlyPleasantries,
+  prepareGrounding,
+  talkTurn,
+  voiceLanguage,
+  type HistoryLine,
+  type TalkArgs,
+  type TalkContext,
+  type TalkEvent,
+  type TalkResult,
+} from '@/lib/conversation/talk';
 
 /**
  * The turn API the spoken agent runs on.
@@ -36,13 +50,134 @@ type Body = {
    * employer's guidelines and their own record.
    */
   ask?: { from: string; question?: string };
+  /**
+   * Send the answer as it is written, one JSON line per piece, so the worker
+   * can start speaking before the model has finished. Only for a question.
+   */
+  stream?: boolean;
+  /**
+   * A talking call: every sentence is written for the moment by the
+   * conversation in `talk.ts` rather than read from the keypad script.
+   */
+  talk?: boolean;
+  /**
+   * The words heard so far, sent the moment the caller stops talking: the
+   * guideline search starts on them while the final transcript is written, and
+   * the turn that follows picks it up.
+   */
+  prepare?: string;
+  /** An incoming call keeps no transcript here, so the worker sends it. */
+  history?: HistoryLine[];
 };
+
+const UNKNOWN_CALLER =
+  'Sorry, this number is not on our employee records, so I cannot help over the phone. Please contact your H R team.';
+
+type Employee = NonNullable<Awaited<ReturnType<typeof employeeByNumber>>>;
+
+/**
+ * Runs `fn` for whoever is ringing in, found by their number across every
+ * customer. Null when the number is nobody's.
+ */
+async function withCaller<T>(
+  from: string,
+  fn: (caller: { tx: Db; tenantId: string; employee: Employee }) => Promise<T>,
+): Promise<T | null> {
+  return withPlatformScope(async (tx) => {
+    const all = await timed('caller_lookup', () =>
+      tx.select({ id: tenants.id }).from(tenants).where(eq(tenants.status, 'active')),
+    );
+    for (const tenant of all) {
+      const found = await withTenant(tenant.id, async (t) => {
+        const employee = await timed('caller_lookup', () => employeeByNumber(t, tenant.id, from));
+        return employee ? { value: await fn({ tx: t, tenantId: tenant.id, employee }) } : null;
+      });
+      if (found) return found.value;
+    }
+    return null;
+  });
+}
+
+/**
+ * One turn of a talking call, sent as it is written.
+ *
+ * Lines of JSON: `{"type":"lang"}` naming the language the reply is in, so the
+ * voice can switch before it speaks; `{"type":"text"}` for each piece of the
+ * reply; then one `{"type":"end"}` saying whether the call is over, which date
+ * comes next, and where the time went - in the body, because a header has
+ * already been sent by then.
+ */
+function streamTurn(
+  run: (send: (event: TalkEvent) => void) => Promise<(TalkResult & { say?: string }) | null>,
+  unknown: string,
+): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: Record<string, unknown>) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      try {
+        const { result, header } = await collectTimings(() =>
+          run((event) => {
+            if (event.type === 'text') mark('first_text');
+            send(event);
+          }),
+        );
+        if (!result) send({ type: 'text', text: unknown });
+        send({ type: 'end', done: result ? result.done : true, nextCaseId: result?.nextCaseId ?? null, timing: header });
+      } catch (error) {
+        console.error('[agent-turn] a talking turn failed:', error);
+        send({ type: 'error' });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(body, {
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      // Nothing between here and the worker may hold the pieces back.
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+}
+
+/** The call, its employee and the date being discussed, for a talking turn. */
+async function talkArgs(ctx: TalkContext, callId: string, caseId: string | undefined, said: string | null) {
+  const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
+  if (!call) return null;
+  const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, call.employeeId) });
+  const caseRow = await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseId ?? call.caseId ?? '') });
+  if (!employee || !caseRow) return null;
+  // A reminder is only a reminder for a date that was answered; one HR has
+  // since reopened is asked from the start.
+  const mode: TalkArgs['mode'] = call.purpose === 'follow_up' && caseRow.replyOption ? 'follow_up' : 'first_contact';
+  return { mode, employee, call, caseRow, said, preparedKey: `call:${callId}` } satisfies TalkArgs;
+}
+
+/** Ways of answering the phone, so the same caller does not hear the same words every time. */
+const INBOUND_GREETINGS = [
+  (name: string, company: string) => `Hello ${name}, this is the attendance assistant from ${company}. How can I help?`,
+  (name: string, company: string) => `Hi ${name}! ${company} attendance desk here. What can I do for you?`,
+  (name: string, company: string) => `Hello ${name}, you have reached ${company}'s attendance assistant. Tell me, how can I help you today?`,
+  (name: string) => `Hi ${name}, attendance assistant here. What would you like to know?`,
+];
 
 function unauthorised() {
   return NextResponse.json({ error: 'unauthorised' }, { status: 401 });
 }
 
+/**
+ * Each answer carries a Server-Timing header saying where its time went, which
+ * the worker logs beside its own timings: the caller hears the sum as silence.
+ */
 export async function POST(request: Request) {
+  const { result: response, header } = await collectTimings(() => turn(request));
+  response.headers.set('Server-Timing', header);
+  return response;
+}
+
+async function turn(request: Request) {
   // The worker runs outside this process, so it carries a shared secret. Without
   // one configured the endpoint stays shut rather than open to anyone.
   const presented = request.headers.get('x-agent-token');
@@ -63,58 +198,79 @@ export async function POST(request: Request) {
     return NextResponse.json({ closed: Boolean(closed) });
   }
 
+  if (body.prepare !== undefined) {
+    const said = body.prepare;
+    if (body.ask) {
+      const from = body.ask.from;
+      prepareGrounding(`ask:${from}`, () =>
+        withCaller(from, ({ tx, tenantId, employee }) => ground(tx, tenantId, employee.id, said)),
+      );
+      // The search carries on without being waited for; the worker does wait
+      // for this, to know whether to say the filler.
+      return NextResponse.json({ preparing: true, onlyPleasantries: await onlyPleasantries(said) });
+    } else {
+      prepareGrounding(`call:${callId}`, () =>
+        withCallContext(callId, async (ctx) => {
+          const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId), columns: { employeeId: true } });
+          return call ? ground(ctx.tx, ctx.tenantId, call.employeeId, said) : null;
+        }),
+      );
+    }
+    return NextResponse.json({ preparing: true });
+  }
+
   if (body.ask) {
     const { from, question } = body.ask;
+    if (body.stream && question) {
+      return streamTurn(
+        (send) =>
+          withCaller(from, async ({ tx, tenantId, employee }) =>
+            talkTurn(
+              await buildContext(tx, tenantId),
+              { mode: 'inbound', employee, call: null, caseRow: null, said: question, history: body.history, preparedKey: `ask:${from}` },
+              send,
+            ),
+          ),
+        UNKNOWN_CALLER,
+      );
+    }
 
-    const found = await withPlatformScope(async (tx) => {
-      const all = await tx.select({ id: tenants.id }).from(tenants).where(eq(tenants.status, 'active'));
-      for (const tenant of all) {
-        const answer = await withTenant(tenant.id, async (t) => {
-          const employee = await employeeByNumber(t, tenant.id, from);
-          if (!employee) return null;
-          const settings = await t.query.tenantSettings.findFirst({
-            where: eq(tenantSettings.tenantId, tenant.id),
-          });
-          const company = await t.query.tenants.findFirst({ where: eq(tenants.id, tenant.id) });
+    const found = await withCaller(from, async ({ tx: t, tenantId, employee }) => {
+      const settings = await t.query.tenantSettings.findFirst({
+        where: eq(tenantSettings.tenantId, tenantId),
+      });
+      const company = await t.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
 
-          // No question yet: this is the greeting, so say who is speaking.
-          if (!question) {
-            return {
-              say: `Hello ${employee.fullName.split(/\s+/)[0]}. This is the attendance assistant from ${company?.name ?? 'your employer'}. What would you like to know?`,
-              known: true,
-              voice: settings?.agentVoice ?? 'ritu',
-              pace: Number(settings?.agentVoicePace ?? 0.95),
-              done: false,
-            };
-          }
-
-          const reply = await answerQuestion(t, tenant.id, question, {
-            employeeId: employee.id,
-            employeeName: employee.fullName,
-            budget: 'call',
-          });
-          return {
-            say: reply.text,
-            known: true,
-            voice: settings?.agentVoice ?? 'ritu',
-            pace: Number(settings?.agentVoicePace ?? 0.95),
-            // The model decides whether they were saying goodbye; it judged the
-            // words, which no list of phrases can.
-            done: reply.finished,
-          };
-        });
-        if (answer) return answer;
+      // No question yet: this is the greeting, so say who is speaking.
+      if (!question) {
+        const greet = INBOUND_GREETINGS[Math.floor(Math.random() * INBOUND_GREETINGS.length)]!;
+        return {
+          say: greet(employee.fullName.split(/\s+/)[0] ?? employee.fullName, company?.name ?? 'your employer'),
+          language: voiceLanguage(employee.language ?? settings?.defaultLanguage),
+          known: true,
+          voice: settings?.agentVoice ?? 'ritu',
+          pace: Number(settings?.agentVoicePace ?? 0.95),
+          done: false,
+        };
       }
-      return null;
+
+      const reply = await answerQuestion(t, tenantId, question, {
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+        budget: 'call',
+      });
+      return {
+        say: reply.text,
+        known: true,
+        voice: settings?.agentVoice ?? 'ritu',
+        pace: Number(settings?.agentVoicePace ?? 0.95),
+        // The model decides whether they were saying goodbye; it judged the
+        // words, which no list of phrases can.
+        done: reply.finished,
+      };
     });
 
-    if (!found) {
-      return NextResponse.json({
-        say: 'Sorry, this number is not on our employee records, so I cannot help over the phone. Please contact your H R team.',
-        known: false,
-        done: true,
-      });
-    }
+    if (!found) return NextResponse.json({ say: UNKNOWN_CALLER, known: false, done: true });
     return NextResponse.json(found);
   }
 
@@ -135,6 +291,35 @@ export async function POST(request: Request) {
     });
     if (!brief) return NextResponse.json({ error: 'unknown call' }, { status: 404 });
     return NextResponse.json(brief);
+  }
+
+  if (body.talk && body.stream && body.caseId) {
+    const said = body.speech ?? '';
+    return streamTurn(
+      (send) =>
+        withCallContext(callId, async (ctx) => {
+          const args = await talkArgs(ctx, callId, body.caseId, said);
+          return args ? talkTurn(ctx, args, send) : null;
+        }),
+      'Sorry, I am not able to continue this call right now. Someone from H R will contact you. Goodbye.',
+    );
+  }
+
+  if (body.talk && !body.caseId) {
+    // The opening, asked for while the phone is still ringing, so it is ready
+    // the moment they pick up.
+    const opening = await withCallContext(callId, async (ctx) => {
+      const args = await talkArgs(ctx, callId, undefined, null);
+      if (!args) return null;
+      await ctx.tx.update(calls).set({ status: 'in_progress' }).where(eq(calls.id, callId));
+      let say = '';
+      const result = await talkTurn(ctx, args, (event) => {
+        if (event.type === 'text') say += event.text;
+      });
+      return { say, language: result.language, nextCaseId: result.nextCaseId, done: result.done };
+    });
+    if (!opening) return NextResponse.json({ error: 'unknown call' }, { status: 404 });
+    return NextResponse.json(opening);
   }
 
   const result = await withCallContext(callId, async (ctx) => {

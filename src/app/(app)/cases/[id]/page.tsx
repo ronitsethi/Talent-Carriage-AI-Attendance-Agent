@@ -7,6 +7,7 @@ import { OPTIONS, OPTION_NUMBERS } from '@/lib/conversation/flow';
 import { env } from '@/lib/env';
 import { Notice } from '@/components/notice';
 import { StatusPill } from '@/components/status-pill';
+import { ConfirmSubmit } from '@/components/confirm';
 import { closeCase, contactNow, flagForHr, resetCase, simulateCallAnswer, simulateReply } from '@/app/actions';
 import { callPurposeFor } from '@/lib/voice/session';
 
@@ -37,6 +38,10 @@ export default async function CaseDetailPage({
   const label = caseDateLabel(caseRow.attDate, caseRow.meaning);
   const answered = Boolean(caseRow.answeredAt);
   const pendingApproval = approvals.find((a) => a.decision === 'pending');
+  // HR deleted this employee and chose to keep the case. It can be read, and
+  // that is all: every button that would act on it is gone from here, and the
+  // server actions behind them refuse it too.
+  const gone = Boolean(employee.deletedAt);
 
   return (
     <>
@@ -44,6 +49,16 @@ export default async function CaseDetailPage({
         <Notice tone="err" clear={['blocked']}>
           Nothing was sent: {blocked}.
         </Notice>
+      ) : null}
+
+      {gone ? (
+        <div className="notice info plain">
+          <div className="notice-body">
+            <strong>{employee.fullName} has been deleted.</strong> This case is kept as a record of what was said.
+            Nothing further can be sent about it, and it cannot be closed, reset or flagged — unless an attendance
+            import has them again, which brings both of them back.
+          </div>
+        </div>
       ) : null}
 
       <section className="page-head">
@@ -97,7 +112,7 @@ export default async function CaseDetailPage({
             )}
           </div>
 
-          {env.DRY_RUN && onCall ? (
+          {gone ? null : env.DRY_RUN && onCall ? (
             <div className="sim">
               <div className="sim-title">
                 <span className="chip warn mono caps">Dry run</span>
@@ -274,33 +289,54 @@ export default async function CaseDetailPage({
               </div>
             ) : null}
 
-            <div className="btn-row card-rule" style={{ gap: 6 }}>
-              <form action={contactNow}>
-                <input type="hidden" name="caseId" value={caseRow.id} />
-                <button className="btn small primary" type="submit">
-                  {reminder ? (onCall ? 'Call about the action' : 'Send the reminder') : onCall ? 'Call now' : 'Send now'}
-                </button>
-              </form>
-              <form action={closeCase}>
-                <input type="hidden" name="caseId" value={caseRow.id} />
-                <input type="hidden" name="reason" value="Closed by HR" />
-                <button className="btn small" type="submit">
-                  Close case
-                </button>
-              </form>
-              <form action={flagForHr}>
-                <input type="hidden" name="caseId" value={caseRow.id} />
-                <button className="btn small" type="submit">
-                  Flag for HR
-                </button>
-              </form>
-              <form action={resetCase}>
-                <input type="hidden" name="caseId" value={caseRow.id} />
-                <button className="btn small" type="submit" title="Clears the conversation and makes this an unasked case again">
-                  Reset case
-                </button>
-              </form>
-            </div>
+            {gone ? (
+              <p className="hint card-rule">
+                Kept as a record. {employee.fullName} is deleted, so this case cannot be contacted, closed, flagged or
+                reset until an attendance import brings them back.
+              </p>
+            ) : (
+              <div className="btn-row card-rule" style={{ gap: 6 }}>
+                <form action={contactNow}>
+                  <input type="hidden" name="caseId" value={caseRow.id} />
+                  <ConfirmSubmit
+                    label={reminder ? (onCall ? 'Call about the action' : 'Send the reminder') : onCall ? 'Call now' : 'Send now'}
+                    className="btn small primary"
+                    title={onCall ? `Call ${employee.fullName} now?` : `Message ${employee.fullName} now?`}
+                    message={
+                      <p>
+                        {onCall ? 'Their phone rings' : 'A WhatsApp message goes out'} straight away,{' '}
+                        {reminder ? 'asking whether they have done what they said about' : 'asking about'}{' '}
+                        <strong>{label}</strong>. It cannot be taken back.
+                      </p>
+                    }
+                    confirmLabel={onCall ? 'Call now' : 'Send now'}
+                  />
+                </form>
+                <form action={closeCase}>
+                  <input type="hidden" name="caseId" value={caseRow.id} />
+                  <input type="hidden" name="reason" value="Closed by HR" />
+                  <button className="btn small" type="submit">
+                    Close case
+                  </button>
+                </form>
+                <form action={flagForHr}>
+                  <input type="hidden" name="caseId" value={caseRow.id} />
+                  <button className="btn small" type="submit">
+                    Flag for HR
+                  </button>
+                </form>
+                <form action={resetCase}>
+                  <input type="hidden" name="caseId" value={caseRow.id} />
+                  <button
+                    className="btn small"
+                    type="submit"
+                    title="Clears the conversation and makes this an unasked case again"
+                  >
+                    Reset case
+                  </button>
+                </form>
+              </div>
+            )}
           </section>
 
           {calls.length || onCall ? (

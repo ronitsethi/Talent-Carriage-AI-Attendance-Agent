@@ -13,7 +13,9 @@ import {
 import type { MessageChannel, InboundMessage, Outbound } from '@/lib/channels/types';
 import { ChannelError } from '@/lib/channels/types';
 import type { Meaning } from '@/lib/mapping/meanings';
-import { classifyReply, type Classification } from './classify';
+import { classifyByRules, classifyReply, type Classification } from './classify';
+import { handleStep, handleTopOption, handleTyped, parseSheetSelectionId, sheetState } from './sheet';
+import type { ChatVerdict } from './talk';
 import {
   allClearedMessage,
   backlogSummary,
@@ -62,6 +64,14 @@ export type EngineHooks = {
     employee: EmployeeRow,
     choice: 'done' | 'not_done' | 'help',
   ): Promise<void>;
+  /**
+   * Has the conversation a talking call has, about a typed message on a date:
+   * see `chatTurn`. Null when it could not, and the classifier decides instead.
+   */
+  converse?(
+    ctx: EngineContext,
+    turn: { caseRow: CaseRow; employee: EmployeeRow; text: string; menu: string | null; inboundMessageId: string },
+  ): Promise<ChatVerdict | null>;
   /** Answers a question from the customer's guidelines and the employee's own record. */
   answerQuestion?(ctx: EngineContext, employee: EmployeeRow, question: string): Promise<{ text: string; answered: boolean }>;
 };
@@ -94,6 +104,9 @@ export type SendBlock = { blocked: true; reason: string } | { blocked: false };
  * employee's opt-out, a usable number, and quiet hours.
  */
 export function canSend(ctx: EngineContext, employee: EmployeeRow): SendBlock {
+  // A deleted employee is kept only so their cases can be read. Nothing is ever
+  // sent to them again, whoever asks and however the case was reached.
+  if (employee.deletedAt) return { blocked: true, reason: 'This employee has been deleted' };
   if (!ctx.settings.sendingEnabled) return { blocked: true, reason: 'Sending is switched off for this customer' };
   if (employee.whatsappOptOut) return { blocked: true, reason: 'Employee has opted out of messages' };
   if (!employee.mobileE164) return { blocked: true, reason: 'No mobile number on record' };
@@ -280,6 +293,22 @@ export async function sendPlainText(
   return deliver(ctx, employee, { kind: 'text', to: employee.mobileE164!, body }, { caseId, kind: 'text', body });
 }
 
+/** A list of up to ten rows, for menus with more choices than three buttons hold. */
+export async function sendList(
+  ctx: EngineContext,
+  employee: EmployeeRow,
+  body: string,
+  rows: { id: string; title: string; description?: string }[],
+  caseId?: string | null,
+) {
+  return deliver(
+    ctx,
+    employee,
+    { kind: 'list', to: employee.mobileE164!, body, buttonLabel: 'Choose', rows },
+    { caseId, kind: 'interactive', body },
+  );
+}
+
 /** Up to three reply buttons: offers, approvals and the day-2 follow-up. */
 export async function sendButtons(
   ctx: EngineContext,
@@ -392,8 +421,10 @@ export type InboundOutcome =
  */
 export async function handleInbound(ctx: EngineContext, inbound: InboundMessage): Promise<InboundOutcome> {
   const employee = await ctx.tx.query.employees.findFirst({
-    where: and(eq(employees.tenantId, ctx.tenantId), eq(employees.mobileE164, inbound.from)),
+    where: and(eq(employees.tenantId, ctx.tenantId), eq(employees.mobileE164, inbound.from), isNull(employees.deletedAt)),
   });
+  // A deleted employee's number is a stranger's again: their frozen cases must
+  // not start moving because somebody replied to an old message.
   if (!employee) return { handled: false, reason: 'unknown_sender' };
 
   const conversation = await getConversation(ctx, employee.id);
@@ -473,6 +504,24 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     }
   }
 
+  // A row or button from the flow sheet's menus names its case and its step.
+  const sheetTap = parseSheetSelectionId(inbound.selectionId);
+  if (sheetTap) {
+    const tapped = await ctx.tx.query.cases.findFirst({
+      where: and(eq(cases.id, sheetTap.caseId), eq(cases.employeeId, employee.id), inArray(cases.status, [...UNANSWERED])),
+    });
+    if (tapped) {
+      await ctx.tx.update(messages).set({ caseId: tapped.id }).where(eq(messages.id, inboundRow.id));
+      await handleStep(ctx, tapped, employee, sheetTap.step);
+      return {
+        handled: true,
+        caseId: tapped.id,
+        classification: { intent: 'other', option: null, confidence: 1, source: 'rules' },
+        action: 'answered',
+      };
+    }
+  }
+
   const target = await resolveCase(ctx, employee.id, inbound, conversation.activeCaseId);
   if (target.caseRow) {
     await ctx.tx.update(messages).set({ caseId: target.caseRow.id }).where(eq(messages.id, inboundRow.id));
@@ -486,9 +535,26 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
       confidence: 1,
       source: 'rules',
     };
-    const outcome = await applyAnswer(ctx, target.caseRow, employee, target.option);
-    if (!outcome.offered) await chainNextPending(ctx, employee, target.caseRow.id);
+    await answerOption(ctx, target.caseRow, employee, target.option);
     return { handled: true, caseId: target.caseRow.id, classification, action: 'answered' };
+  }
+
+  // Typed, about a date: the conversation a talking call has, unless it is a
+  // bare option number or a request to stop, which rules settle for nothing.
+  if (target.caseRow && inbound.text?.trim() && !ctx.settings.actionsEnabled) {
+    const rules = classifyByRules(inbound.text);
+    const menuOpen = Boolean(sheetState(target.caseRow)?.menu);
+    if (rules?.intent !== 'opt_out' && !(rules?.option && !menuOpen)) {
+      const typed = await handleTyped(ctx, target.caseRow, employee, inbound.text, inboundRow.id);
+      if (typed) {
+        return {
+          handled: true,
+          caseId: target.caseRow.id,
+          classification: { intent: 'other', option: null, confidence: 1, source: 'model' },
+          action: typed,
+        };
+      }
+    }
   }
 
   const pending = await pendingCases(ctx, employee.id);
@@ -543,8 +609,7 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
   }
 
   if (classification.option) {
-    const outcome = await applyAnswer(ctx, target.caseRow, employee, classification.option, classification);
-    if (!outcome.offered) await chainNextPending(ctx, employee, target.caseRow.id);
+    await answerOption(ctx, target.caseRow, employee, classification.option, classification);
     return { handled: true, caseId: target.caseRow.id, classification, action: 'answered' };
   }
 
@@ -617,6 +682,25 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     })
     .where(eq(cases.id, target.caseRow.id));
   return { handled: true, caseId: target.caseRow.id, classification, action: 'clarified' };
+}
+
+/**
+ * One of the first question's four options.
+ *
+ * With actions switched on, the agent offers to do the work itself, as before.
+ * Otherwise the option opens the customer's flow sheet (`sheet.ts`), which asks
+ * what happened and ends on what to do in the HRMS.
+ */
+async function answerOption(
+  ctx: EngineContext,
+  caseRow: CaseRow,
+  employee: EmployeeRow,
+  option: OptionNumber,
+  classification?: Classification,
+) {
+  if (!ctx.settings.actionsEnabled) return handleTopOption(ctx, caseRow, employee, option);
+  const outcome = await applyAnswer(ctx, caseRow, employee, option, classification);
+  if (!outcome.offered) await chainNextPending(ctx, employee, caseRow.id);
 }
 
 /**

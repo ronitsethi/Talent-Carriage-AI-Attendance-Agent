@@ -1,4 +1,6 @@
-livekit-agents[openai,silero,turn-detector]~=1.0
-livekit-plugins-sarvam~=1.0
+# Pinned to what the running worker was built with, so a rebuild changes only
+# the code and not the libraries underneath it.
+livekit-agents[openai,silero,turn-detector]==1.8.5
+livekit-plugins-sarvam==1.8.5
 python-dotenv~=1.0
-aiohttp~=3.9
+aiohttp==3.14.4

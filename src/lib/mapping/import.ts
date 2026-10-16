@@ -64,6 +64,11 @@ export function mapWorkbook(
  * Re-importing the same file is safe. Days are upserted by (employee, date), so
  * a corrected file overwrites the earlier value and bumps its revision — which
  * is how a later correction can close an open case.
+ *
+ * A deleted employee who appears in the file is brought back, along with any
+ * cases that were kept when they were deleted: the attendance file is the
+ * record of who works here, so somebody in it is an employee again, and their
+ * unfinished cases go back to being work rather than a record.
  */
 export async function importAttendanceFile(
   tx: Db,
@@ -84,6 +89,7 @@ export async function importAttendanceFile(
     employeesSeen: mapped.records.length,
     employeesCreated: 0,
     employeesUpdated: 0,
+    employeesRestored: 0,
     daysImported: 0,
     rejected: mapped.rejected,
     unmappedCodes: mapped.unmapped,
@@ -112,10 +118,11 @@ export async function importAttendanceFile(
     const employeeIdByCode = new Map<string, string>();
 
     for (const record of mapped.records) {
-      const { id, created, updatedFields } = await upsertEmployee(tx, tenantId, record.employee, importId);
+      const { id, created, updatedFields, restored } = await upsertEmployee(tx, tenantId, record.employee, importId);
       employeeIdByCode.set(record.employee.empCode, id);
       if (created) report.employeesCreated++;
       else if (updatedFields) report.employeesUpdated++;
+      if (restored) report.employeesRestored = (report.employeesRestored ?? 0) + 1;
 
       report.daysImported += await writeDays(tx, tenantId, id, record, importId);
     }
@@ -164,8 +171,13 @@ async function upsertEmployee(tx: Db, tenantId: string, emp: MappedEmployee, imp
 
   if (!existing) {
     const [row] = await tx.insert(employees).values(values).returning();
-    return { id: row!.id, created: true, updatedFields: 0 };
+    return { id: row!.id, created: true, updatedFields: 0, restored: false };
   }
+
+  // They were deleted and the file has them again, so they work here again:
+  // the deletion is lifted, which is also what makes the cases that were kept
+  // when they went answerable once more.
+  const restored = Boolean(existing.deletedAt);
 
   // A changed phone number is the one that can misdirect a message, so every
   // change is written to history with the import that caused it.
@@ -180,10 +192,25 @@ async function upsertEmployee(tx: Db, tenantId: string, emp: MappedEmployee, imp
       newValue: values[field] == null ? null : String(values[field]),
       source: importId,
     }));
+  // Coming back is worth a line of its own: it explains why a frozen case
+  // started moving again, and when.
+  if (restored) {
+    changes.push({
+      tenantId,
+      employeeId: existing.id,
+      field: 'deletedAt',
+      oldValue: existing.deletedAt!.toISOString(),
+      newValue: null,
+      source: importId,
+    });
+  }
   if (changes.length) await tx.insert(employeeHistory).values(changes);
 
-  await tx.update(employees).set({ ...values, updatedAt: new Date() }).where(eq(employees.id, existing.id));
-  return { id: existing.id, created: false, updatedFields: changes.length };
+  await tx
+    .update(employees)
+    .set({ ...values, deletedAt: null, updatedAt: new Date() })
+    .where(eq(employees.id, existing.id));
+  return { id: existing.id, created: false, updatedFields: changes.length, restored };
 }
 
 async function writeDays(tx: Db, tenantId: string, employeeId: string, record: MappedRecord, importId: string) {

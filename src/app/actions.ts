@@ -3,11 +3,12 @@
 import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { withTenant } from '@/db';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { withTenant, type Db } from '@/db';
 import {
   actions,
   approvals,
+  attendanceDays,
   calls,
   cases,
   codeMappings,
@@ -36,6 +37,7 @@ import { ensureCase } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { canManageSettings, getActiveTenantId, getSession, isPlatformAdmin, setActiveTenant, signOut } from '@/lib/auth';
 import { AI_BUDGETS, topUpBudget, type AiBudget } from '@/lib/models/budget';
+import { ASKED_STATUSES } from '@/lib/queries';
 import { env } from '@/lib/env';
 import { DEFAULT_AGENT_VOICE, isAgentVoice } from '@/lib/voice/voices';
 import { datesInRange } from '@/lib/dates';
@@ -168,17 +170,34 @@ export async function runFollowUps() {
   revalidatePath('/cases');
 }
 
+/**
+ * Refuses to touch a case belonging to a deleted employee.
+ *
+ * Those cases are kept as a record and nothing more. The buttons are gone from
+ * the page, but a tab opened before the deletion still has them, so the refusal
+ * belongs here as well.
+ */
+async function assertCaseIsLive(tx: Db, tenantId: string, caseId: string) {
+  const [row] = await tx
+    .select({ deletedAt: employees.deletedAt })
+    .from(cases)
+    .innerJoin(employees, eq(employees.id, cases.employeeId))
+    .where(and(eq(cases.tenantId, tenantId), eq(cases.id, caseId)));
+  if (row?.deletedAt) throw new Error('This employee has been deleted; the case is kept as a record only');
+}
+
 export async function closeCase(formData: FormData) {
   const { session, tenantId } = await requireTenant();
   const caseId = String(formData.get('caseId') ?? '');
   const reason = String(formData.get('reason') ?? 'Closed by HR');
 
-  await withTenant(tenantId, (tx) =>
-    tx
+  await withTenant(tenantId, async (tx) => {
+    await assertCaseIsLive(tx, tenantId, caseId);
+    await tx
       .update(cases)
       .set({ status: 'resolved', resolvedAt: new Date(), closeReason: `${reason} (${session.name})`, updatedAt: new Date() })
-      .where(and(eq(cases.tenantId, tenantId), eq(cases.id, caseId))),
-  );
+      .where(and(eq(cases.tenantId, tenantId), eq(cases.id, caseId)));
+  });
   revalidatePath(`/cases/${caseId}`);
   revalidatePath('/cases');
 }
@@ -186,12 +205,13 @@ export async function closeCase(formData: FormData) {
 export async function flagForHr(formData: FormData) {
   const { tenantId } = await requireTenant();
   const caseId = String(formData.get('caseId') ?? '');
-  await withTenant(tenantId, (tx) =>
-    tx
+  await withTenant(tenantId, async (tx) => {
+    await assertCaseIsLive(tx, tenantId, caseId);
+    await tx
       .update(cases)
       .set({ status: 'needs_hr', needsHrReason: 'Flagged by HR', updatedAt: new Date() })
-      .where(and(eq(cases.tenantId, tenantId), eq(cases.id, caseId))),
-  );
+      .where(and(eq(cases.tenantId, tenantId), eq(cases.id, caseId)));
+  });
   revalidatePath(`/cases/${caseId}`);
 }
 
@@ -295,6 +315,7 @@ export async function resetCase(formData: FormData) {
       where: and(eq(cases.tenantId, tenantId), eq(cases.id, caseId)),
     });
     if (!target) return;
+    await assertCaseIsLive(tx, tenantId, caseId);
 
     await tx.delete(messages).where(eq(messages.caseId, caseId));
     await tx.delete(actions).where(eq(actions.caseId, caseId));
@@ -335,6 +356,9 @@ export async function resetAllCases() {
     // named here rather than left to the foreign key.
     await tx.delete(calls).where(eq(calls.tenantId, tenantId));
     await tx.delete(cases).where(eq(cases.tenantId, tenantId));
+    // A deleted employee was kept only to hold their cases up. With the cases
+    // gone there is nothing to read, so the row goes too.
+    await tx.delete(employees).where(and(eq(employees.tenantId, tenantId), isNotNull(employees.deletedAt)));
   });
 
   revalidatePath('/');
@@ -510,6 +534,94 @@ export async function setEmployeeMode(formData: FormData) {
 }
 
 /**
+ * Removes an employee from the workspace.
+ *
+ * Two kinds of deletion, and they come back differently:
+ *
+ *  - Tick "delete their open cases" and nothing of theirs is left. The row goes
+ *    and the database takes their attendance, conversations and calls with it.
+ *    A later import with them in it hires a stranger with the same code.
+ *  - Leave it unticked and the open cases they are in the middle of are kept as
+ *    a record. Those cases need the employee's name, number and transcript, so
+ *    the row has to stay - marked deleted, which makes them invisible on every
+ *    page and unreachable on every channel. A later import with them in it
+ *    clears the mark, and those cases are live work again.
+ *
+ * The dashboard rows (their attendance) and every finished or unsent case go
+ * either way. With nothing worth keeping - no open case with a conversation
+ * behind it - the unticked option has nothing to hold, so the row is deleted
+ * outright.
+ */
+export async function deleteEmployee(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Not allowed');
+  const employeeId = String(formData.get('employeeId') ?? '');
+  const alsoDeleteOpen = formData.get('deleteOpenCases') === 'on';
+  if (!employeeId) return;
+
+  const outcome = await withTenant(tenantId, async (tx) => {
+    const employee = await tx.query.employees.findFirst({
+      where: and(eq(employees.tenantId, tenantId), eq(employees.id, employeeId)),
+    });
+    if (!employee) return null;
+
+    // What survives: open cases that were actually asked, and only when HR did
+    // not ask for those to go too.
+    const theirCases = await tx
+      .select({ id: cases.id, status: cases.status })
+      .from(cases)
+      .where(and(eq(cases.tenantId, tenantId), eq(cases.employeeId, employeeId)));
+    const keptIds = alsoDeleteOpen
+      ? []
+      : theirCases.filter((c) => (ASKED_STATUSES as readonly string[]).includes(c.status)).map((c) => c.id);
+    const doomedIds = theirCases.filter((c) => !keptIds.includes(c.id)).map((c) => c.id);
+
+    if (doomedIds.length) {
+      // Same order as resetting a case: the rows that point at a case first.
+      const caseActions = await tx.select({ id: actions.id }).from(actions).where(inArray(actions.caseId, doomedIds));
+      if (caseActions.length) {
+        await tx.delete(approvals).where(inArray(approvals.actionId, caseActions.map((a) => a.id)));
+      }
+      await tx.delete(messages).where(inArray(messages.caseId, doomedIds));
+      await tx.delete(actions).where(inArray(actions.caseId, doomedIds));
+      await tx.delete(calls).where(inArray(calls.caseId, doomedIds));
+      await tx
+        .update(conversations)
+        .set({ activeCaseId: null })
+        .where(and(eq(conversations.employeeId, employeeId), inArray(conversations.activeCaseId, doomedIds)));
+      await tx.delete(cases).where(inArray(cases.id, doomedIds));
+    }
+
+    // Their attendance goes whichever option was chosen: it is what the
+    // dashboard lists, and there is no longer anyone to ask about it.
+    await tx
+      .delete(attendanceDays)
+      .where(and(eq(attendanceDays.tenantId, tenantId), eq(attendanceDays.employeeId, employeeId)));
+
+    if (keptIds.length) {
+      await tx
+        .update(employees)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(employees.tenantId, tenantId), eq(employees.id, employeeId)));
+    } else {
+      // Nothing left to hold the row up; the rest of theirs cascades from here.
+      await tx.delete(employees).where(and(eq(employees.tenantId, tenantId), eq(employees.id, employeeId)));
+    }
+
+    return { name: employee.fullName, kept: keptIds.length };
+  });
+
+  revalidatePath('/employees');
+  revalidatePath('/cases');
+  revalidatePath('/');
+  if (!outcome) return;
+
+  const params = new URLSearchParams({ deleted: outcome.name });
+  if (outcome.kept) params.set('kept', String(outcome.kept));
+  redirect(`/employees?${params.toString()}`);
+}
+
+/**
  * Contacts one employee about one date now, on whichever channel they are set
  * to. This is the button HR uses in manual mode.
  */
@@ -518,6 +630,7 @@ export async function contactNow(formData: FormData) {
   const caseId = String(formData.get('caseId') ?? '');
 
   const result = await withTenant(tenantId, async (tx) => {
+    await assertCaseIsLive(tx, tenantId, caseId);
     const ctx = await buildContext(tx, tenantId);
     return contactCaseById(ctx, caseId);
   });

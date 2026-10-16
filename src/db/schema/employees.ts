@@ -75,6 +75,21 @@ export const employees = pgTable(
     callOptOut: boolean('call_opt_out').notNull().default(false),
     consentAt: timestamp('consent_at', { withTimezone: true }),
 
+    /**
+     * Deleted by HR, but kept because their open cases are kept as a record.
+     *
+     * A deleted employee is invisible: off the dashboard, out of the daily
+     * check, and unreachable - nothing is sent to them and nothing they send is
+     * acted on. Only their cases remain, read-only, in Follow-up cases. When HR
+     * deletes the open cases too there is nothing left to hold, so the row is
+     * deleted outright rather than marked.
+     *
+     * Cleared when an attendance file has them again: the file is the record of
+     * who works here, so they are an employee once more and the cases that were
+     * kept become live work again.
+     */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+
     /** The source row as imported, for tracing any mapping question later. */
     sourceRow: jsonb('source_row').$type<Record<string, unknown>>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
