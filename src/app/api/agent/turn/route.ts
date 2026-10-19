@@ -8,6 +8,7 @@ import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
 import { env } from '@/lib/env';
 import { collectTimings, mark, timed } from '@/lib/timing';
 import { buildContext } from '@/lib/runtime';
+import { agentGender } from '@/lib/voice/voices';
 import {
   ground,
   onlyPleasantries,
@@ -68,6 +69,11 @@ type Body = {
   prepare?: string;
   /** An incoming call keeps no transcript here, so the worker sends it. */
   history?: HistoryLine[];
+  /**
+   * The employee cut the agent's last line off, and heard this much of it -
+   * nothing, if empty. Absent when they heard it all.
+   */
+  heard?: string;
 };
 
 const UNKNOWN_CALLER =
@@ -143,7 +149,7 @@ function streamTurn(
 }
 
 /** The call, its employee and the date being discussed, for a talking turn. */
-async function talkArgs(ctx: TalkContext, callId: string, caseId: string | undefined, said: string | null) {
+async function talkArgs(ctx: TalkContext, callId: string, caseId: string | undefined, said: string | null, heard?: string) {
   const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
   if (!call) return null;
   const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, call.employeeId) });
@@ -152,7 +158,7 @@ async function talkArgs(ctx: TalkContext, callId: string, caseId: string | undef
   // A reminder is only a reminder for a date that was answered; one HR has
   // since reopened is asked from the start.
   const mode: TalkArgs['mode'] = call.purpose === 'follow_up' && caseRow.replyOption ? 'follow_up' : 'first_contact';
-  return { mode, employee, call, caseRow, said, preparedKey: `call:${callId}` } satisfies TalkArgs;
+  return { mode, employee, call, caseRow, said, heard, preparedKey: `call:${callId}` } satisfies TalkArgs;
 }
 
 /** Ways of answering the phone, so the same caller does not hear the same words every time. */
@@ -205,9 +211,6 @@ async function turn(request: Request) {
       prepareGrounding(`ask:${from}`, () =>
         withCaller(from, ({ tx, tenantId, employee }) => ground(tx, tenantId, employee.id, said)),
       );
-      // The search carries on without being waited for; the worker does wait
-      // for this, to know whether to say the filler.
-      return NextResponse.json({ preparing: true, onlyPleasantries: await onlyPleasantries(said) });
     } else {
       prepareGrounding(`call:${callId}`, () =>
         withCallContext(callId, async (ctx) => {
@@ -216,7 +219,9 @@ async function turn(request: Request) {
         }),
       );
     }
-    return NextResponse.json({ preparing: true });
+    // The search carries on without being waited for; the worker does wait
+    // for this, to know whether to say a filler.
+    return NextResponse.json({ preparing: true, onlyPleasantries: await onlyPleasantries(said) });
   }
 
   if (body.ask) {
@@ -249,6 +254,7 @@ async function turn(request: Request) {
           language: voiceLanguage(employee.language ?? settings?.defaultLanguage),
           known: true,
           voice: settings?.agentVoice ?? 'ritu',
+          gender: agentGender(settings?.agentVoice),
           pace: Number(settings?.agentVoicePace ?? 0.95),
           done: false,
         };
@@ -284,6 +290,7 @@ async function turn(request: Request) {
         : null;
       return {
         voice: ctx.settings.agentVoice,
+        gender: agentGender(ctx.settings.agentVoice),
         pace: Number(ctx.settings.agentVoicePace),
         language: employee?.language ?? ctx.settings.defaultLanguage,
         company: ctx.companyName,
@@ -298,7 +305,7 @@ async function turn(request: Request) {
     return streamTurn(
       (send) =>
         withCallContext(callId, async (ctx) => {
-          const args = await talkArgs(ctx, callId, body.caseId, said);
+          const args = await talkArgs(ctx, callId, body.caseId, said, body.heard);
           return args ? talkTurn(ctx, args, send) : null;
         }),
       'Sorry, I am not able to continue this call right now. Someone from H R will contact you. Goodbye.',

@@ -36,3 +36,11 @@ export const DEFAULT_AGENT_VOICE = 'ritu';
 export function isAgentVoice(value: string): boolean {
   return AGENT_VOICES.some((voice) => voice.id === value);
 }
+
+/**
+ * Whether the voice is a woman's or a man's. Hindi says so in the verb - "main
+ * samajh gayi" or "samajh gaya" - so the words must match the voice speaking them.
+ */
+export function agentGender(id: string | null | undefined): AgentVoice['gender'] {
+  return AGENT_VOICES.find((voice) => voice.id === id)?.gender ?? 'female';
+}

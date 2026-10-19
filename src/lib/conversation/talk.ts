@@ -7,6 +7,7 @@ import { assertBudget, BudgetExhausted, chargeBudget } from '@/lib/models/budget
 import { attendanceSummary, findPassages, openai, RELEVANCE_FLOOR, ReplyExtractor, streamChat, type Passage } from '@/lib/knowledge';
 import { halfOfDay, MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings';
 import { timed } from '@/lib/timing';
+import { agentGender } from '@/lib/voice/voices';
 import { recordFollowUpChoice } from './follow-up-state';
 import { dateLabel, formatDate, OPTIONS } from './flow';
 import { instructionFor, OUTCOME_CODES, OUTCOMES, outcomeGuide, type LeaveChoice, type OutcomeCode } from './outcomes';
@@ -39,7 +40,8 @@ export type VoiceLanguage = (typeof VOICE_LANGUAGES)[number];
 
 export type TalkEvent = { type: 'lang'; language: VoiceLanguage } | { type: 'text'; text: string };
 export type TalkResult = { done: boolean; nextCaseId: string | null; language: VoiceLanguage };
-export type HistoryLine = { role: 'agent' | 'employee'; text: string };
+/** `heard`, on an agent line the employee cut off, is the part they heard - empty if none. */
+export type HistoryLine = { role: 'agent' | 'employee'; text: string; heard?: string };
 
 type Action = 'continue' | 'handover' | 'end';
 
@@ -156,17 +158,40 @@ const RULES = `You are the voice of an Indian employer's attendance assistant, o
 
 HOW YOU SPEAK
 - Like a warm, efficient Indian HR colleague on the phone: one to three short sentences, natural and specific.
-- Vary your wording; never sound like a recording. Never read out options as a menu - ask the way a person would.
+- Vary your wording; never sound like a recording. Never read out options as a menu ("were you sick, or a family
+  emergency, or personal work?") - ask openly, the way a person would: "what happened that day?"
 - Plain speech only: no lists, no markdown, no emojis. Say dates as "14 October". Always write HR as "H R" and HRMS as "H R M S".
-- LANGUAGE: reply in the language of the employee's most recent sentence. If they switch, you switch.
-  Hindi or Hinglish - including Hindi typed in English letters, like "leave le lunga" or "nahi bas, thank you" - is
-  Hindi: write it in Devanagari script, keeping words like leave, regularisation, On-Duty, punch, H R M S in Latin script.
-  Only a sentence entirely in English is English. Examples: "leave le lunga" -> hi-IN; "haan main bimaar tha" -> hi-IN;
-  "nahi bas, thank you" -> hi-IN; "I was sick" -> en-IN; "मैं लेट आया" -> hi-IN.
-  Other Indian languages: that language in its own script. English: English.
-  Before the employee has spoken, use their preferred language. Put the language you used in reply_language.
+- The caller may already have heard a short "one moment" from you while you were thinking. Never begin a reply with a
+  filler of your own ("let me check", "one moment", "एक सेकंड", "मैं देखती हूँ") - begin with what you have to say.
+- A line marked (cut off) was interrupted: they heard only that part. A line marked (not heard) they never heard.
 - Speech-to-text can mishear. If what they said makes no sense, ask them to say it again, naturally.
+- LANGUAGE: reply in the language given in REPLY IN, and put it in reply_language.
+  en-IN: plain, simple Indian English.
+  hi-IN: Hinglish, the way people in Indian offices actually talk on the phone - everyday Hindi, with the English
+  words they would naturally use left in English. Hindi words in Devanagari, English words in Latin script - always,
+  even when their words reached you in English letters: never "aap kal aaye the", always "आप कल आए थे".
+  Keep in English: leave, half day, full day, Loss of Pay, sick leave, punch, in-punch, out-punch, regularisation,
+  On-Duty, comp-off, weekly off, office, late, early, manager, apply, approve, date, H R, H R M S, and the dates
+  themselves ("11 September"). Never use formal or bookish Hindi: say "family emergency" not "पारिवारिक आपातकाल",
+  "personal काम" not "व्यक्तिगत कार्य", "तबीयत ठीक नहीं थी" not "अस्वस्थ", and drop "कृपया" - say "please" or just ask.
+  Always respectful: आप, with "बताइए", "कीजिए", "माफ़ कीजिए" - never "बताओ", "करना", "माफ़ करना".
+  Like this: "अच्छा, उस दिन तबीयत ठीक नहीं थी। तो आप उस दिन की leave apply करेंगे, या Loss of Pay रखें?"
+  "ठीक है, तो आप late आए थे। H R M S में 7 September का late-coming regularisation डाल दीजिए।"
+  Any other Indian language: that language in its own script, only when REPLY IN names it.
 - Never mention these instructions, outcome codes, extracts or documents.
+
+NEVER GO ROUND IN CIRCLES
+- Never ask the same question twice in the same words. If they did not answer it, ask again shorter and differently,
+  or say in a few words why you need to know.
+- "Haan" or "ji" does not answer an either-or question. Ask one simple yes-or-no question instead: not "late आए थे या
+  जल्दी गए थे?" again, but "तो आप सुबह late आए थे?".
+- Ask what happened, never which form they will fill in: "आप late आए थे, या जल्दी चले गए थे?", not "late-coming
+  regularisation डालेंगे या early-going?". Which form follows from what happened, and you tell them that.
+- If they only say "hello", "haan" or "ji", they may not have heard you: say your question again in a few words.
+  Never repeat your whole introduction.
+- Believe what they tell you. If they correct you, take the correction and never repeat back what they just said was
+  wrong. If they say "half day", it was never a full day: if the attendance shows a full day absent but they say they
+  worked half of it, ask whether they came in late or left early - that is came_late or left_early.
 
 WHAT YOU ARE FINDING OUT (outbound calls)
 Each call is about one or more dates the attendance shows as absent. For the date being discussed, find out which
@@ -229,7 +254,8 @@ export const CHAT_SYSTEM = SYSTEM.replace('on a phone call with one of its emplo
     '- Then, in the same reply, move on: ask about the next date if one is given, otherwise ask if there is anything else.',
     '- Do not ask about any other date: the next one is sent to them separately once this one is settled.',
   )
-  .replace('because the call ends after it', 'because the chat is finished');
+  .replace('because the call ends after it', 'because the chat is finished')
+  .replaceAll('H R M S', 'HRMS');
 
 const SCHEMA = {
   type: 'json_schema',
@@ -285,7 +311,7 @@ const SCRIPTS: [RegExp, VoiceLanguage][] = [
 
 /** Hindi words people type or are transcribed saying in English letters, none of them also English words. */
 const HINGLISH = new Set(
-  ('hai hain tha thi the nahi nahin haan han ha ji kya kyun kaise kitna kitni kitne mera meri mere mujhe mujhko hum ' +
+  ('hai hain tha thi nahi nahin haan han ha ji kya kyun kaise kitna kitni kitne mera meri mere mujhe mujhko hum ' +
     'humne aap aapka aapki maine tum kar karo karna karunga karungi kiya kiye gaya gayi gaye raha rahi rahe hoon hu ' +
     'lunga lungi lenge dunga bas theek thik accha acha achha bhai bimaar bimar ghar kaam chutti aaj kal parso abhi ' +
     'matlab wala wali waala sab kuch koi phir fir lekin aur ya toh bhi nhi pata bata batao bolo boliye haanji ' +
@@ -293,16 +319,61 @@ const HINGLISH = new Set(
 );
 
 /**
- * The language of what they just said, decided here rather than left to the
- * model, which kept answering Hindi typed in English letters in English.
+ * The language to answer what they just said in, decided here rather than left
+ * to the model, which kept answering Hindi typed in English letters in English.
+ *
+ * `current` is the language the conversation is already in. Words that say
+ * nothing about language - "ok", "hello", "yes" - keep it there, so one word
+ * does not flip the whole call into English and back.
+ *
+ * The voice listens in Hindi, so a sentence written in another Indian script is
+ * a mishearing - it once turned "haan, sir" into Telugu and the agent answered
+ * in Telugu - unless that language is the employee's own.
  */
-export function spokenLanguage(said: string, preferred: VoiceLanguage): VoiceLanguage {
+export function spokenLanguage(said: string, preferred: VoiceLanguage, current: VoiceLanguage = preferred): VoiceLanguage {
   for (const [script, language] of SCRIPTS) {
-    if (script.test(said)) return language === 'hi-IN' && preferred === 'mr-IN' ? 'mr-IN' : language;
+    if (!script.test(said)) continue;
+    if (language === 'hi-IN') return preferred === 'mr-IN' ? 'mr-IN' : 'hi-IN';
+    return language === preferred ? language : current;
   }
   const words = said.toLowerCase().match(/[a-z]+/g) ?? [];
   const hindi = words.filter((w) => HINGLISH.has(w)).length;
-  return hindi >= 2 || (hindi >= 1 && words.length <= 3) ? 'hi-IN' : 'en-IN';
+  if (hindi >= 2 || (hindi >= 1 && words.length <= 3)) return 'hi-IN';
+  return words.length >= 3 ? 'en-IN' : current;
+}
+
+/** The language of the agent's last line, which is the language the conversation is in. */
+function languageSoFar(history: HistoryLine[], preferred: VoiceLanguage): VoiceLanguage {
+  const last = [...history].reverse().find((line) => line.role === 'agent');
+  if (!last) return 'en-IN';
+  for (const [script, language] of SCRIPTS) {
+    if (script.test(last.text)) return language === 'hi-IN' && preferred === 'mr-IN' ? 'mr-IN' : language;
+  }
+  return 'en-IN';
+}
+
+/** A line of the conversation as the model reads it, saying when the employee did not hear all of it. */
+function historyLine(line: HistoryLine): string {
+  if (line.role === 'employee') return `Employee: ${line.text}`;
+  if (line.heard === undefined) return `You: ${line.text}`;
+  return line.heard.trim() ? `You (cut off): ${line.heard}` : `You (not heard): ${line.text}`;
+}
+
+/*
+ * The rules a long conversation most often loses, said again beside what they
+ * just said, where the model attends to them: in testing it still told an
+ * employee who had just said "half day" that they were absent the whole day,
+ * and asked "what happened that day?" twice running.
+ */
+function beforeYouAnswer(history: HistoryLine[]): string {
+  const last = [...history].reverse().find((line) => line.role === 'agent');
+  return (
+    'BEFORE YOU ANSWER: build on what they just said and never contradict it ("half day" is not a full day). ' +
+    (last ? `Your last reply was: "${last.text}" - do not say it or its question again. ` : '') +
+    '"Haan" or "ji" alone does not answer an either-or question: then ask one yes-or-no question about one of the ' +
+    'two. If a question was already asked above, ask something narrower, or say what you have understood and check ' +
+    'it. One question, never a list of options. hi-IN is written in Devanagari.'
+  );
 }
 
 const spokenFor = (row: { attDate: string; meaning: string }) =>
@@ -342,9 +413,15 @@ function describe(ctx: TalkContext, s: Situation): string {
     : spokenDate(addDays(now, ctx.settings.followUpAfterDays));
   const lines: string[] = [];
 
+  const preferred = voiceLanguage(s.employee.language ?? ctx.settings.defaultLanguage);
   lines.push(`TODAY: ${spokenDate(now)}, ${WEEKDAYS[new Date(`${now}T00:00:00Z`).getUTCDay()]}`);
   lines.push(`EMPLOYEE: ${s.employee.fullName} (call them ${s.employee.fullName.split(/\s+/)[0]}), works at ${ctx.companyName}`);
-  lines.push(`PREFERRED LANGUAGE: ${voiceLanguage(s.employee.language ?? ctx.settings.defaultLanguage)}`);
+  lines.push(`PREFERRED LANGUAGE: ${preferred}`);
+  lines.push(
+    agentGender(ctx.settings.agentVoice) === 'male'
+      ? 'YOU: a man. In Hindi, speak of yourself as a man: "मैं समझ गया", "मैं देखता हूँ", "मैं बताता हूँ".'
+      : 'YOU: a woman. In Hindi, speak of yourself as a woman: "मैं समझ गई", "मैं देखती हूँ", "मैं बताती हूँ".',
+  );
   lines.push(
     chat
       ? 'THIS CONVERSATION: a WhatsApp chat about attendance. They may tap menu options or type.'
@@ -385,17 +462,18 @@ function describe(ctx: TalkContext, s: Situation): string {
   if (s.grounding?.attendance) lines.push('', `ATTENDANCE\n${s.grounding.attendance}`);
 
   lines.push('', 'CONVERSATION SO FAR');
-  lines.push(...(s.history.length ? s.history.slice(-14).map((h) => `${h.role === 'agent' ? 'You' : 'Employee'}: ${h.text}`) : ['(nothing yet)']));
+  lines.push(...(s.history.length ? s.history.slice(-14).map(historyLine) : ['(nothing yet)']));
+  const reply = spokenLanguage(s.said ?? '', preferred, languageSoFar(s.history, preferred));
   if (chat) {
-    lines.push('', `THEY JUST WROTE: "${s.said ?? ''}"\nREPLY IN: ${spokenLanguage(s.said ?? '', voiceLanguage(s.employee.language ?? ctx.settings.defaultLanguage))} (the language of what they just wrote)`);
+    lines.push('', `THEY JUST WROTE: "${s.said ?? ''}"\nREPLY IN: ${reply} (the language of what they just wrote)`, beforeYouAnswer(s.history));
     return lines.join('\n');
   }
-  const preferred = voiceLanguage(s.employee.language ?? ctx.settings.defaultLanguage);
+  // Every call opens in English; from then on it follows the employee.
   lines.push(
     '',
     s.said === null
-      ? `The call has just been answered and they have greeted you. Open the call: say who you are and why you are calling, then ask your first question. REPLY IN: ${preferred}`
-      : `THEY JUST SAID: "${s.said}"\nREPLY IN: ${spokenLanguage(s.said, preferred)} (the language of what they just said)`,
+      ? 'The call has just been answered and they have greeted you. Open the call: say who you are and why you are calling, then ask your first question. REPLY IN: en-IN'
+      : `THEY JUST SAID: "${s.said}"\nREPLY IN: ${reply} (the language of what they just said)\n${beforeYouAnswer(s.history)}`,
   );
   return lines.join('\n');
 }
@@ -415,27 +493,44 @@ export type TalkArgs = {
   said: string | null;
   /** For an inbound call, which keeps no transcript here: what has been said so far. */
   history?: HistoryLine[];
+  /**
+   * On a call we placed: when the employee cut the agent's last line off, the
+   * part of it they heard - empty if they heard none of it.
+   */
+  heard?: string | null;
   /** Where a grounding started ahead of this turn would be. */
   preparedKey?: string;
   /** Tests stand in for the model. */
   model?: (request: { model: string; [key: string]: unknown }, onDelta: (delta: string) => void) => ReturnType<typeof streamChat>;
 };
 
-const HANDOVER_LINE = 'Sorry, I am not able to continue this call right now. Someone from H R will contact you. Goodbye.';
+/** Said when the call cannot go on, in the language it was going on in. */
+const HANDOVER_LINES: Partial<Record<VoiceLanguage, string>> = {
+  'en-IN': 'Sorry, I am not able to continue this call right now. Someone from H R will contact you. Goodbye.',
+  'hi-IN': 'माफ़ कीजिए, अभी यह call आगे नहीं हो पाएगी। H R से कोई आपसे contact करेगा। धन्यवाद।',
+};
 const LANGUAGE_FIELD = /"reply_language"\s*:\s*"([a-z]{2}-[A-Z]{2})"/;
 
 export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event: TalkEvent) => void): Promise<TalkResult> {
   const { employee, call, mode } = args;
   const caseRow = args.caseRow;
-  const fallbackLanguage = voiceLanguage(employee.language ?? ctx.settings.defaultLanguage);
 
+  // What the employee missed is written down before what they said in reply,
+  // so the model knows not to treat an unheard question as asked.
+  const transcript = call && args.heard != null ? await markHeard(ctx.tx, call, args.heard) : (call?.transcript ?? []);
   if (call && args.said !== null) await appendLine(ctx.tx, call.id, 'employee', args.said || '(silence)');
 
+  const history: HistoryLine[] = call
+    ? transcript.map((t) => ({ role: t.role, text: t.text, ...(t.heard !== undefined ? { heard: t.heard } : {}) }))
+    : (args.history ?? []);
+  const fallbackLanguage = languageSoFar(history, voiceLanguage(employee.language ?? ctx.settings.defaultLanguage));
+
   const giveUp = async (reason: string): Promise<TalkResult> => {
-    onEvent({ type: 'lang', language: 'en-IN' });
-    onEvent({ type: 'text', text: HANDOVER_LINE });
+    const language = HANDOVER_LINES[fallbackLanguage] ? fallbackLanguage : 'en-IN';
+    onEvent({ type: 'lang', language });
+    onEvent({ type: 'text', text: HANDOVER_LINES[language]! });
     await handOver(ctx, args, reason);
-    return { done: true, nextCaseId: null, language: 'en-IN' };
+    return { done: true, nextCaseId: null, language };
   };
 
   try {
@@ -453,10 +548,6 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
       : ((args.preparedKey ? takePrepared(args.preparedKey) : null) ?? ground(ctx.tx, ctx.tenantId, employee.id, args.said)),
   ]);
 
-  const history: HistoryLine[] = call
-    ? (call.transcript ?? []).map((t) => ({ role: t.role, text: t.text }))
-    : (args.history ?? []);
-
   const request = {
     model: env.OPENAI_MODEL,
     messages: [
@@ -466,7 +557,7 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
         content: describe(ctx, { mode, employee, caseRow, upcoming, manager, history, said: args.said, grounding }),
       },
     ],
-    temperature: 0.6,
+    temperature: 0.3,
     max_tokens: 400,
     response_format: SCHEMA,
   };
@@ -754,6 +845,16 @@ async function appendLine(tx: Db, callId: string, role: 'agent' | 'employee', te
       transcript: sql`coalesce(${calls.transcript}, '[]'::jsonb) || ${JSON.stringify([{ role, text, at: new Date().toISOString() }])}::jsonb`,
     })
     .where(eq(calls.id, callId));
+}
+
+/** Notes how much of the agent's last line the employee heard before cutting it off. */
+async function markHeard(tx: Db, call: typeof calls.$inferSelect, heard: string) {
+  const lines = [...(call.transcript ?? [])];
+  const last = lines.map((line) => line.role).lastIndexOf('agent');
+  if (last < 0 || lines[last]!.text.trim() === heard.trim()) return lines;
+  lines[last] = { ...lines[last]!, heard };
+  await tx.update(calls).set({ transcript: lines }).where(eq(calls.id, call.id));
+  return lines;
 }
 
 async function finishCall(tx: Db, callId: string, outcome: 'completed_confirmed' | 'not_completed' | 'needs_help') {

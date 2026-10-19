@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
 from dataclasses import dataclass
 
@@ -49,30 +50,36 @@ LLM_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 STT_MODEL = os.environ.get("OPENAI_STT_MODEL", "gpt-4o-transcribe")
 
 
-# Sarvam finalises a transcript the moment it hears the end of speech, rather
-# than waiting on its own timer; without this the caller waited about 0.7s more
-# for their words to be written down before anything else could start.
-STT_FLUSH = True
-
-# Which language Sarvam listens for. "unknown" lets it tell for itself, sentence
-# by sentence, so a caller who switches to Hindi is written down in Hindi - and
-# answered in it - rather than squeezed into English. "codemix" writes Hinglish
-# the way it is spoken: Hindi in Devanagari, the English words in English.
-STT_LANGUAGE = os.environ.get("AGENT_STT_LANGUAGE", "unknown")
+# Which language Sarvam listens for. Left to tell for itself ("unknown"), it
+# guessed afresh every sentence and once wrote "haan, sir" down in Telugu - and
+# the agent answered in Telugu. Listening in Hindi with "codemix" writes what
+# people actually say on these calls: Hindi in Devanagari, the English words in
+# English, and a sentence in English as plain English. Only an employee whose
+# own language is another Indian language is listened to in that language.
+# AGENT_STT_LANGUAGE overrides all of this, for testing.
+STT_LANGUAGE = os.environ.get("AGENT_STT_LANGUAGE", "")
 STT_MODE = os.environ.get("AGENT_STT_MODE", "codemix")
+STT_OWN_LANGUAGES = {"bn", "gu", "kn", "ml", "mr", "or", "od", "pa", "ta", "te"}
 
-# The longest the agent waits, once the caller goes quiet, before treating the
-# turn as over. LiveKit's turn detector waited its default of 2.5s whenever it
-# thought the caller might go on, and on our calls it usually did - which was
-# most of the silence after every question.
-END_OF_TURN_MAX_S = 0.5
+# Words these calls are about, so Sarvam hears "missed punch" rather than
+# "निस्पंज".
+STT_HINT = (
+    "An HR call about attendance. Words: leave, half day, full day, sick leave, Loss of Pay, punch, in-punch, "
+    "out-punch, missed punch, regularisation, On-Duty, comp-off, weekly off, late, early, office, manager, H R M S."
+)
+
+# How long the caller must be quiet before their turn is over. Half a second
+# cut sentences with a pause in them into two turns, and each was answered.
+END_OF_TURN_MIN_S = 0.8
+END_OF_TURN_MAX_S = 1.5
 
 TURN_HANDLING = {
-    "endpointing": {"max_delay": END_OF_TURN_MAX_S},
+    "endpointing": {"min_delay": END_OF_TURN_MIN_S, "max_delay": END_OF_TURN_MAX_S},
     "interruption": {
         # One word - "hello?", "haan" - is somebody saying they are there, not
         # somebody cutting in, and stopping mid-sentence for it left the caller
-        # in two seconds of silence.
+        # in two seconds of silence. Two words stop the agent at once: the
+        # realtime recogniser hands over words while they are still talking.
         "min_words": 2,
         # And when something does stop the agent and turns out to be nothing,
         # it carries on after a moment rather than after LiveKit's two seconds.
@@ -80,10 +87,65 @@ TURN_HANDLING = {
     },
 }
 
-# If no part of a reply has arrived by then, the caller hears this instead of
-# silence. A colleague looking something up says as much.
+# If no part of a reply has arrived by then, the caller hears a filler instead
+# of silence, as from a colleague looking something up. Several, so it does not
+# sound like a recording, in the language the call is in and - in Hindi, where
+# the verb says so - as the voice speaking it. A language with none here gets
+# silence rather than a filler in the wrong language.
 FILLER_AFTER_S = 0.5
-FILLER = "Okay, let me check."
+FILLERS = {
+    ("en-IN", "female"): [
+        "Okay, one moment.",
+        "Sure, let me see.",
+        "Hmm, just a second.",
+        "Right, give me a moment.",
+        "Okay, let me check that.",
+        "Got it, one second.",
+    ],
+    ("hi-IN", "female"): [
+        "जी, एक सेकंड।",
+        "अच्छा, मैं देखती हूँ।",
+        "हम्म, बस एक मिनट।",
+        "ठीक है, एक सेकंड दीजिए।",
+        "जी, मैं check करती हूँ।",
+        "अच्छा, समझ गई, एक सेकंड।",
+    ],
+    ("hi-IN", "male"): [
+        "जी, एक सेकंड।",
+        "अच्छा, मैं देखता हूँ।",
+        "हम्म, बस एक मिनट।",
+        "ठीक है, एक सेकंड दीजिए।",
+        "जी, मैं check करता हूँ।",
+        "अच्छा, समझ गया, एक सेकंड।",
+    ],
+}
+FILLERS[("en-IN", "male")] = FILLERS[("en-IN", "female")]
+
+# Said when the platform cannot be reached, in the language the call is in.
+TROUBLE = {
+    "en-IN": "Sorry, I am having trouble just now. Someone from H R will contact you. Goodbye.",
+    "hi-IN": "माफ़ कीजिए, अभी थोड़ी दिक्कत आ रही है। H R से कोई आपसे contact करेगा। धन्यवाद।",
+}
+TROUBLE_INBOUND = {
+    "en-IN": "Sorry, I am having trouble just now. Please contact your H R team. Goodbye.",
+    "hi-IN": "माफ़ कीजिए, अभी थोड़ी दिक्कत आ रही है। Please अपनी H R team से contact कीजिए। धन्यवाद।",
+}
+
+# What somebody says to show they are still there. Said while the agent is
+# already working on a reply, it is not something to answer as well - answering
+# it was how the agent came to say the same thing twice.
+STILL_THERE = set(
+    (
+        "hello hello? hi haan han ha ji hmm hm ok okay achha acha accha yes yeah sir madam mam "
+        "हेलो हैलो हाँ हां जी हम्म ओके अच्छा"
+    ).split()
+)
+
+
+def only_still_there(said: str) -> bool:
+    words = [w.strip(".,!?;:'\"।").lower() for w in said.split()]
+    words = [w for w in words if w]
+    return bool(words) and len(words) <= 2 and all(w in STILL_THERE for w in words)
 
 # ...but not to "thank you" or "bye": there is nothing to check, and saying so
 # sounds like a machine. The platform's model judges that, however it is put,
@@ -187,9 +249,15 @@ class TurnApi:
         """One turn of a call somebody made to us, rather than one we made."""
         return await self._raw({"ask": {"from": caller, "question": question}})
 
-    def talk(self, case_id: str, speech: str):
-        """One turn of a call we placed, a piece at a time - see `_stream`."""
-        return self._stream({"callId": self._call_id, "caseId": case_id, "speech": speech, "talk": True, "stream": True})
+    def talk(self, case_id: str, speech: str, heard: str | None = None):
+        """
+        One turn of a call we placed, a piece at a time - see `_stream`.
+        `heard` is how much of the last reply the caller heard, when they cut it off.
+        """
+        body = {"callId": self._call_id, "caseId": case_id, "speech": speech, "talk": True, "stream": True}
+        if heard is not None:
+            body["heard"] = heard
+        return self._stream(body)
 
     def ask_stream(self, caller: str, question: str, history: list[dict]):
         """One turn of a call somebody made to us, a piece at a time."""
@@ -201,8 +269,8 @@ class TurnApi:
 
         Sent the moment the caller stops talking. The final transcript takes
         Sarvam most of a second more, and the search runs in that time instead
-        of after it. On a call somebody made to us, the platform also says
-        whether the words are only a thank-you or goodbye - see `only_pleasantries`.
+        of after it. The platform also says whether the words are only a
+        thank-you or goodbye - see `only_pleasantries`.
         """
         body = {"prepare": said, **({"ask": {"from": caller}} if caller else {"callId": self._call_id})}
         try:
@@ -322,13 +390,25 @@ class TurnApi:
         return Turn.parse(await self._send({"callId": self._call_id, **body}, timeout=15))
 
 
+def heard_of(handle) -> str | None:  # noqa: ANN001
+    """
+    How much of a reply the caller heard: None if all of it, the words played
+    before they cut in if they did - empty if none were.
+    """
+    if not handle.interrupted:
+        return None
+    return " ".join(
+        item.text_content or "" for item in handle.chat_items if getattr(item, "role", None) == "assistant"
+    ).strip()
+
+
 class TalkingAgent(Agent):
     """
     What both kinds of call share: speaking a reply as the platform writes it,
     in the language it is written in, and letting the caller say hello first.
     """
 
-    def __init__(self, api: TurnApi, instructions: str) -> None:
+    def __init__(self, api: TurnApi, instructions: str, gender: str = "female") -> None:
         super().__init__(instructions=instructions)
         self._api = api
         self._finished = False
@@ -337,27 +417,100 @@ class TalkingAgent(Agent):
         # Set by `search_early`, which keeps the words of the turn in progress.
         self.forget_heard = lambda: None
         self._check = None
+        self._gender = gender
+        # Every call opens in English, and the platform says when that changes.
+        self._language = "en-IN"
+        self._last_filler: str | None = None
+        # When the agent last started and finished working on a reply - see `_stale`.
+        self._busy = (0.0, 0.0)
+        # Whether the caller has started on something new while a reply is
+        # still being written - see `_listen_for_cut_ins`.
+        self._writing = False
+        self._new_speech = False
+        self._cut_in = False
 
     def _switch_language(self, language: str | None) -> None:
         """Sets the voice to the language of what it is about to say."""
         if not language:
             return
+        self._language = language
         try:
             self.session.tts.update_options(target_language_code=language)
         except Exception:  # noqa: BLE001 - the wrong accent beats no voice
             log.exception("could not switch the voice to %s", language)
 
-    async def _speak_stream(self, stream, filler=None) -> tuple[dict, str]:  # noqa: ANN001
+    def _listen_for_cut_ins(self) -> None:
+        """
+        Notices the caller starting on something new while a reply is still
+        being written.
+
+        LiveKit can stop a reply it is speaking, but not one still being
+        written: that was spoken in full after the caller had moved on, and
+        their new words were answered after it - the same thing said twice.
+        """
+
+        @self.session.on("user_state_changed")
+        def _started(ev) -> None:  # noqa: ANN001
+            if self._writing and ev.new_state == "speaking":
+                self._new_speech = True
+
+        @self.session.on("user_input_transcribed")
+        def _words(ev) -> None:  # noqa: ANN001
+            said = ev.transcript or ""
+            if self._writing and self._new_speech and len(said.split()) >= 2 and not only_still_there(said):
+                self._cut_in = True
+
+    def _stale(self, said: str, message) -> bool:  # noqa: ANN001
+        """
+        A "hello?" or "haan" said while the agent was busy with the last reply:
+        somebody checking the line is still there, not something to answer.
+        """
+        stopped = (getattr(message, "metrics", None) or {}).get("stopped_speaking_at")
+        start, end = self._busy
+        return bool(stopped) and start <= stopped <= end and only_still_there(said)
+
+    def _filler(self) -> str | None:
+        """A filler in the call's language and the voice's gender, not the one said last."""
+        options = FILLERS.get((self._language, self._gender))
+        if not options:
+            return None
+        choice = random.choice([f for f in options if f != self._last_filler] or options)
+        self._last_filler = choice
+        return choice
+
+    async def _wants_filler(self, said: str) -> bool:
+        """
+        Whether to say a filler: not for a pleasantry. The platform's verdict
+        decides, given a moment more if it is nearly back; the word list if not.
+        """
+        check = self._check
+        if check is not None:
+            try:
+                verdict = await asyncio.wait_for(asyncio.shield(check), CHECK_GRACE_S)
+                if verdict is not None:
+                    return not verdict
+            except Exception:  # noqa: BLE001 - late or failed: the word list decides
+                pass
+        log.info("the pleasantry check was not back in time; using the word list")
+        return not only_pleasantries(said)
+
+    async def _speak_stream(self, stream, filler=None) -> tuple[dict, str, str | None]:  # noqa: ANN001
         """
         Speaks a reply while it is still being written.
 
-        Returns the platform's verdict (done, next date) and what was said. The
-        language arrives before the first word, so the voice is switched before
-        speaking starts. `filler`, when given, is asked if nothing of the reply
-        has arrived within FILLER_AFTER_S, and the filler is said if it agrees.
+        Returns the platform's verdict (done, next date), what was written, and
+        how much of it the caller heard - see `heard_of`. The language arrives
+        before the first word, so the voice is switched before speaking starts.
+        `filler`, when given, is asked if nothing of the reply has arrived
+        within FILLER_AFTER_S, and a filler is said if it agrees.
+
+        If the caller starts on something new before the reply is ready, it is
+        not said at all: their new words come next, and the platform is told
+        they never heard this one.
         """
         outcome: dict = {"done": False, "next_case_id": None}
         spoken: list[str] = []
+        started = time.time()
 
         async def first_text() -> str | None:
             async for piece in stream:
@@ -370,19 +523,39 @@ class TalkingAgent(Agent):
                     return piece
             return None
 
-        first = asyncio.ensure_future(first_text())
-        if filler:
-            try:
-                await asyncio.wait_for(asyncio.shield(first), FILLER_AFTER_S)
-            except asyncio.TimeoutError:
-                if await filler():
-                    log.info("timing: nothing yet after %.1fs, saying the filler", FILLER_AFTER_S)
-                    self.session.say(FILLER)
-                else:
-                    log.info("timing: nothing yet after %.1fs, but no filler for a pleasantry", FILLER_AFTER_S)
-        opening = await first
+        self._writing, self._new_speech, self._cut_in = True, False, False
+        try:
+            first = asyncio.ensure_future(first_text())
+            if filler:
+                try:
+                    await asyncio.wait_for(asyncio.shield(first), FILLER_AFTER_S)
+                except asyncio.TimeoutError:
+                    said = self._filler() if await filler() else None
+                    if said:
+                        log.info("timing: nothing yet after %.1fs, saying a filler", FILLER_AFTER_S)
+                        self.session.say(said)
+                    else:
+                        log.info("timing: nothing yet after %.1fs, but no filler for this", FILLER_AFTER_S)
+            opening = await first
+        finally:
+            self._writing = False
         if opening is None:
-            return outcome, ""
+            self._busy = (started, time.time())
+            return outcome, "", None
+
+        if self._cut_in:
+            log.info("the caller moved on before the reply was ready; not saying it")
+            spoken.append(opening)
+            try:
+                async for piece in stream:
+                    if isinstance(piece, dict):
+                        outcome.update(piece)
+                    elif isinstance(piece, str):
+                        spoken.append(piece)
+            except Exception:
+                log.exception("the unsaid reply broke off part way")
+            self._busy = (started, time.time())
+            return outcome, "".join(spoken), ""
 
         async def rest():
             spoken.append(opening)
@@ -398,8 +571,10 @@ class TalkingAgent(Agent):
                 # What was already said stands; the rest of this reply is lost.
                 log.exception("the reply broke off part way")
 
-        await self.session.say(rest())
-        return outcome, "".join(spoken)
+        handle = self.session.say(rest())
+        await handle
+        self._busy = (started, time.time())
+        return outcome, "".join(spoken), heard_of(handle)
 
     async def _wait_for_hello(self, wait_s: float) -> None:
         """
@@ -423,6 +598,13 @@ class TalkingAgent(Agent):
         """A short turn before the introduction is over: their hello, not an answer."""
         return self._greeting and len(said.split()) <= GREETING_WORDS
 
+    def _skip(self, said: str, message) -> bool:  # noqa: ANN001
+        """Turns not to answer: nothing said, the call over, their hello, or a stale "haan"."""
+        if self._stale(said, message):
+            log.info("not answering %r: said while the last reply was under way", said)
+            return True
+        return self._finished or not said or self._is_greeting(said)
+
     async def _hang_up(self) -> None:
         self._finished = True
         await self.session.drain()
@@ -440,19 +622,23 @@ class AttendanceAgent(TalkingAgent):
     speech recognition has some idea what the call is about.
     """
 
-    def __init__(self, api: TurnApi, answered: asyncio.Event) -> None:
+    def __init__(self, api: TurnApi, answered: asyncio.Event, gender: str = "female") -> None:
         super().__init__(
             api,
             instructions=(
                 "You are an attendance assistant for an Indian employer, calling an employee "
                 "about days they were marked absent. You speak Indian English and Hindi."
             ),
+            gender=gender,
         )
         self._answered = answered
         self._case_id: str | None = None
+        # How much of the last reply the caller heard, when they cut it off.
+        self._heard: str | None = None
 
     async def on_enter(self) -> None:
         """The phone is ringing. Have the introduction ready for when they pick up."""
+        self._listen_for_cut_ins()
         opening = asyncio.ensure_future(self._api.opening())
         await self._answered.wait()
         await self._wait_for_hello(GREETING_WAIT_S)
@@ -471,24 +657,31 @@ class AttendanceAgent(TalkingAgent):
 
         self._case_id = turn.next_case_id
         self._switch_language(turn.language)
-        await self.session.say(turn.say)
+        started = time.time()
+        handle = self.session.say(turn.say)
+        await handle
+        self._busy = (started, time.time())
+        self._heard = heard_of(handle)
         self._greeting = False
         if turn.done:
             await self._hang_up()
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # noqa: ANN001
         log_turn_timing(new_message)
-        self.forget_heard()
+        self._check = self.forget_heard()
         said = (new_message.text_content or "").strip()
-        if self._finished or not said or not self._case_id or self._is_greeting(said):
+        if self._skip(said, new_message) or not self._case_id:
             raise StopResponse()
 
+        heard, self._heard = self._heard, None
         try:
-            outcome, _ = await self._speak_stream(self._api.talk(self._case_id, said))
+            outcome, _, self._heard = await self._speak_stream(
+                self._api.talk(self._case_id, said, heard),
+                filler=lambda: self._wants_filler(said),
+            )
         except Exception:
             log.exception("turn API failed; handing the call over")
-            self._switch_language("en-IN")
-            await self.session.say("Sorry, I am having trouble just now. Someone from H R will contact you. Goodbye.")
+            await self.session.say(TROUBLE.get(self._language) or TROUBLE["en-IN"])
             await self._hang_up()
             raise StopResponse()
 
@@ -514,6 +707,7 @@ class QuestionAgent(TalkingAgent):
                 "You are an attendance and HR assistant for an Indian employer, speaking to an "
                 "employee who has telephoned in. You speak Indian English and Hindi."
             ),
+            gender=greeting.get("gender") or "female",
         )
         self._caller = caller
         self._opening = greeting
@@ -521,28 +715,19 @@ class QuestionAgent(TalkingAgent):
         # the conversation so far travels with each turn.
         self._history: list[dict] = []
 
-    async def _wants_filler(self, said: str) -> bool:
-        """
-        Whether to say the filler: not for a pleasantry. The platform's verdict
-        decides, given a moment more if it is nearly back; the word list if not.
-        """
-        check = self._check
-        if check is not None:
-            try:
-                verdict = await asyncio.wait_for(asyncio.shield(check), CHECK_GRACE_S)
-                if verdict is not None:
-                    return not verdict
-            except Exception:  # noqa: BLE001 - late or failed: the word list decides
-                pass
-        log.info("the pleasantry check was not back in time; using the word list")
-        return not only_pleasantries(said)
+    def _remember(self, text: str, heard: str | None) -> None:
+        self._history.append({"role": "agent", "text": text, **({"heard": heard} if heard is not None else {})})
 
     async def on_enter(self) -> None:
+        self._listen_for_cut_ins()
         await self._wait_for_hello(INBOUND_GREETING_WAIT_S)
         say = self._opening.get("say") or "Hello, this is the attendance assistant. How can I help?"
         self._switch_language(self._opening.get("language"))
-        await self.session.say(say)
-        self._history.append({"role": "agent", "text": say})
+        started = time.time()
+        handle = self.session.say(say)
+        await handle
+        self._busy = (started, time.time())
+        self._remember(say, heard_of(handle))
         self._greeting = False
         if self._opening.get("done"):
             await self._hang_up()
@@ -551,22 +736,22 @@ class QuestionAgent(TalkingAgent):
         log_turn_timing(new_message)
         self._check = self.forget_heard()
         said = (new_message.text_content or "").strip()
-        if self._finished or not said or self._is_greeting(said):
+        if self._skip(said, new_message):
             raise StopResponse()
 
         try:
-            outcome, spoken = await self._speak_stream(
+            outcome, spoken, heard = await self._speak_stream(
                 self._api.ask_stream(self._caller, said, self._history[-14:]),
                 filler=lambda: self._wants_filler(said),
             )
         except Exception:
             log.exception("turn API failed on an incoming call")
-            self._switch_language("en-IN")
-            await self.session.say("Sorry, I am having trouble just now. Please contact your H R team. Goodbye.")
+            await self.session.say(TROUBLE_INBOUND.get(self._language) or TROUBLE_INBOUND["en-IN"])
             await self._hang_up()
             raise StopResponse()
 
-        self._history += [{"role": "employee", "text": said}, {"role": "agent", "text": spoken}]
+        self._history.append({"role": "employee", "text": said})
+        self._remember(spoken, heard)
         if outcome.get("done"):
             await self._hang_up()
         raise StopResponse()
@@ -691,12 +876,28 @@ async def wait_until_answered(room, answered: asyncio.Event) -> None:  # noqa: A
         room.off("participant_connected", check)
 
 
-def make_stt():  # noqa: ANN201
-    return (
-        sarvam.STT(language=STT_LANGUAGE, mode=STT_MODE, flush_signal=STT_FLUSH)
-        if STT_VENDOR == "sarvam"
-        else openai.STT(model=STT_MODEL)
-    )
+def stt_language(language: str | None) -> str:
+    """What Sarvam listens for, given the employee's language - see STT_LANGUAGE."""
+    if STT_LANGUAGE:
+        return STT_LANGUAGE
+    short = (language or "").lower().replace("_", "-").split("-")[0]
+    if short in STT_OWN_LANGUAGES:
+        return "or-IN" if short in ("or", "od") else f"{short}-IN"
+    return "hi-IN"
+
+
+def make_stt(language: str | None):  # noqa: ANN201
+    """
+    Sarvam's realtime recogniser, which hands over words while the caller is
+    still speaking. The one before it wrote nothing down until they stopped, so
+    the agent could not tell that two words had been said and talked on over
+    them.
+    """
+    if STT_VENDOR != "sarvam":
+        return openai.STT(model=STT_MODEL)
+    listen = stt_language(language)
+    log.info("listening in %s, %s", listen, STT_MODE)
+    return sarvam.STTRealtime(language=listen, mode=STT_MODE, prompt=STT_HINT)
 
 
 def prewarm(proc: JobProcess) -> None:
@@ -752,7 +953,7 @@ async def entrypoint(ctx: JobContext) -> None:
         pace = float(brief.get("pace") or VOICE_PACE)
 
         session = AgentSession(
-            stt=make_stt(),
+            stt=make_stt(brief.get("language")),
             llm=openai.LLM(model=LLM_MODEL),
             tts=sarvam.TTS(target_language_code="en-IN", model=VOICE_MODEL, speaker=voice, pace=pace),
             vad=ctx.proc.userdata["vad"],
@@ -773,7 +974,7 @@ async def entrypoint(ctx: JobContext) -> None:
         log.info("call %s speaks as %s at pace %s", call_id, voice, pace)
     except Exception:
         log.exception("could not read the voice for call %s; using the default", call_id)
-        voice, pace = VOICE, VOICE_PACE
+        brief, voice, pace = {}, VOICE, VOICE_PACE
 
     session = AgentSession(
         # Ears and a voice. The decisions that matter are not made here - see
@@ -783,7 +984,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # an American accent reading Indian names, and it is trained on the
         # Hinglish people actually speak on the phone. A slightly slower pace
         # than natural helps on a bad line.
-        stt=make_stt(),
+        stt=make_stt(brief.get("language")),
         # Present because AgentSession expects one, and used only for phrasing.
         # It never decides the flow: every turn is intercepted before it speaks.
         llm=openai.LLM(model=LLM_MODEL),
@@ -799,7 +1000,7 @@ async def entrypoint(ctx: JobContext) -> None:
     watch_timing(session)
     answered = asyncio.Event()
     asyncio.ensure_future(wait_until_answered(ctx.room, answered))
-    agent = AttendanceAgent(api_client, answered)
+    agent = AttendanceAgent(api_client, answered, gender=brief.get("gender") or "female")
     agent.forget_heard = search_early(session, api_client.prepare)
     await session.start(agent=agent, room=ctx.room)
 

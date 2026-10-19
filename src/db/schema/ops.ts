@@ -147,8 +147,12 @@ export const calls = pgTable(
 
     status: text('status').notNull().default('queued'), // queued | ringing | in_progress | completed | failed
     outcome: callOutcome('outcome'),
-    /** Turn-by-turn, so a spoken conversation is auditable like a chat. */
-    transcript: jsonb('transcript').$type<{ role: 'agent' | 'employee'; text: string; at: string }[]>(),
+    /**
+     * Turn-by-turn, so a spoken conversation is auditable like a chat. `heard`
+     * is set on an agent line the employee cut off: the part they actually
+     * heard, empty if none of it.
+     */
+    transcript: jsonb('transcript').$type<{ role: 'agent' | 'employee'; text: string; at: string; heard?: string }[]>(),
     recordingUri: text('recording_uri'),
     usedKeypadFallback: boolean('used_keypad_fallback').notNull().default(false),
     durationSeconds: integer('duration_seconds'),

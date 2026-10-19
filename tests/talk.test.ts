@@ -193,9 +193,119 @@ describe('which language to answer in', () => {
     expect(spokenLanguage('haan main bimaar tha', 'en-IN')).toBe('hi-IN');
     expect(spokenLanguage('मेरी बाइक खराब हो गई थी', 'en-IN')).toBe('hi-IN');
     expect(spokenLanguage('मी आजारी होतो', 'mr-IN')).toBe('mr-IN');
-    expect(spokenLanguage('હું બીમાર હતો', 'en-IN')).toBe('gu-IN');
+    expect(spokenLanguage('હું બીમાર હતો', 'gu-IN')).toBe('gu-IN');
     expect(spokenLanguage('I was sick that day', 'hi-IN')).toBe('en-IN');
     expect(spokenLanguage('I went to the client site in Gurgaon', 'en-IN')).toBe('en-IN');
     expect(spokenLanguage('how many casual leaves do I get?', 'en-IN')).toBe('en-IN');
+  });
+
+  it('does not follow a mishearing into another language', () => {
+    // "haan, sir", written down in Telugu: the call was in Hindi, and stays there.
+    expect(spokenLanguage('ఆ. అవును sir.', 'en-IN', 'hi-IN')).toBe('hi-IN');
+    expect(spokenLanguage('ਹਾਂਜੀ।', 'en-IN', 'hi-IN')).toBe('hi-IN');
+  });
+
+  it('keeps the language the call is in when a few words say nothing about it', () => {
+    expect(spokenLanguage('ok', 'en-IN', 'hi-IN')).toBe('hi-IN');
+    expect(spokenLanguage('hello?', 'en-IN', 'hi-IN')).toBe('hi-IN');
+    expect(spokenLanguage('yes', 'en-IN', 'en-IN')).toBe('en-IN');
+    // "the" is English, not the Hindi "the" of "ho gaye the".
+    expect(spokenLanguage('on the 14th', 'en-IN', 'en-IN')).toBe('en-IN');
+  });
+});
+
+/** A model that keeps what it was asked, and answers with this reply. */
+function listening(reply: string, language = 'en-IN') {
+  const asked: string[] = [];
+  const model: NonNullable<TalkArgs['model']> = async (request, onDelta) => {
+    asked.push(JSON.stringify(request.messages));
+    return says({ action: 'continue', reply, reply_language: language })(request, onDelta);
+  };
+  return { model, asked };
+}
+
+/** Turns on the call about the newest date, one after another, with this context. */
+async function turns(
+  steps: { said: string | null; heard?: string; model: NonNullable<TalkArgs['model']> }[],
+  voice = 'ritu',
+) {
+  return withTenant(scenario.tenantId, async (tx) => {
+    const base = scenario.context(tx);
+    const ctx = { ...base, settings: { ...base.settings, agentVoice: voice } };
+    const caseRow = await tx.query.cases.findFirst({ where: eq(cases.attDate, '2026-09-23') });
+    const employee = await tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) });
+    const events: TalkEvent[][] = [];
+    for (const step of steps) {
+      const call = await tx.query.calls.findFirst({ where: eq(calls.caseId, caseRow!.id) });
+      prepareGrounding(`call:${call!.id}`, async () => ({ passages: [], attendance: '' }));
+      const these: TalkEvent[] = [];
+      await talkTurn(
+        ctx,
+        { mode: 'first_contact', employee: employee!, call: call!, caseRow: caseRow!, said: step.said, heard: step.heard, preparedKey: `call:${call!.id}`, model: step.model },
+        (e) => these.push(e),
+      );
+      events.push(these);
+    }
+    const call = await tx.query.calls.findFirst({ where: eq(calls.caseId, caseRow!.id) });
+    return { events, transcript: call!.transcript! };
+  });
+}
+
+describe('what the employee actually heard', () => {
+  it('notes a reply they cut off, and tells the model they did not hear it', async () => {
+    await threeAbsentDays();
+    const second = listening('Sorry - what happened on 23 September?');
+    const { transcript } = await turns([
+      { said: null, model: listening('Hi, I am calling about 23 September. What happened that day?').model },
+      { said: 'wait, who is this?', heard: '', model: second.model },
+    ]);
+
+    expect(transcript[0]).toMatchObject({ role: 'agent', heard: '' });
+    expect(second.asked[0]).toContain('You (not heard): Hi, I am calling about 23 September');
+  });
+
+  it('gives the part they heard when they cut in part way', async () => {
+    await threeAbsentDays();
+    const second = listening('Okay.');
+    await turns([
+      { said: null, model: listening('Hi, I am calling about 23 September. What happened that day?').model },
+      { said: 'I was on leave', heard: 'Hi, I am calling about', model: second.model },
+    ]);
+
+    expect(second.asked[0]).toContain('You (cut off): Hi, I am calling about');
+  });
+});
+
+describe('who is speaking', () => {
+  it("speaks Hindi as the voice's gender", async () => {
+    await threeAbsentDays();
+    const woman = listening('Hello');
+    await turns([{ said: null, model: woman.model }], 'ritu');
+    expect(woman.asked[0]).toContain('YOU: a woman');
+
+    const man = listening('Hello');
+    await turns([{ said: null, model: man.model }], 'rahul');
+    expect(man.asked[0]).toContain('YOU: a man');
+  });
+
+  it('opens in English, whatever language the employee is set to', async () => {
+    await threeAbsentDays();
+    const opening = listening('Hello');
+    await turns([{ said: null, model: opening.model }]);
+    expect(opening.asked[0]).toContain('REPLY IN: en-IN');
+  });
+
+  it('gives up in the language the call was in', async () => {
+    await threeAbsentDays();
+    const broken: NonNullable<TalkArgs['model']> = async () => {
+      throw new Error('model down');
+    };
+    const { events } = await turns([
+      { said: null, model: listening('नमस्ते, 23 September को क्या हुआ था?', 'hi-IN').model },
+      { said: 'main bimaar tha', model: broken },
+    ]);
+
+    expect(events[1]![0]).toEqual({ type: 'lang', language: 'hi-IN' });
+    expect(events[1]!.some((e) => e.type === 'text' && e.text.includes('H R से कोई'))).toBe(true);
   });
 });
