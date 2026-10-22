@@ -10,6 +10,7 @@ import {
   ContactRound,
   LayoutDashboard,
   Menu,
+  MessagesSquare,
   SlidersHorizontal,
   Users,
   type LucideIcon,
@@ -24,6 +25,7 @@ import {
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/cases', label: 'Follow-up cases', icon: ClipboardCheck },
+  { href: '/queries', label: 'Queries', icon: MessagesSquare },
   { href: '/employees', label: 'Employees', icon: ContactRound },
   { href: '/mapping', label: 'Mapping & import', icon: ArrowLeftRight },
   { href: '/knowledge', label: 'Guidelines', icon: BookOpen },

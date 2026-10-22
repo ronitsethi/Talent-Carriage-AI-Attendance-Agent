@@ -2,6 +2,7 @@ import { openingTurn } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
 import { promptXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
+import { recordingsConfigured } from '@/lib/recordings';
 
 /** Plivo fetches this the moment the employee picks up. */
 async function handle(request: Request) {
@@ -19,6 +20,7 @@ async function handle(request: Request) {
       speak: turn.speak,
       intro: turn.intro,
       actionUrl: `${env.APP_BASE_URL}/api/voice/input?call=${callId}&case=${turn.nextCaseId}`,
+      recordTo: recordingsConfigured() ? `${env.APP_BASE_URL}/api/voice/recorded?call=${callId}` : undefined,
     }),
   );
 }

@@ -9,7 +9,8 @@ export type JobKind =
   | 'approval_timeout'
   | 'verify_action'
   | 'import_file'
-  | 'refresh_leave_balances';
+  | 'refresh_leave_balances'
+  | 'query_feedback';
 
 export type Job = typeof jobs.$inferSelect;
 
@@ -56,7 +57,10 @@ export async function enqueue(
 
 /** Takes up to `limit` jobs that are due, locking them against other workers. */
 export async function claim(workerId: string, limit = 5): Promise<Job[]> {
-  const { rows } = await db.execute<Job>(sql`
+  // Every customer's jobs, not only the platform's own: outside the platform
+  // scope, row-level security shows this query only jobs with no tenant, and a
+  // customer's job sat pending for ever.
+  const { rows } = await withPlatformScope((tx) => tx.execute<Record<string, unknown>>(sql`
     with due as (
       select id from ${jobs}
       where status = 'pending' and run_at <= now()
@@ -69,8 +73,12 @@ export async function claim(workerId: string, limit = 5): Promise<Job[]> {
     from due
     where j.id = due.id
     returning j.*
-  `);
-  return rows;
+  `));
+  // Raw rows come back with the database's names - tenant_id, max_attempts -
+  // and every handler reads the job's own: tenantId, maxAttempts.
+  return rows.map(
+    (row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()), value])) as Job,
+  );
 }
 
 export async function complete(jobId: string): Promise<void> {

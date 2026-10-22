@@ -23,7 +23,21 @@ export type PromptOptions = {
   /** Voice and language Plivo speaks and listens in. */
   language?: string;
   timeoutSeconds?: number;
+  /**
+   * Record the whole call, and tell this URL where the file is once it is done.
+   * Given on a call's first answer only: Plivo keeps recording to the hang-up.
+   */
+  recordTo?: string;
 };
+
+/**
+ * Records the call in the background until it ends, without a beep and without
+ * holding up what comes next. It must come first, or what is said before it is
+ * lost.
+ */
+const recordSession = (callbackUrl: string) =>
+  `  <Record recordSession="true" redirect="false" maxLength="3600" fileFormat="mp3" ` +
+  `callbackUrl="${escape(callbackUrl)}" callbackMethod="POST"/>`;
 
 /** Plivo allows 5-60 seconds; the default of 15 is short for a spoken menu. */
 const DEFAULT_TIMEOUT = 20;
@@ -34,11 +48,13 @@ export function promptXml({
   actionUrl,
   language = 'en-IN',
   timeoutSeconds = DEFAULT_TIMEOUT,
+  recordTo,
 }: PromptOptions): string {
   const timeout = Math.min(60, Math.max(5, Math.round(timeoutSeconds)));
 
   return xml(
     [
+      recordTo ? recordSession(recordTo) : null,
       intro ? `  <Speak language="${language}">${escape(intro)}</Speak>` : null,
       getInput(speak, actionUrl, language, timeout),
       // Reached only when nothing at all was entered or said: Plivo falls
@@ -104,6 +120,7 @@ export function questionXml({
   language = 'en-IN',
   timeoutSeconds = 20,
   audio = [],
+  recordTo,
 }: QuestionOptions): string {
   const timeout = Math.min(60, Math.max(5, timeoutSeconds));
 
@@ -128,6 +145,7 @@ export function questionXml({
 
   return xml(
     [
+      recordTo ? recordSession(recordTo) : null,
       intro ? say(intro) : null,
       say(speak),
       listen(),

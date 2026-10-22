@@ -170,6 +170,8 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .hint { font-size: var(--fs-meta); color: var(--ink-500); }
 
 .layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
+/* A case or a query: what it is on the left, the conversation on the right. */
+.layout.details-first { grid-template-columns: minmax(300px, 1fr) minmax(0, 1.6fr); }
 .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 /* Cards that tile. A card spanning two tracks drops back to one when only one fits. */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; container-type: inline-size; }
@@ -335,6 +337,10 @@ table.data th:first-child, table.data td:first-child { padding-left: 16px; }
 table.data th:last-child, table.data td:last-child { padding-right: 16px; }
 table.data tr:last-child td { border-bottom: none; }
 table.data tbody tr:hover { background: var(--hover-tint); }
+/* The whole row opens it. */
+table.data tbody tr.clickable { cursor: pointer; }
+.row-title { color: var(--ink-900); text-decoration: none; }
+.row-title:hover, tr.clickable:hover .row-title { color: var(--link); text-decoration: underline; }
 /* A ticked row on the dashboard. */
 table.data tbody tr:has(input[name='target']:checked) { background: var(--blue-bg); }
 table.data .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -474,6 +480,52 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 .bubble.inbound { align-self: flex-start; background: var(--surface-0); border-color: var(--line-200); border-bottom-left-radius: 4px; }
 .bubble .options { display: block; margin-top: 8px; padding-top: 7px; border-top: 1px solid rgba(14, 23, 38, 0.08); font-size: var(--fs-meta); color: var(--ink-600); }
 .bubble .meta { display: block; margin-top: 5px; font-family: var(--font-mono), ui-monospace, monospace; font-size: var(--fs-meta); color: var(--ink-500); text-align: right; }
+.recordings { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line-200); }
+/* A call's recording: round play, the label and time over a seek bar, then the speed. */
+.player { display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 10px; border: 1px solid var(--line-200); border-radius: 14px; background: var(--surface-0); }
+.player-play { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 50%; background: var(--primary); color: #fff; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+.player-play:hover { background: var(--primary-hover); }
+.player-play:active { transform: scale(0.95); }
+.player-play-icon { margin-left: 2px; } /* a triangle looks off-centre when it is centred */
+.player.failed .player-play { background: var(--err-ink); }
+.player-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.player-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.player-label { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player.failed .player-label { color: var(--err-ink); }
+.player-time { flex: none; font-size: var(--fs-meta); color: var(--ink-900); font-variant-numeric: tabular-nums; }
+.player-of { color: var(--ink-500); }
+.player-speed { flex: none; min-width: 48px; height: 30px; padding: 0 8px; border: 1px solid var(--line-200); border-radius: 999px; background: var(--surface-50); color: var(--ink-700); font-size: var(--fs-meta); cursor: pointer; }
+.player-speed:hover { border-color: var(--blue-bdr); background: var(--blue-bg); color: var(--link); }
+
+/* The seek bar: filled up to where it has played. */
+.player-seek { --progress: 0%; -webkit-appearance: none; appearance: none; width: 100%; height: 6px; margin: 0; border-radius: 999px; cursor: pointer;
+  background: linear-gradient(to right, var(--primary) var(--progress), var(--line-200) var(--progress)); }
+.player-seek:disabled { cursor: default; }
+.player-seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--surface-0); border: 3px solid var(--primary); box-shadow: 0 1px 3px rgb(14 23 38 / 0.25); transition: transform 0.1s; }
+.player-seek::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--surface-0); border: 3px solid var(--primary); box-shadow: 0 1px 3px rgb(14 23 38 / 0.25); }
+.player-seek:hover::-webkit-slider-thumb { transform: scale(1.15); }
+.player-seek:disabled::-webkit-slider-thumb { border-color: var(--line-200); }
+.player-seek:focus-visible { outline: 3px solid var(--primary); outline-offset: 4px; }
+@media (prefers-reduced-motion: no-preference) {
+  .player-spin { animation: player-spin 0.9s linear infinite; }
+}
+@keyframes player-spin { to { transform: rotate(360deg); } }
+@media (max-width: 520px) {
+  .player { gap: 10px; }
+  .player-label { display: none; }
+  .player-top { justify-content: flex-end; }
+}
+.summary-text { color: var(--ink-700); line-height: 1.55; white-space: pre-line; }
+.summary-list { margin: 0; padding-left: 18px; color: var(--ink-700); line-height: 1.55; }
+.summary-list li + li { margin-top: 2px; }
+@media (prefers-reduced-motion: no-preference) {
+  .summary-writing { animation: summary-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes summary-pulse { 50% { opacity: 0.45; } }
+/* Where the follow-up starts, in a case's conversation. */
+.chat-divider { display: flex; align-items: center; gap: 10px; color: var(--ink-500); font-size: var(--fs-meta); font-weight: 600; }
+.chat-divider::before, .chat-divider::after { content: ''; flex: 1; height: 1px; background: var(--line-200); }
+.feedback-comment { max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-empty { align-self: center; padding: 20px; font-size: var(--fs-meta); color: var(--ink-500); }
 
 .sim { padding: 16px 18px; border-top: 1px solid var(--line-200); }
@@ -543,7 +595,7 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 
 /* ---------- narrow screens ---------- */
 @media (max-width: 900px) {
-  .layout { grid-template-columns: minmax(0, 1fr); }
+  .layout, .layout.details-first { grid-template-columns: minmax(0, 1fr); }
   .map-section { grid-template-columns: minmax(0, 1fr); }
   .map-section-body { padding: 0 20px 18px; }
   .content { padding: 20px 16px 40px; }

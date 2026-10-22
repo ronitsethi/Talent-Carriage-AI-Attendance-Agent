@@ -5,7 +5,8 @@ import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { closeCasesExplainedByData, runDailyCheckAndContact } from '@/lib/detection/run';
 import { buildContext } from '@/lib/runtime';
 import { sendPlainText } from '@/lib/conversation/engine';
-import type { Job, JobKind } from './queue';
+import { sendQueryFeedback } from '@/lib/conversation/feedback';
+import { enqueue, type Job, type JobKind } from './queue';
 
 export type JobHandler = (job: Job) => Promise<Record<string, unknown>>;
 
@@ -118,6 +119,22 @@ const refreshLeaveBalances: JobHandler = async (job) => {
   });
 };
 
+/**
+ * Asks for feedback on a call somebody made to us, a minute after it ended.
+ * Quiet hours hold it back rather than drop it, so it is queued again.
+ */
+const queryFeedback: JobHandler = async (job) => {
+  const tenantId = job.tenantId!;
+  const queryId = String(job.payload.queryId ?? '');
+  return withTenant(tenantId, async (tx) => {
+    const result = await sendQueryFeedback(await buildContext(tx, tenantId), queryId);
+    if (result.retryAt) {
+      await enqueue('query_feedback', { queryId }, { tenantId, runAt: result.retryAt, dedupeKey: `feedback:${queryId}:${result.retryAt.toISOString()}` }, tx);
+    }
+    return result as unknown as Record<string, unknown>;
+  });
+};
+
 /** Placed here so the queue is complete; the voice provider arrives in its phase. */
 const placeCall: JobHandler = async (job) => {
   return { skipped: 'voice provider not configured', caseId: job.payload.caseId };
@@ -131,4 +148,5 @@ export const handlers: Record<JobKind, JobHandler> = {
   refresh_leave_balances: refreshLeaveBalances,
   place_call: placeCall,
   import_file: async () => ({ skipped: 'handled by the upload route for now' }),
+  query_feedback: queryFeedback,
 };

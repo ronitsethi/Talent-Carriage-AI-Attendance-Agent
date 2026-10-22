@@ -18,6 +18,7 @@ import {
   mappingProfiles,
   messages,
   policyDocuments,
+  queries,
   tenantSettings,
   unmappedCodes,
 } from '@/db/schema';
@@ -41,6 +42,7 @@ import { ASKED_STATUSES } from '@/lib/queries';
 import { env } from '@/lib/env';
 import { DEFAULT_AGENT_VOICE, isAgentVoice } from '@/lib/voice/voices';
 import { datesInRange } from '@/lib/dates';
+import { summariseCase, summariseQuery } from '@/lib/conversation/summary';
 
 async function requireTenant() {
   const session = await getSession();
@@ -352,6 +354,9 @@ export async function resetAllCases() {
     await tx.delete(actions).where(eq(actions.tenantId, tenantId));
     await tx.delete(messages).where(eq(messages.tenantId, tenantId));
     await tx.delete(conversations).where(eq(conversations.tenantId, tenantId));
+    // A chat query's messages have just gone, so its record would be empty;
+    // every conversation is cleared, queries with the rest.
+    await tx.delete(queries).where(eq(queries.tenantId, tenantId));
     // Calls cascade from their case, but a call need not have one - so it is
     // named here rather than left to the foreign key.
     await tx.delete(calls).where(eq(calls.tenantId, tenantId));
@@ -478,6 +483,90 @@ export async function contactSelected(formData: FormData) {
   revalidatePath('/');
   revalidatePath('/cases');
   redirect(`/?${noticeFor(outcomes)}`);
+}
+
+/**
+ * Contacts the cases ticked in Follow-up cases, each on their employee's channel.
+ *
+ * The same rule as the dashboard: several dates ticked for someone on Call ring
+ * them once, about the newest, and the call sweeps the rest; on WhatsApp each
+ * date gets its own message. A case whose employee has been deleted is skipped.
+ */
+export async function contactSelectedCases(formData: FormData) {
+  // Each tick is "employeeId|caseId", the shape the selection counts people by.
+  const ids = formData
+    .getAll('target')
+    .map((value) => String(value).split('|')[1] ?? '')
+    .filter(Boolean);
+  const { tenantId } = await requireTenant();
+  const outcomes: ContactResult[] = [];
+
+  const plan = await withTenant(tenantId, async (tx) => {
+    const ctx = await buildContext(tx, tenantId);
+    const rows = ids.length
+      ? await tx
+          .select({ caseRow: cases, employee: employees })
+          .from(cases)
+          .innerJoin(employees, eq(employees.id, cases.employeeId))
+          .where(and(eq(cases.tenantId, tenantId), inArray(cases.id, ids)))
+          .orderBy(cases.attDate)
+      : [];
+    const byEmployee = new Map<string, typeof rows>();
+    for (const row of rows) {
+      if (row.employee.deletedAt) continue;
+      byEmployee.set(row.employee.id, [...(byEmployee.get(row.employee.id) ?? []), row]);
+    }
+    const chosen: string[] = [];
+    for (const list of byEmployee.values()) {
+      const employee = list[0]!.employee;
+      if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') chosen.push(list[list.length - 1]!.caseRow.id);
+      else chosen.push(...list.map((row) => row.caseRow.id));
+    }
+    return chosen;
+  });
+
+  for (const caseId of plan) {
+    const outcome = await withTenant(tenantId, async (tx) => contactCaseById(await buildContext(tx, tenantId), caseId));
+    if (outcome) outcomes.push(outcome);
+  }
+
+  revalidatePath('/');
+  revalidatePath('/cases');
+  const back = String(formData.get('back') ?? '');
+  const query = back.startsWith('/cases') ? back : '/cases';
+  redirect(`${query}${query.includes('?') ? '&' : '?'}${noticeFor(outcomes)}`);
+}
+
+/**
+ * Writes a case's summary, when it is missing or older than the conversation.
+ * Asked for by the page once it is on screen, so opening a case never waits on
+ * the model; failing leaves the page as it was.
+ */
+export async function writeCaseSummary(caseId: string): Promise<boolean> {
+  const { tenantId } = await requireTenant();
+  try {
+    return await withTenant(tenantId, async (tx) => {
+      const caseRow = await tx.query.cases.findFirst({ where: eq(cases.id, caseId) });
+      return caseRow ? Boolean(await summariseCase(tx, caseRow)) : false;
+    });
+  } catch (error) {
+    console.error('[summary] case', caseId, (error as Error).message);
+    return false;
+  }
+}
+
+/** The same for a query's two summaries: what was asked, and what was answered. */
+export async function writeQuerySummary(queryId: string): Promise<boolean> {
+  const { tenantId } = await requireTenant();
+  try {
+    return await withTenant(tenantId, async (tx) => {
+      const query = await tx.query.queries.findFirst({ where: eq(queries.id, queryId) });
+      return query ? Boolean(await summariseQuery(tx, query)) : false;
+    });
+  } catch (error) {
+    console.error('[summary] query', queryId, (error as Error).message);
+    return false;
+  }
 }
 
 /**

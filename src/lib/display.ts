@@ -20,7 +20,51 @@ export const STATUS_DISPLAY: Record<string, { label: string; tone: Tone }> = {
   needs_hr: { label: 'Needs HR', tone: 'call' },
   failed: { label: 'Send failed', tone: 'call' },
   cancelled: { label: 'Cancelled', tone: 'idle' },
+  // Once the follow-up has gone out, the case is waiting on that instead.
+  follow_up_awaiting: { label: 'Follow-up sent · awaiting reply', tone: 'waiting' },
+  follow_up_not_done: { label: 'Follow-up · not done yet', tone: 'pending' },
 };
+
+type FollowUpFields = { status: string; followUpDueAt: Date | null; followUpSentAt: Date | null; followUpReply: string | null };
+
+/**
+ * The status a case shows: its own until the follow-up goes out, and then the
+ * follow-up's - unless the case has since been settled one way or another.
+ */
+export function caseStatus(row: FollowUpFields): string {
+  if (!row.followUpSentAt || ['resolved', 'needs_hr', 'failed', 'cancelled'].includes(row.status)) return row.status;
+  if (!row.followUpReply) return 'follow_up_awaiting';
+  if (row.followUpReply === 'not_done') return 'follow_up_not_done';
+  return row.status;
+}
+
+const RESOLVED_LABELS: Record<string, string> = { yes: 'Answered', partly: 'Partly answered', no: 'Not answered' };
+const RATING_LABELS: Record<string, string> = { good: 'Good', okay: 'Okay', poor: 'Poor' };
+
+/** What an employee said about a call they made to us, in words; null if never asked. */
+export function feedbackLabel(row: {
+  feedbackSentAt: Date | null;
+  feedbackResolved: string | null;
+  feedbackRating: string | null;
+  feedbackComment: string | null;
+}): { resolved: string; rating: string; comment: string | null; summary: string } | null {
+  if (!row.feedbackSentAt) return null;
+  const resolved = row.feedbackResolved ? RESOLVED_LABELS[row.feedbackResolved] ?? row.feedbackResolved : 'No reply';
+  const rating = row.feedbackRating ? RATING_LABELS[row.feedbackRating] ?? row.feedbackRating : 'No reply';
+  const summary = row.feedbackResolved || row.feedbackRating ? [row.feedbackResolved && resolved, row.feedbackRating && `${rating} call`].filter(Boolean).join(' · ') : 'Asked · no reply yet';
+  return { resolved, rating, comment: row.feedbackComment, summary };
+}
+
+const FOLLOW_UP_REPLIES: Record<string, string> = { done: 'Done', not_done: 'Not done yet', help: 'Asked for help' };
+
+/** When the follow-up went, or is due, and what they said to it. Null if none is planned. */
+export function followUpLabel(row: FollowUpFields): { when: string; note: string } | null {
+  if (row.followUpSentAt) {
+    return { when: formatTime(row.followUpSentAt), note: row.followUpReply ? FOLLOW_UP_REPLIES[row.followUpReply] ?? row.followUpReply : 'Awaiting reply' };
+  }
+  if (row.followUpDueAt) return { when: `Due ${formatTime(row.followUpDueAt)}`, note: 'Not sent yet' };
+  return null;
+}
 
 export function statusDisplay(status: string) {
   return STATUS_DISPLAY[status] ?? { label: status, tone: 'idle' as const };

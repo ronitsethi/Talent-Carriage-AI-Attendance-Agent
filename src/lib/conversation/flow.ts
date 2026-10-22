@@ -210,8 +210,13 @@ export const managerMessages = {
 export const optOutConfirmation =
   'Understood - you will not receive further automated attendance messages. Your HR team has been informed.';
 
-export const handedToHrMessage =
-  'I have passed this to your HR team, and someone will follow up with you directly.';
+/**
+ * What is said of a question that cannot be answered, or a request that cannot
+ * be done: noted, with a ticket raised for it - never an invented answer.
+ */
+export const RAISE_TICKET = 'I have understood your query, I will raise a ticket for it. Do you have any other issue?';
+
+export const handedToHrMessage = RAISE_TICKET;
 
 /** Builds the template send for the first step of a date. */
 export function buildFirstStepTemplate(args: {

@@ -125,7 +125,12 @@ export async function buildContext(tx: Db, tenantId: string): Promise<FullContex
   if (!settings) throw new Error(`Tenant ${tenantId} has no settings row`);
 
   const channelRow = await tx.query.tenantChannels.findFirst({ where: eq(tenantChannels.tenantId, tenantId) });
-  const templateConfig = (channelRow?.config ?? {}) as { templateName?: string; templateLanguage?: string; buttonCount?: number };
+  const templateConfig = (channelRow?.config ?? {}) as {
+    templateName?: string;
+    templateLanguage?: string;
+    buttonCount?: number;
+    feedbackTemplateName?: string;
+  };
 
   const hrms = await resolveHrms(tx, tenantId);
 
@@ -143,6 +148,7 @@ export async function buildContext(tx: Db, tenantId: string): Promise<FullContex
       language: templateConfig.templateLanguage ?? settings.defaultLanguage,
       buttonCount: templateConfig.buttonCount ?? 4,
     },
+    feedbackTemplate: { name: templateConfig.feedbackTemplateName ?? 'call_feedback', language: 'en' },
     hrms,
     hooks: {
       onAnswered: (ctx, caseRow, employee, option) =>

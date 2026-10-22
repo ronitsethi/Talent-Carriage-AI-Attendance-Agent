@@ -66,6 +66,10 @@ const schema = z.object({
   /** Where calls to the Plivo number are forwarded, e.g. for Meta's verification call. */
   PLIVO_FORWARD_NUMBER: z.string().optional(),
 
+  /** Where call recordings are kept: the Azure storage account, and its private container. */
+  RECORDINGS_CONNECTION_STRING: z.string().optional(),
+  RECORDINGS_CONTAINER: z.string().default('recordings'),
+
   // HRMS
   HRMS_CONNECTOR: z.enum(['mock', 'file', 'rest', 'none']).default('mock'),
   MOCK_HRMS_URL: z.string().default('http://localhost:4010'),

@@ -14,6 +14,8 @@ import type { MessageChannel, InboundMessage, Outbound } from '@/lib/channels/ty
 import { ChannelError } from '@/lib/channels/types';
 import type { Meaning } from '@/lib/mapping/meanings';
 import { classifyByRules, classifyReply, type Classification } from './classify';
+import { addMessagesToQuery, recentCaseContact, whatsappQuery } from './queries';
+import { answerFeedbackTap, answerFeedbackTyped, parseFeedbackSelection } from './feedback';
 import { handleStep, handleTopOption, handleTyped, parseSheetSelectionId, sheetState } from './sheet';
 import type { ChatVerdict } from './talk';
 import {
@@ -83,6 +85,8 @@ export type EngineContext = {
   channel: MessageChannel;
   companyName: string;
   template: { name: string; language: string; buttonCount: number };
+  /** The approved template that asks for feedback after a call to us. */
+  feedbackTemplate?: { name: string; language: string };
   hooks?: EngineHooks;
   now?: () => Date;
 };
@@ -158,7 +162,7 @@ export function windowOpen(conversation: { windowExpiresAt: Date | null }, at = 
  * Sending
  * ------------------------------------------------------------------ */
 
-async function deliver(
+export async function deliver(
   ctx: EngineContext,
   employee: EmployeeRow,
   message: Outbound,
@@ -444,6 +448,9 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
       waId: inbound.from,
       body: inbound.text ?? inbound.selectionTitle ?? '',
       payload: inbound.raw as Record<string, unknown>,
+      // When they sent it, as WhatsApp says, rather than when this transaction
+      // began - which is what puts a reply after the message it answers.
+      createdAt: inbound.receivedAt,
     })
     .onConflictDoNothing({ target: messages.providerMessageId })
     .returning();
@@ -504,6 +511,23 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     }
   }
 
+  // Feedback on a call they made to us: a tapped answer names its query, and a
+  // typed one is read as an answer if feedback is waiting on one.
+  const feedbackTap = parseFeedbackSelection(inbound.selectionId);
+  const feedback = feedbackTap
+    ? await answerFeedbackTap(ctx, employee, inboundRow.id, feedbackTap)
+    : !inbound.selectionId && inbound.text?.trim()
+      ? await answerFeedbackTyped(ctx, employee, inboundRow.id, inbound.text, inbound.receivedAt)
+      : false;
+  if (feedback) {
+    return {
+      handled: true,
+      caseId: null,
+      classification: { intent: 'other', option: null, confidence: 1, source: feedbackTap ? 'rules' : 'model' },
+      action: 'answered',
+    };
+  }
+
   // A row or button from the flow sheet's menus names its case and its step.
   const sheetTap = parseSheetSelectionId(inbound.selectionId);
   if (sheetTap) {
@@ -522,7 +546,29 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     }
   }
 
-  const target = await resolveCase(ctx, employee.id, inbound, conversation.activeCaseId);
+  let target = await resolveCase(ctx, employee.id, inbound, conversation.activeCaseId);
+  const pending = await pendingCases(ctx, employee.id);
+  const classify = () =>
+    classifyReply(inbound.text ?? '', {
+      dateLabel: target.caseRow ? dateLabel(target.caseRow.attDate, target.caseRow.meaning as Meaning) : undefined,
+      pendingDateLabels: pending.map((c) => dateLabel(c.attDate, c.meaning as Meaning)),
+      language: employee.language ?? ctx.settings.defaultLanguage,
+      tenantModelOverride: ctx.settings.modelOverrides?.classify_reply,
+      budget: 'whatsapp',
+    });
+
+  // Case or query. Within half an hour of the last word about a date, whatever
+  // they write is part of that conversation. After that, a question is a query
+  // of its own, while an answer about the date - however late - is the case's.
+  // A tapped option or a quoted message names its case, so it is never a query.
+  const explicit = Boolean(target.option || inbound.selectionId || inbound.replyToProviderId);
+  const recent = explicit ? null : await recentCaseContact(ctx.tx, employee.id, inbound.receivedAt, inboundRow.id);
+  let early: Classification | null = null;
+  if (target.caseRow && !explicit && !recent && inbound.text?.trim()) {
+    early = await classify();
+    if (early.intent === 'question') target = { caseRow: null, option: null };
+  }
+
   if (target.caseRow) {
     await ctx.tx.update(messages).set({ caseId: target.caseRow.id }).where(eq(messages.id, inboundRow.id));
   }
@@ -557,14 +603,7 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     }
   }
 
-  const pending = await pendingCases(ctx, employee.id);
-  const classification = await classifyReply(inbound.text ?? '', {
-    dateLabel: target.caseRow ? dateLabel(target.caseRow.attDate, target.caseRow.meaning as Meaning) : undefined,
-    pendingDateLabels: pending.map((c) => dateLabel(c.attDate, c.meaning as Meaning)),
-    language: employee.language ?? ctx.settings.defaultLanguage,
-    tenantModelOverride: ctx.settings.modelOverrides?.classify_reply,
-    budget: 'whatsapp',
-  });
+  const classification = early ?? (await classify());
 
   if (classification.source === 'model') {
     await ctx.tx.insert(aiDecisions).values({
@@ -597,12 +636,28 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     return { handled: true, caseId: null, classification, action: 'opted_out' };
   }
 
-  if (!target.caseRow) {
-    // Nothing open for this person: whatever they wrote is theirs to ask, so
-    // the guidelines answer it. Without them, log it and let HR see it.
+  if (!target.caseRow && recent) {
+    // Asked in the middle of a conversation about a date that needs nothing
+    // more from them - just answered, say: part of that case, not a query.
+    await ctx.tx.update(messages).set({ caseId: recent.caseId }).where(eq(messages.id, inboundRow.id));
     if (ctx.hooks?.answerQuestion && inbound.text?.trim()) {
       const answer = await ctx.hooks.answerQuestion(ctx, employee, inbound.text);
-      await sendText(ctx, employee, answer.text);
+      await sendText(ctx, employee, answer.text, recent.caseId);
+      return { handled: true, caseId: recent.caseId, classification, action: answer.answered ? 'answered' : 'handed_to_hr' };
+    }
+    return { handled: true, caseId: recent.caseId, classification, action: 'logged' };
+  }
+
+  if (!target.caseRow) {
+    // Nothing being discussed: whatever they wrote is theirs to ask - a query,
+    // kept apart from the cases - and the guidelines answer it. Without them,
+    // it is logged for HR to see.
+    const queryId = await whatsappQuery(ctx.tx, ctx.tenantId, employee.id, inbound.receivedAt);
+    await addMessagesToQuery(ctx.tx, queryId, [inboundRow.id]);
+    if (ctx.hooks?.answerQuestion && inbound.text?.trim()) {
+      const answer = await ctx.hooks.answerQuestion(ctx, employee, inbound.text);
+      const sent = await sendText(ctx, employee, answer.text);
+      await addMessagesToQuery(ctx.tx, queryId, [sent.messageId]);
       return { handled: true, caseId: null, classification, action: answer.answered ? 'answered' : 'handed_to_hr' };
     }
     return { handled: true, caseId: null, classification, action: 'logged' };

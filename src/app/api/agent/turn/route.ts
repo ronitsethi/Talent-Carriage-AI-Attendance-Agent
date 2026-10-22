@@ -9,6 +9,7 @@ import { env } from '@/lib/env';
 import { collectTimings, mark, timed } from '@/lib/timing';
 import { buildContext } from '@/lib/runtime';
 import { agentGender } from '@/lib/voice/voices';
+import { addCallTurn, endCallQuery, startCallQuery } from '@/lib/conversation/queries';
 import {
   ground,
   onlyPleasantries,
@@ -74,6 +75,8 @@ type Body = {
    * nothing, if empty. Absent when they heard it all.
    */
   heard?: string;
+  /** On a call somebody made to us: the query it is filed under, from the greeting. */
+  queryId?: string;
 };
 
 const UNKNOWN_CALLER =
@@ -192,6 +195,15 @@ async function turn(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Body;
   const callId = body.callId ?? '';
 
+  if (body.ended && body.ask && body.queryId) {
+    const queryId = body.queryId;
+    const ended = await withCaller(body.ask.from, async ({ tx }) => {
+      await endCallQuery(tx, queryId);
+      return true;
+    });
+    return NextResponse.json({ closed: Boolean(ended) });
+  }
+
   if (body.ended) {
     // A keypad call learns it is over from Plivo's hangup webhook; a LiveKit
     // call has no such thing, so the worker says so on its way out. Without
@@ -227,15 +239,28 @@ async function turn(request: Request) {
   if (body.ask) {
     const { from, question } = body.ask;
     if (body.stream && question) {
+      const queryId = body.queryId;
       return streamTurn(
         (send) =>
-          withCaller(from, async ({ tx, tenantId, employee }) =>
-            talkTurn(
+          withCaller(from, async ({ tx, tenantId, employee }) => {
+            let reply = '';
+            const result = await talkTurn(
               await buildContext(tx, tenantId),
               { mode: 'inbound', employee, call: null, caseRow: null, said: question, history: body.history, preparedKey: `ask:${from}` },
-              send,
-            ),
-          ),
+              (event) => {
+                if (event.type === 'text') reply += event.text;
+                send(event);
+              },
+            );
+            // Written down as it happens, so a call that drops still leaves its record.
+            if (queryId) {
+              await addCallTurn(tx, queryId, employee.id, [
+                { role: 'employee', text: question },
+                { role: 'agent', text: reply },
+              ], body.heard);
+            }
+            return result;
+          }),
         UNKNOWN_CALLER,
       );
     }
@@ -246,11 +271,15 @@ async function turn(request: Request) {
       });
       const company = await t.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
 
-      // No question yet: this is the greeting, so say who is speaking.
+      // No question yet: this is the greeting, so say who is speaking - and
+      // open the query the rest of the call is filed under.
       if (!question) {
         const greet = INBOUND_GREETINGS[Math.floor(Math.random() * INBOUND_GREETINGS.length)]!;
+        const say = greet(employee.fullName.split(/\s+/)[0] ?? employee.fullName, company?.name ?? 'your employer');
+        const queryId = await startCallQuery(t, { tenantId, employeeId: employee.id, style: 'agent', greeting: say });
         return {
-          say: greet(employee.fullName.split(/\s+/)[0] ?? employee.fullName, company?.name ?? 'your employer'),
+          say,
+          queryId,
           language: voiceLanguage(employee.language ?? settings?.defaultLanguage),
           known: true,
           voice: settings?.agentVoice ?? 'ritu',
@@ -265,6 +294,12 @@ async function turn(request: Request) {
         employeeName: employee.fullName,
         budget: 'call',
       });
+      if (body.queryId) {
+        await addCallTurn(t, body.queryId, employee.id, [
+          { role: 'employee', text: question },
+          { role: 'agent', text: reply.text },
+        ], body.heard);
+      }
       return {
         say: reply.text,
         known: true,

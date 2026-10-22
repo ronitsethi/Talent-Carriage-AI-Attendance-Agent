@@ -5,6 +5,7 @@ import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
 import { questionXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
 import { voiceLines } from '@/lib/voice/say';
+import { addCallTurn } from '@/lib/conversation/queries';
 
 /**
  * One spoken question on an incoming call, answered and then asked for another.
@@ -16,6 +17,7 @@ import { voiceLines } from '@/lib/voice/say';
 export async function POST(request: Request) {
   const url = new URL(request.url);
   const from = url.searchParams.get('from') ?? '';
+  const queryId = url.searchParams.get('query');
   const form = await request.formData().catch(() => new FormData());
   const said = String(form.get('Speech') ?? '').trim();
 
@@ -37,6 +39,12 @@ export async function POST(request: Request) {
           employeeName: employee.fullName,
           budget: 'call',
         });
+        if (queryId) {
+          await addCallTurn(t, queryId, employee.id, [
+            { role: 'employee', text: said },
+            { role: 'agent', text: answer.text },
+          ]);
+        }
         const settings = await t.query.tenantSettings.findFirst({ where: eq(tenantSettings.tenantId, tenant.id) });
         return {
           text: answer.text,
@@ -63,7 +71,7 @@ export async function POST(request: Request) {
       intro: text,
       speak: more,
       audio,
-      actionUrl: `${env.APP_BASE_URL}/api/voice/ask?from=${encodeURIComponent(from)}`,
+      actionUrl: `${env.APP_BASE_URL}/api/voice/ask?from=${encodeURIComponent(from)}${queryId ? `&query=${queryId}` : ''}`,
       timeoutSeconds: 15,
     }),
   );

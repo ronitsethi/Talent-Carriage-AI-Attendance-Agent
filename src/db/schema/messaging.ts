@@ -37,6 +37,54 @@ export const conversations = pgTable(
   (t) => [uniqueIndex('conversations_employee_channel_key').on(t.employeeId, t.channel)],
 );
 
+/**
+ * Something an employee asked us of their own accord, rather than an answer
+ * about an absent date: a call to us, or a WhatsApp chat that is not about a
+ * case. A call is one query; a chat is one until it goes quiet for half an hour.
+ */
+export const queries = pgTable(
+  'queries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    employeeId: uuid('employee_id')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'cascade' }),
+    channel: channel('channel').notNull(),
+    /** On a call: 'agent' for the talking agent, 'keypad' for Plivo's spoken menu. */
+    callStyle: text('call_style'),
+    providerCallId: text('provider_call_id'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    /** A call's turns; a chat's are its messages, which carry this query's id. */
+    transcript: jsonb('transcript').$type<{ role: 'agent' | 'employee'; text: string; at: string; heard?: string }[]>(),
+    /** Where the call's audio is kept - see `recordings.ts`. */
+    recordingUri: text('recording_uri'),
+    /** What they asked, and what they were told, across the whole query. */
+    summaryQueries: text('summary_queries'),
+    summaryReply: text('summary_reply'),
+    summarisedAt: timestamp('summarised_at', { withTimezone: true }),
+    /**
+     * Feedback on a call, asked on WhatsApp after it: which question is
+     * waiting ('resolved', 'rating', 'comment', or 'done'), and the answers.
+     */
+    feedbackSentAt: timestamp('feedback_sent_at', { withTimezone: true }),
+    feedbackStep: text('feedback_step').$type<'resolved' | 'rating' | 'comment' | 'done'>(),
+    feedbackResolved: text('feedback_resolved').$type<'yes' | 'partly' | 'no'>(),
+    feedbackRating: text('feedback_rating').$type<'good' | 'okay' | 'poor'>(),
+    feedbackComment: text('feedback_comment'),
+    feedbackAnsweredAt: timestamp('feedback_answered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('queries_tenant_started_idx').on(t.tenantId, t.startedAt),
+    index('queries_employee_open_idx').on(t.employeeId, t.channel, t.lastActivityAt),
+  ],
+);
+
 /** Every message in and out, including the ones a fake channel only pretended to send. */
 export const messages = pgTable(
   'messages',
@@ -48,6 +96,8 @@ export const messages = pgTable(
     conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'cascade' }),
     /** Null for messages that belong to the employee rather than one date, e.g. a backlog summary. */
     caseId: uuid('case_id').references(() => cases.id, { onDelete: 'set null' }),
+    /** Set when the message is part of a query rather than about a date. */
+    queryId: uuid('query_id').references(() => queries.id, { onDelete: 'set null' }),
 
     direction: messageDirection('direction').notNull(),
     channel: channel('channel').notNull().default('whatsapp'),

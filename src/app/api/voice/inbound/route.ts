@@ -5,6 +5,8 @@ import { employeeByNumber } from '@/lib/knowledge';
 import { questionXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
 import { voiceLines } from '@/lib/voice/say';
+import { recordingsConfigured } from '@/lib/recordings';
+import { startCallQuery } from '@/lib/conversation/queries';
 
 /**
  * Somebody rings the company's number.
@@ -16,6 +18,7 @@ import { voiceLines } from '@/lib/voice/say';
 export async function inboundXml(request: Request): Promise<Response> {
   const form = await request.formData().catch(() => new FormData());
   const from = String(form.get('From') ?? new URL(request.url).searchParams.get('From') ?? '');
+  const callUuid = String(form.get('CallUUID') ?? '') || null;
 
   const found = await withPlatformScope(async (tx) => {
     // One number per customer for now; the callee decides whose employee list
@@ -29,6 +32,7 @@ export async function inboundXml(request: Request): Promise<Response> {
         );
         return {
           tenantId: tenant.id,
+          employeeId: employee.id,
           name: employee.fullName,
           voice: { speaker: settings?.agentVoice ?? 'ritu', pace: Number(settings?.agentVoicePace ?? 0.95) },
         };
@@ -52,6 +56,21 @@ export async function inboundXml(request: Request): Promise<Response> {
 
   // Spoken in the voice chosen in Settings, so an incoming call sounds like the
   // same company as an outgoing one rather than like Plivo.
+  // The call is a query from here to the hang-up, greeting and all.
+  const queryId = await withTenant(found.tenantId, (t) =>
+    startCallQuery(t, {
+      tenantId: found.tenantId,
+      employeeId: found.employeeId,
+      style: 'keypad',
+      providerCallId: callUuid,
+      greeting: `${intro} ${question}`,
+    }),
+  ).catch((error) => {
+    console.error('[voice] could not open the query for an incoming call:', error);
+    return null;
+  });
+  const asked = `from=${encodeURIComponent(from)}${queryId ? `&query=${queryId}` : ''}`;
+
   const audio = await voiceLines(
     [intro, question, 'Sorry, I did not catch that. Please say it once more.', 'I could not hear you. Please call again, or contact your H R team. Goodbye.'],
     found.voice,
@@ -63,7 +82,8 @@ export async function inboundXml(request: Request): Promise<Response> {
       intro,
       speak: question,
       audio,
-      actionUrl: `${env.APP_BASE_URL}/api/voice/ask?from=${encodeURIComponent(from)}`,
+      actionUrl: `${env.APP_BASE_URL}/api/voice/ask?${asked}`,
+      recordTo: queryId && recordingsConfigured() ? `${env.APP_BASE_URL}/api/voice/recorded?${asked}` : undefined,
       timeoutSeconds: 20,
     }),
   );

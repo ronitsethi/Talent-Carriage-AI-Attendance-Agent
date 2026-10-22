@@ -38,7 +38,7 @@ DECLARE
     'conversations', 'messages', 'templates',
     'actions', 'approvals',
     'policy_packs', 'policy_sources', 'policy_chunks',
-    'ai_decisions', 'calls', 'usage_events', 'consent_events'
+    'ai_decisions', 'calls', 'queries', 'usage_events', 'consent_events'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

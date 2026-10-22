@@ -85,6 +85,20 @@
       "when": 1790483189269,
       "tag": "0011_employee_deleted",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790483190269,
+      "tag": "0012_queries_recordings",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790483191269,
+      "tag": "0013_query_feedback",
+      "breakpoints": true
     }
   ]
 }

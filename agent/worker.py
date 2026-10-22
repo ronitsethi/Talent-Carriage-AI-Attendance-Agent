@@ -19,13 +19,16 @@ import json
 import logging
 import os
 import random
+import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import aiohttp
 from dotenv import load_dotenv
 from livekit import agents, api
 from livekit.agents import Agent, AgentSession, JobContext, JobProcess, StopResponse, WorkerOptions, cli
+from livekit.agents.voice.recorder_io import RecorderIO
 from livekit.plugins import openai, sarvam, silero
 
 load_dotenv()
@@ -81,8 +84,12 @@ TURN_HANDLING = {
         # in two seconds of silence. Two words stop the agent at once: the
         # realtime recogniser hands over words while they are still talking.
         "min_words": 2,
-        # And when something does stop the agent and turns out to be nothing,
-        # it carries on after a moment rather than after LiveKit's two seconds.
+        # Once they have talked over a reply, it is not picked up again where it
+        # stopped: resuming it after they finished meant the agent answered the
+        # first half of what they said and then the second, one after the other.
+        # What they heard of it goes to the platform, and the next reply answers
+        # everything at once.
+        "resume_false_interruption": False,
         "false_interruption_timeout": 0.6,
     },
 }
@@ -108,7 +115,7 @@ FILLERS = {
         "हम्म, बस एक मिनट।",
         "ठीक है, एक सेकंड दीजिए।",
         "जी, मैं check करती हूँ।",
-        "अच्छा, समझ गई, एक सेकंड।",
+        "जी, बस एक पल।",
     ],
     ("hi-IN", "male"): [
         "जी, एक सेकंड।",
@@ -116,7 +123,7 @@ FILLERS = {
         "हम्म, बस एक मिनट।",
         "ठीक है, एक सेकंड दीजिए।",
         "जी, मैं check करता हूँ।",
-        "अच्छा, समझ गया, एक सेकंड।",
+        "जी, बस एक पल।",
     ],
 }
 FILLERS[("en-IN", "male")] = FILLERS[("en-IN", "female")]
@@ -130,6 +137,11 @@ TROUBLE_INBOUND = {
     "en-IN": "Sorry, I am having trouble just now. Please contact your H R team. Goodbye.",
     "hi-IN": "माफ़ कीजिए, अभी थोड़ी दिक्कत आ रही है। Please अपनी H R team से contact कीजिए। धन्यवाद।",
 }
+
+# A reply ready while the caller is still talking waits for them to stop, this
+# long at most, and then a moment for their last words to be written down.
+STILL_TALKING_MAX_S = 6.0
+LAST_WORDS_S = 1.2
 
 # What somebody says to show they are still there. Said while the agent is
 # already working on a reply, it is not something to answer as well - answering
@@ -219,6 +231,10 @@ class TurnApi:
     def __init__(self, call_id: str, session: aiohttp.ClientSession) -> None:
         self._call_id = call_id
         self._http = session
+        # On a call somebody made to us: who rang, and the query the platform
+        # files the call under, from the greeting.
+        self.caller = ""
+        self.query_id: str | None = None
 
     async def opening(self) -> Turn:
         """The introduction, written for this call. Asked for while it rings."""
@@ -259,9 +275,17 @@ class TurnApi:
             body["heard"] = heard
         return self._stream(body)
 
-    def ask_stream(self, caller: str, question: str, history: list[dict]):
-        """One turn of a call somebody made to us, a piece at a time."""
-        return self._stream({"ask": {"from": caller, "question": question}, "history": history, "stream": True})
+    def ask_stream(self, caller: str, question: str, history: list[dict], heard: str | None = None):
+        """
+        One turn of a call somebody made to us, a piece at a time. The platform
+        adds it to the call's query, with how much of the last reply was heard.
+        """
+        body = {"ask": {"from": caller, "question": question}, "history": history, "stream": True}
+        if self.query_id:
+            body["queryId"] = self.query_id
+        if heard is not None:
+            body["heard"] = heard
+        return self._stream(body)
 
     async def prepare(self, said: str, caller: str | None = None) -> bool | None:
         """
@@ -382,12 +406,82 @@ class TurnApi:
     async def ended(self) -> None:
         """The line has dropped. Without this a call sits 'in progress' for ever."""
         try:
-            await self._post({"ended": True})
+            if self._call_id:
+                await self._post({"ended": True})
+            elif self.query_id:
+                await self._raw({"ended": True, "ask": {"from": self.caller}, "queryId": self.query_id})
         except Exception:
-            log.exception("could not report the end of call %s", self._call_id)
+            log.exception("could not report the end of call %s", self._call_id or self.query_id)
+
+    async def send_recording(self, audio: bytes) -> None:
+        """Hands the call's recording to the platform, which keeps it with the call."""
+        params = {"call": self._call_id} if self._call_id else {"query": self.query_id or "", "from": self.caller}
+        async with self._http.post(
+            f"{APP_BASE_URL}/api/agent/recording",
+            params=params,
+            data=audio,
+            headers={"x-agent-token": AGENT_API_TOKEN, "Content-Type": "audio/ogg"},
+            timeout=aiohttp.ClientTimeout(total=120),
+        ) as response:
+            if response.status != 200:
+                raise RuntimeError(f"the platform answered {response.status}: {(await response.text())[:200]}")
+        log.info("recording kept: %d KB", len(audio) // 1024)
 
     async def _post(self, body: dict) -> Turn:
         return Turn.parse(await self._send({"callId": self._call_id, **body}, timeout=15))
+
+
+class CallRecorder:
+    """
+    The call's recording: the employee in the left ear, the agent in the right,
+    on one timeline, so talking over each other sounds as it happened.
+
+    It is LiveKit's own recorder, which normally sends the file to LiveKit's
+    cloud and is charged by the minute. Here it writes to a local file instead,
+    and the platform keeps it with the call. It is attached as soon as the
+    session starts but records only from `start()` - on a call we place, from
+    the moment it is answered, so no ringing is kept.
+    """
+
+    def __init__(self, session: AgentSession, name: str) -> None:
+        self._session = session
+        self._path = Path(tempfile.gettempdir()) / f"{name}.ogg"
+        self._io: RecorderIO | None = None
+
+    def attach(self) -> None:
+        session = self._session
+        if session.input.audio is None or session.output.audio is None:
+            log.warning("no audio to record on this call")
+            return
+        try:
+            recorder = RecorderIO(agent_session=session)
+            session.input.audio = recorder.record_input(session.input.audio)
+            session.output.audio = recorder.record_output(session.output.audio)
+            self._io = recorder
+        except Exception:  # noqa: BLE001 - a call without a recording beats no call
+            log.exception("could not attach the recorder")
+
+    async def start(self) -> None:
+        if self._io is None:
+            return
+        try:
+            await self._io.start(output_path=self._path)
+        except Exception:  # noqa: BLE001
+            log.exception("could not start recording")
+
+    async def finish(self) -> bytes | None:
+        """Stops recording and returns the file, or None if nothing was recorded."""
+        if self._io is None or not self._io.recording:
+            return None
+        try:
+            await self._io.aclose()
+            audio = self._path.read_bytes() if self._path.exists() else b""
+            return audio or None
+        except Exception:  # noqa: BLE001
+            log.exception("could not finish the recording")
+            return None
+        finally:
+            self._path.unlink(missing_ok=True)
 
 
 def heard_of(handle) -> str | None:  # noqa: ANN001
@@ -459,6 +553,15 @@ class TalkingAgent(Agent):
             said = ev.transcript or ""
             if self._writing and self._new_speech and len(said.split()) >= 2 and not only_still_there(said):
                 self._cut_in = True
+
+    async def _until_quiet(self) -> None:
+        """Waits for the caller to stop talking, then for their last words."""
+        deadline = time.monotonic() + STILL_TALKING_MAX_S
+        while self.session.user_state == "speaking" and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        deadline = time.monotonic() + LAST_WORDS_S
+        while not self._cut_in and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
 
     def _stale(self, said: str, message) -> bool:  # noqa: ANN001
         """
@@ -537,6 +640,12 @@ class TalkingAgent(Agent):
                     else:
                         log.info("timing: nothing yet after %.1fs, but no filler for this", FILLER_AFTER_S)
             opening = await first
+            # They paused, the reply got written, and they are talking again:
+            # wait to hear whether it is more of the same thought. Half a
+            # thought answered and then the other half is the agent saying the
+            # same thing twice; a "haan" in passing changes nothing.
+            if opening is not None and not self._cut_in and self._new_speech:
+                await self._until_quiet()
         finally:
             self._writing = False
         if opening is None:
@@ -711,12 +820,15 @@ class QuestionAgent(TalkingAgent):
         )
         self._caller = caller
         self._opening = greeting
-        # Nothing is kept on the platform for a call somebody made to us, so
-        # the conversation so far travels with each turn.
+        # The model reads the conversation so far from what travels with each
+        # turn; the platform keeps its own copy for the query.
         self._history: list[dict] = []
+        # How much of the last reply the caller heard, when they cut it off.
+        self._heard: str | None = None
 
     def _remember(self, text: str, heard: str | None) -> None:
         self._history.append({"role": "agent", "text": text, **({"heard": heard} if heard is not None else {})})
+        self._heard = heard
 
     async def on_enter(self) -> None:
         self._listen_for_cut_ins()
@@ -740,8 +852,9 @@ class QuestionAgent(TalkingAgent):
             raise StopResponse()
 
         try:
+            heard, self._heard = self._heard, None
             outcome, spoken, heard = await self._speak_stream(
-                self._api.ask_stream(self._caller, said, self._history[-14:]),
+                self._api.ask_stream(self._caller, said, self._history[-14:], heard),
                 filler=lambda: self._wants_filler(said),
             )
         except Exception:
@@ -924,8 +1037,16 @@ async def entrypoint(ctx: JobContext) -> None:
     # connection mid-conversation and the agent apologised and hung up.
     http = aiohttp.ClientSession()
     api_client = TurnApi(call_id, http)
+    recorder: CallRecorder | None = None
 
     async def on_shutdown() -> None:
+        # The recording first: the call is over, and it is all there is of it.
+        audio = await recorder.finish() if recorder else None
+        if audio:
+            try:
+                await api_client.send_recording(audio)
+            except Exception:
+                log.exception("could not hand over the recording")
         await api_client.ended()
         await http.close()
 
@@ -951,6 +1072,8 @@ async def entrypoint(ctx: JobContext) -> None:
             log.exception("could not open the incoming call")
         voice = brief.get("voice") or VOICE
         pace = float(brief.get("pace") or VOICE_PACE)
+        api_client.caller = caller
+        api_client.query_id = brief.get("queryId")
 
         session = AgentSession(
             stt=make_stt(brief.get("language")),
@@ -962,7 +1085,14 @@ async def entrypoint(ctx: JobContext) -> None:
         watch_timing(session)
         agent = QuestionAgent(api_client, caller, brief)
         agent.forget_heard = search_early(session, lambda said: api_client.prepare(said, caller))
-        await session.start(agent=agent, room=ctx.room)
+        # `record=False` keeps LiveKit's paid cloud recording off, whatever the
+        # project is set to; the call is recorded here instead.
+        await session.start(agent=agent, room=ctx.room, record=False)
+        # Somebody who rings us is on the line already, so from now.
+        if api_client.query_id:
+            recorder = CallRecorder(session, ctx.job.id)
+            recorder.attach()
+            await recorder.start()
         return
 
     # The customer chooses the voice in the portal. Falling back to the
@@ -1002,7 +1132,15 @@ async def entrypoint(ctx: JobContext) -> None:
     asyncio.ensure_future(wait_until_answered(ctx.room, answered))
     agent = AttendanceAgent(api_client, answered, gender=brief.get("gender") or "female")
     agent.forget_heard = search_early(session, api_client.prepare)
-    await session.start(agent=agent, room=ctx.room)
+    await session.start(agent=agent, room=ctx.room, record=False)
+    recorder = CallRecorder(session, ctx.job.id)
+    recorder.attach()
+
+    async def record_once_answered() -> None:
+        await answered.wait()
+        await recorder.start()
+
+    asyncio.ensure_future(record_once_answered())
 
 
 if __name__ == "__main__":

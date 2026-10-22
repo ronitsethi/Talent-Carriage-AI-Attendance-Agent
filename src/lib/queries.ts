@@ -13,10 +13,12 @@ import {
   imports,
   mappingProfiles,
   messages,
+  queries,
   tenants,
   tenantSettings,
   unmappedCodes,
 } from '@/db/schema';
+import { callsForCase, caseConversation, messageTime, queryConversation } from '@/lib/conversation/summary';
 
 /** Read helpers for the portal. Everything tenant-scoped runs inside withTenant. */
 
@@ -38,6 +40,11 @@ export type CaseListItem = {
   error: string | null;
   askedAt: Date | null;
   answeredAt: Date | null;
+  followUpDueAt: Date | null;
+  followUpSentAt: Date | null;
+  followUpReply: string | null;
+  /** The last thing said about this date, by the agent or the employee, by message or on a call. */
+  lastContactAt: Date | null;
   employeeName: string;
   employeeCode: string;
   department: string | null;
@@ -66,8 +73,20 @@ const ANSWERED_STATUSES = ['answered', 'awaiting_action', 'awaiting_approval'] a
  */
 export const ASKED_STATUSES = [...AWAITING_REPLY, ...ANSWERED_STATUSES] as const;
 
+/**
+ * Where a case stands for the tabs: its status, except that a case whose
+ * follow-up has gone out and is not yet done stands in Follow-up - waiting on
+ * that, rather than on the first answer it already has.
+ */
+type CaseStage = CaseStatus | 'follow_up';
+const caseStage = sql<CaseStage>`case
+  when ${cases.followUpSentAt} is not null
+    and (${cases.followUpReply} is null or ${cases.followUpReply} = 'not_done')
+    and ${cases.status} in ('asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval')
+  then 'follow_up' else ${cases.status}::text end`;
+
 /** Everything still in play, which is what the sidebar counts. */
-const OPEN_STATUSES = ['queued', ...ASKED_STATUSES] as const;
+const OPEN_STATUSES = ['queued', ...ASKED_STATUSES, 'follow_up'] as const;
 
 /**
  * The Cases page's tabs, in order, and the only place a tab's name, its rows
@@ -79,11 +98,12 @@ export const CASE_FILTERS = [
   { key: 'not_contacted', label: 'Not contacted', statuses: ['queued'] },
   { key: 'awaiting', label: 'Awaiting reply', statuses: AWAITING_REPLY },
   { key: 'answered', label: 'Answered', statuses: ANSWERED_STATUSES },
+  { key: 'follow_up', label: 'Follow-up', statuses: ['follow_up'] },
   { key: 'needs_hr', label: 'Needs HR', statuses: ['needs_hr'] },
   { key: 'failed', label: 'Send failed', statuses: ['failed'] },
   { key: 'resolved', label: 'Resolved', statuses: ['resolved'] },
   { key: 'all', label: 'All', statuses: null },
-] as const satisfies readonly { key: string; label: string; statuses: readonly CaseStatus[] | null }[];
+] as const satisfies readonly { key: string; label: string; statuses: readonly CaseStage[] | null }[];
 
 export type CaseFilterKey = (typeof CASE_FILTERS)[number]['key'];
 export const DEFAULT_CASE_FILTER: CaseFilterKey = 'open';
@@ -91,7 +111,7 @@ export const DEFAULT_CASE_FILTER: CaseFilterKey = 'open';
 /** What a `status` in the URL selects. An unknown one - or the old "attention"
  * link, from when Needs HR and Send failed shared a tab - lands somewhere
  * sensible rather than on an empty table. */
-function statusesFor(status: string | undefined): readonly CaseStatus[] | null {
+function statusesFor(status: string | undefined): readonly CaseStage[] | null {
   if (!status || status === 'all') return null;
   if (status === 'attention') return ['needs_hr', 'failed'];
   return (CASE_FILTERS.find((f) => f.key === status) ?? CASE_FILTERS[0]).statuses;
@@ -123,7 +143,7 @@ export async function listCases(
   return withTenant(tenantId, async (tx) => {
     const conditions = caseFilterConditions(tenantId, filters);
     const statuses = statusesFor(filters.status);
-    if (statuses) conditions.push(inArray(cases.status, [...statuses]));
+    if (statuses) conditions.push(inArray(caseStage, [...statuses]));
 
     return tx
       .select({
@@ -144,6 +164,13 @@ export async function listCases(
         error: cases.error,
         askedAt: cases.askedAt,
         answeredAt: cases.answeredAt,
+        followUpDueAt: cases.followUpDueAt,
+        followUpSentAt: cases.followUpSentAt,
+        followUpReply: cases.followUpReply,
+        lastContactAt: sql<Date | null>`greatest(
+          (select max(m.created_at) from messages m where m.case_id = ${cases.id} and m.query_id is null),
+          (select max(coalesce(c.ended_at, c.started_at)) from calls c where c.case_id = ${cases.id})
+        )`.mapWith((value: string | Date | null) => (value ? new Date(value) : null)),
         employeeName: employees.fullName,
         employeeCode: employees.empCode,
         department: employees.department,
@@ -165,11 +192,11 @@ export async function listCases(
 export async function caseCounts(tenantId: string, filters: CaseFilters = {}) {
   return withTenant(tenantId, async (tx) => {
     const rows = await tx
-      .select({ status: cases.status, total: count() })
+      .select({ status: caseStage, total: count() })
       .from(cases)
       .innerJoin(employees, eq(employees.id, cases.employeeId))
       .where(and(...caseFilterConditions(tenantId, filters)))
-      .groupBy(cases.status);
+      .groupBy(caseStage);
 
     const all = rows.reduce((total, row) => total + row.total, 0);
     const sum = (statuses: readonly string[] | null) =>
@@ -281,11 +308,14 @@ export async function caseDetail(tenantId: string, caseId: string) {
       .where(and(eq(cases.tenantId, tenantId), eq(cases.id, caseId)));
     if (!row) return null;
 
+    // This date's WhatsApp messages - the first contact, the replies and the
+    // follow-up. What the employee asked of their own accord is a query, read
+    // in Queries; what was said on a call is in the call's own transcript.
     const transcript = await tx
       .select()
       .from(messages)
-      .where(eq(messages.conversationId, sql`(select id from conversations where employee_id = ${row.employee.id} limit 1)`))
-      .orderBy(asc(messages.createdAt))
+      .where(and(eq(messages.caseId, caseId), isNull(messages.queryId), eq(messages.channel, 'whatsapp')))
+      .orderBy(messageTime)
       .limit(200);
 
     const caseActions = await tx.select().from(actions).where(eq(actions.caseId, caseId)).orderBy(desc(actions.createdAt));
@@ -297,12 +327,7 @@ export async function caseDetail(tenantId: string, caseId: string) {
           .orderBy(desc(approvals.requestedAt))
       : [];
 
-    const caseCalls = await tx
-      .select()
-      .from(calls)
-      .where(eq(calls.employeeId, row.employee.id))
-      .orderBy(desc(calls.id))
-      .limit(10);
+    const caseCalls = (await callsForCase(tx, row.caseRow)).slice(0, 10);
 
     const manager = row.employee.managerEmployeeId
       ? await tx.query.employees.findFirst({ where: eq(employees.id, row.employee.managerEmployeeId) })
@@ -320,7 +345,8 @@ export async function caseDetail(tenantId: string, caseId: string) {
       )
       .orderBy(asc(cases.attDate));
 
-    return { ...row, transcript, calls: caseCalls, actions: caseActions, approvals: caseApprovals, manager, otherPending };
+    const lines = await caseConversation(tx, row.caseRow);
+    return { ...row, transcript, calls: caseCalls, actions: caseActions, approvals: caseApprovals, manager, otherPending, lines };
   });
 }
 
@@ -552,5 +578,87 @@ export async function listEmployees(tenantId: string, opts: { search?: string } 
       otherCases: other.get(person.id) ?? 0,
       attendanceDays: days.get(person.id) ?? 0,
     }));
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * Queries
+ * ------------------------------------------------------------------ */
+
+export type QueryListItem = {
+  id: string;
+  channel: string;
+  callStyle: string | null;
+  startedAt: Date;
+  lastActivityAt: Date;
+  hasRecording: boolean;
+  feedbackSentAt: Date | null;
+  feedbackResolved: string | null;
+  feedbackRating: string | null;
+  feedbackComment: string | null;
+  employeeName: string;
+  employeeCode: string;
+  department: string | null;
+};
+
+/**
+ * What employees have asked of their own accord, newest first. The dates are
+ * the days the query started on, in the customer's own calendar.
+ */
+export async function listQueries(
+  tenantId: string,
+  filters: { from?: string; to?: string; search?: string; limit?: number } = {},
+): Promise<QueryListItem[]> {
+  return withTenant(tenantId, async (tx) => {
+    const tz = sql`coalesce((select timezone from tenant_settings where tenant_id = ${tenantId}), 'Asia/Kolkata')`;
+    const day = sql`(${queries.startedAt} at time zone ${tz})::date`;
+    const conditions = [eq(queries.tenantId, tenantId)];
+    if (filters.from) conditions.push(sql`${day} >= ${filters.from}::date`);
+    if (filters.to) conditions.push(sql`${day} <= ${filters.to}::date`);
+    if (filters.search?.trim()) conditions.push(employeeSearch(filters.search.trim()));
+
+    return tx
+      .select({
+        id: queries.id,
+        channel: queries.channel,
+        callStyle: queries.callStyle,
+        startedAt: queries.startedAt,
+        lastActivityAt: queries.lastActivityAt,
+        hasRecording: sql<boolean>`${queries.recordingUri} is not null`,
+        feedbackSentAt: queries.feedbackSentAt,
+        feedbackResolved: queries.feedbackResolved,
+        feedbackRating: queries.feedbackRating,
+        feedbackComment: queries.feedbackComment,
+        employeeName: employees.fullName,
+        employeeCode: employees.empCode,
+        department: employees.department,
+      })
+      .from(queries)
+      .innerJoin(employees, eq(employees.id, queries.employeeId))
+      .where(and(...conditions))
+      .orderBy(desc(queries.startedAt))
+      .limit(filters.limit ?? 200);
+  });
+}
+
+/** One query: who asked, their manager, and the conversation itself. */
+export async function queryDetail(tenantId: string, queryId: string) {
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select({ query: queries, employee: employees })
+      .from(queries)
+      .innerJoin(employees, eq(employees.id, queries.employeeId))
+      .where(and(eq(queries.tenantId, tenantId), eq(queries.id, queryId)));
+    if (!row) return null;
+    const manager = row.employee.managerEmployeeId
+      ? await tx.query.employees.findFirst({ where: eq(employees.id, row.employee.managerEmployeeId) })
+      : null;
+    const lines = await queryConversation(tx, row.query);
+    // After a call, the feedback asked for on WhatsApp.
+    const feedbackMessages =
+      row.query.channel === 'voice'
+        ? await tx.select().from(messages).where(eq(messages.queryId, queryId)).orderBy(messageTime)
+        : [];
+    return { ...row, manager: manager ?? null, lines, feedbackMessages };
   });
 }

@@ -44,6 +44,10 @@ export const cases = pgTable(
     replyText: text('reply_text'),
     aiUsed: boolean('ai_used').notNull().default(false),
 
+    /** One overall summary of the conversation, for HR; stale once anything newer is said. */
+    summary: text('summary'),
+    summarisedAt: timestamp('summarised_at', { withTimezone: true }),
+
     /** Escalation clocks, set only once a case has been answered. */
     followUpDueAt: timestamp('follow_up_due_at', { withTimezone: true }),
     followUpSentAt: timestamp('follow_up_sent_at', { withTimezone: true }),

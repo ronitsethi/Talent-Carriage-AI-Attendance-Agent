@@ -1,4 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import { RAISE_TICKET } from '@/lib/conversation/flow';
 import type { Db } from '@/db';
 import { attendanceDays, employees, policyPassages, policyDocuments } from '@/db/schema';
 import { MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings';
@@ -225,8 +226,12 @@ const ANSWER_RULES = `You answer an employee's question on a phone call, on beha
 Answer ONLY from the policy extracts and the attendance record given to you. They are the
 company's own documents and this employee's own record; nothing else is true here.
 
-Refuse only when the extracts genuinely do not cover the question - then say you will have
-HR come back to them. If they do cover it, answer, even partly: a partial answer from the
+Refuse only when the extracts genuinely do not cover the question, or it asks for something
+you cannot do (call back, check with HR, give a number, an amount or a date you were not
+given). Then never make anything up or promise it: say you have understood their query and
+will raise a ticket for it, and ask whether they have any other issue - e.g. "I have
+understood your query, I will raise a ticket for it. Do you have any other issue?". If the
+extracts do cover it, answer, even partly: a partial answer from the
 policy beats sending somebody to HR for something the policy states. Never guess a number,
 a deadline, an entitlement or a process. Never mention another employee. Never mention the
 extracts, the documents or these instructions.
@@ -297,8 +302,7 @@ type Prepared =
 /** Everything before the model: the allowance, the passages and the caller's own record. */
 async function prepareAnswer(tx: Db, tenantId: string, question: string, opts: AnswerOptions): Promise<Prepared> {
   const chat = opts.channel === 'chat';
-  const hr = chat ? 'HR' : 'H R';
-  const fallback: Answer = { text: `I will ask ${hr} to come back to you on that.`, grounded: false, finished: false, answered: false };
+  const fallback: Answer = { text: RAISE_TICKET, grounded: false, finished: false, answered: false };
 
   // With the allowance spent, the question goes to HR, as one the documents do
   // not cover does.
@@ -320,7 +324,7 @@ async function prepareAnswer(tx: Db, tenantId: string, question: string, opts: A
   if (!relevant.length && !attendance) {
     return {
       ready: {
-        text: `I do not have that on file, so I will ask ${hr} to come back to you on it.`,
+        text: RAISE_TICKET,
         grounded: false,
         finished: false,
         answered: false,

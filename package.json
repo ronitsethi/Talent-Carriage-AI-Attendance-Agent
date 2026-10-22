@@ -27,6 +27,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.34.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.3",
