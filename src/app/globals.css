@@ -33,6 +33,14 @@
   --surface-0: #ffffff;
   --canvas: #eaeef4;
 
+  /* the conversation. The chat deliberately borrows WhatsApp's own colours, so
+     HR reads a thread the way the employee saw it on their phone. */
+  --wa-head: #185c5c;
+  --wa-paper: #ece4dc;
+  --wa-mine: #d9fdd3;
+  --wa-mine-bdr: #bfeeb4;
+  --wa-tick: #38a3e0;
+
   /* status: ink / bg / border */
   --ok-ink: #10653c;
   --ok-bg: #e7f4ec;
@@ -472,48 +480,166 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 .step-copy { font-size: var(--fs-meta); color: var(--ink-600); margin-top: 3px; }
 
 /* ---------- conversation ---------- */
-/* column-reverse with the messages reversed: reads in order and opens at the newest. */
-.chat { display: flex; flex-direction: column-reverse; gap: 8px; max-height: 460px; overflow: auto; padding: 18px; background: var(--hover-tint); }
+/*
+ * Two skins, one per channel. `.chat.wa` is the chat as the employee saw it on
+ * their phone; a call is a `.call-panel` - its recording, then `.chat.calls`,
+ * the transcript. Both are column-reverse over a reversed list, so a thread
+ * reads in order and a chat opens at its newest line.
+ */
+.chat { display: flex; flex-direction: column-reverse; gap: 10px; max-height: 520px; overflow: auto; padding: 18px; background: var(--hover-tint); }
+.chat.wa { gap: 9px; padding: 16px 18px; background: var(--wa-paper); }
+.chat.calls { gap: 12px; max-height: none; overflow: visible; padding: 2px; background: none; }
 .card.pad .chat { border-radius: var(--r-ctl); padding: 12px; margin-top: 10px; }
-.bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; border: 1px solid; font-size: var(--fs-body); white-space: pre-line; overflow-wrap: anywhere; }
-.bubble.outbound { align-self: flex-end; background: var(--teal-100); border-color: var(--teal-200); border-bottom-right-radius: 4px; }
-.bubble.inbound { align-self: flex-start; background: var(--surface-0); border-color: var(--line-200); border-bottom-left-radius: 4px; }
-.bubble .options { display: block; margin-top: 8px; padding-top: 7px; border-top: 1px solid rgba(14, 23, 38, 0.08); font-size: var(--fs-meta); color: var(--ink-600); }
-.bubble .meta { display: block; margin-top: 5px; font-family: var(--font-mono), ui-monospace, monospace; font-size: var(--fs-meta); color: var(--ink-500); text-align: right; }
-.recordings { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line-200); }
-/* A call's recording: round play, the label and time over a seek bar, then the speed. */
-.player { display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 10px; border: 1px solid var(--line-200); border-radius: 14px; background: var(--surface-0); }
-.player-play { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 50%; background: var(--primary); color: #fff; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+
+/* The bar over a chat: who it is with, and on what. */
+.chat-head { display: flex; align-items: center; gap: 12px; padding: 11px 16px; background: var(--wa-head); color: #fff; }
+.chat-head-avatar {
+  flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%;
+  background: rgb(255 255 255 / 0.18); font-size: var(--fs-meta); font-weight: 700;
+}
+.chat-head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
+.chat-head-name { font-size: var(--fs-small); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-head-sub { font-size: var(--fs-meta); color: rgb(255 255 255 / 0.74); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-head-icon { flex: none; opacity: 0.75; }
+
+/* One line: the speaker's face, their name over it, the bubble. */
+.turn { display: flex; align-items: flex-end; gap: 8px; max-width: 88%; }
+.turn.theirs { align-self: flex-start; }
+.turn.ours { align-self: flex-end; flex-direction: row-reverse; }
+.turn-avatar {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--teal-800); color: #fff; font-size: 11.5px; font-weight: 700;
+}
+.turn-avatar.agent { background: var(--navy); }
+.turn-body { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.turn.ours .turn-body { align-items: flex-end; }
+.turn-name { padding-left: 2px; font-size: var(--fs-meta); font-weight: 700; color: var(--teal-800); }
+
+.bubble { padding: 7px 11px 5px; border-radius: 12px; border: 1px solid transparent; font-size: var(--fs-body); line-height: 1.45; }
+.bubble-text { display: block; white-space: pre-line; overflow-wrap: anywhere; }
+.bubble.wa.outbound { background: var(--wa-mine); border-color: var(--wa-mine-bdr); border-bottom-right-radius: 4px; color: var(--ink-900); }
+.bubble.wa.inbound { background: var(--surface-0); border-color: var(--line-200); border-bottom-left-radius: 4px; color: var(--ink-900); }
+.bubble.call.outbound { background: var(--navy); border-color: var(--navy); color: #fff; }
+.bubble.call.inbound { background: var(--surface-0); border-color: var(--line-200); color: var(--ink-900); }
+.bubble .options { display: block; margin-top: 7px; padding-top: 6px; border-top: 1px solid rgb(14 23 38 / 0.1); font-size: var(--fs-meta); color: var(--ink-600); }
+.bubble.call.outbound .options { border-top-color: rgb(255 255 255 / 0.25); color: rgb(255 255 255 / 0.82); }
+.bubble-foot { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 3px; font-size: 11.5px; line-height: 1; color: var(--ink-500); }
+.bubble.call.outbound .bubble-foot { color: rgb(255 255 255 / 0.72); }
+.bubble-note { font-style: italic; }
+.tick { color: var(--ink-400); }
+.tick.read { color: var(--wa-tick); }
+.tick.failed { color: var(--err-ink); font-weight: 700; }
+
+/* The date a day's messages start on. */
+.day-pill { align-self: center; margin: 4px 0; }
+.day-pill span {
+  display: inline-block; padding: 3px 11px; border-radius: var(--r-round); border: 1px solid var(--line-200);
+  background: rgb(255 255 255 / 0.9); font-size: var(--fs-meta); font-weight: 600; color: var(--ink-600);
+  box-shadow: 0 1px 2px rgb(14 23 38 / 0.06);
+}
+
+/* A voice conversation: the calls, each with its recording and its transcript. */
+.calls-head .eyebrow { margin: 0; }
+.calls-head .hint { display: inline-flex; align-items: center; gap: 6px; }
+.calls-body { display: flex; flex-direction: column; gap: 12px; max-height: 620px; overflow: auto; padding: 14px 16px; background: var(--surface-50); }
+.call-panel { position: relative; border: 1px solid var(--line-200); border-radius: var(--r-card); background: var(--surface-0); }
+.call-panel-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 11px 76px 11px 14px;
+  border-bottom: 1px solid transparent; border-radius: var(--r-card) var(--r-card) 0 0;
+  list-style: none; cursor: pointer; user-select: none;
+}
+.call-panel-head::-webkit-details-marker { display: none; }
+.call-panel-head:hover { background: var(--surface-50); }
+.call-panel details[open] .call-panel-head { border-bottom-color: var(--line-200); }
+.call-panel-head:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+.call-panel-title { font-size: var(--fs-small); font-weight: 700; color: var(--ink-900); }
+.call-panel-when { font-size: var(--fs-meta); color: var(--ink-600); }
+.call-panel-chevron { position: absolute; top: 14px; right: 14px; color: var(--ink-500); }
+.call-panel-get {
+  position: absolute; top: 11px; right: 42px; display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: var(--r-chip); color: var(--ink-500);
+}
+.call-panel-get:hover { background: var(--blue-bg); color: var(--link); }
+.call-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 12px 14px 14px; }
+@media (prefers-reduced-motion: no-preference) {
+  .call-panel-chevron { transition: transform 0.15s; }
+}
+.call-panel details[open] .call-panel-chevron { transform: rotate(180deg); }
+
+/*
+ * What a call or chat cost, under its transcript: the total on a bar, the
+ * groups and their lines inside. Folded by default - it is looked up, not read.
+ */
+.cost-box { border: 1px solid var(--line-200); border-radius: var(--r-card); background: var(--surface-0); }
+.costs-card { display: flex; flex-direction: column; gap: 10px; }
+.costs-card .eyebrow { margin-bottom: 2px; }
+.cost-head {
+  position: relative; display: flex; align-items: center; gap: 8px; padding: 9px 40px 9px 12px;
+  list-style: none; cursor: pointer; user-select: none; color: var(--ink-600); border-radius: var(--r-card);
+}
+.cost-head::-webkit-details-marker { display: none; }
+.cost-head:hover { background: var(--surface-50); }
+.cost-head:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+.cost-title { font-size: var(--fs-small); font-weight: 700; color: var(--ink-900); }
+.cost-total { margin-left: auto; font-size: var(--fs-small); font-weight: 700; color: var(--ink-900); }
+.cost-est { margin-left: 5px; font-size: var(--fs-meta); font-weight: 400; color: var(--ink-500); }
+.cost-chevron { position: absolute; top: 10px; right: 12px; color: var(--ink-500); }
+.cost-box[open] .cost-chevron { transform: rotate(180deg); }
+.cost-box[open] .cost-head { border-bottom: 1px solid var(--line-200); border-radius: var(--r-card) var(--r-card) 0 0; }
+.cost-body { padding: 4px 12px 10px; overflow-x: auto; }
+.cost-table { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); }
+.cost-table td, .cost-table th { padding: 6px 8px 6px 0; vertical-align: top; text-align: left; border-bottom: 1px solid var(--line-100); }
+.cost-table .num { text-align: right; padding-right: 0; white-space: nowrap; }
+.cost-group th, .cost-group td { padding-top: 10px; font-weight: 700; color: var(--ink-900); background: none; }
+.cost-group time { margin-right: 8px; font-weight: 400; color: var(--ink-500); }
+.cost-row td { color: var(--ink-700); }
+.cost-qty { white-space: nowrap; color: var(--ink-600); }
+.cost-note { display: block; margin-top: 2px; font-size: var(--fs-meta); color: var(--ink-500); font-family: inherit; }
+.cost-foot { margin-top: 8px; }
+.cost-narrow { display: none; }
+@media (max-width: 640px) {
+  .cost-qty { display: none; }
+  .cost-narrow { display: block; }
+  .cost-group th { padding-right: 8px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cost-chevron { transition: transform 0.15s; }
+}
+
+/* A call's recording: round play, the bars to seek along, the time, the speed. */
+.player { display: flex; align-items: center; gap: 12px; padding: 7px 10px; border: 1px solid var(--line-200); border-radius: var(--r-round); background: var(--surface-50); }
+.player-play { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 50%; background: var(--primary); color: #fff; cursor: pointer; transition: background 0.15s, transform 0.1s; }
 .player-play:hover { background: var(--primary-hover); }
 .player-play:active { transform: scale(0.95); }
 .player-play-icon { margin-left: 2px; } /* a triangle looks off-centre when it is centred */
 .player.failed .player-play { background: var(--err-ink); }
-.player-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.player-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.player-label { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.player.failed .player-label { color: var(--err-ink); }
 .player-time { flex: none; font-size: var(--fs-meta); color: var(--ink-900); font-variant-numeric: tabular-nums; }
 .player-of { color: var(--ink-500); }
-.player-speed { flex: none; min-width: 48px; height: 30px; padding: 0 8px; border: 1px solid var(--line-200); border-radius: 999px; background: var(--surface-50); color: var(--ink-700); font-size: var(--fs-meta); cursor: pointer; }
+.player-failed { color: var(--err-ink); font-weight: 600; }
+.player-speed { flex: none; min-width: 46px; height: 28px; padding: 0 8px; border: 1px solid var(--line-200); border-radius: 999px; background: var(--surface-0); color: var(--ink-700); font-size: var(--fs-meta); cursor: pointer; }
 .player-speed:hover { border-color: var(--blue-bdr); background: var(--blue-bg); color: var(--link); }
 
-/* The seek bar: filled up to where it has played. */
-.player-seek { --progress: 0%; -webkit-appearance: none; appearance: none; width: 100%; height: 6px; margin: 0; border-radius: 999px; cursor: pointer;
-  background: linear-gradient(to right, var(--primary) var(--progress), var(--line-200) var(--progress)); }
+/* The bars are decoration, not the recording's amplitude - see audio-player.tsx.
+   The range input lies over them, invisible but for its thumb, and does the seeking. */
+.player-wave { position: relative; flex: 1; min-width: 80px; height: 34px; }
+.player-bars { position: absolute; inset: 0; display: flex; align-items: center; gap: 2px; pointer-events: none; }
+.player-bars span { flex: 1; min-width: 1px; border-radius: 1px; background: var(--line-200); }
+.player-bars span.played { background: var(--primary); }
+.player.failed .player-bars span { background: var(--err-bdr); }
+.player-seek { -webkit-appearance: none; appearance: none; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; background: none; cursor: pointer; }
 .player-seek:disabled { cursor: default; }
-.player-seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--surface-0); border: 3px solid var(--primary); box-shadow: 0 1px 3px rgb(14 23 38 / 0.25); transition: transform 0.1s; }
-.player-seek::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--surface-0); border: 3px solid var(--primary); box-shadow: 0 1px 3px rgb(14 23 38 / 0.25); }
+.player-seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 13px; height: 13px; border-radius: 50%; background: var(--surface-0); border: 3px solid var(--primary); box-shadow: 0 1px 3px rgb(14 23 38 / 0.25); transition: transform 0.1s; }
+.player-seek::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--surface-0); border: 3px solid var(--primary); box-shadow: 0 1px 3px rgb(14 23 38 / 0.25); }
 .player-seek:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .player-seek:disabled::-webkit-slider-thumb { border-color: var(--line-200); }
-.player-seek:focus-visible { outline: 3px solid var(--primary); outline-offset: 4px; }
+.player-seek:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; border-radius: var(--r-chip); }
 @media (prefers-reduced-motion: no-preference) {
   .player-spin { animation: player-spin 0.9s linear infinite; }
 }
 @keyframes player-spin { to { transform: rotate(360deg); } }
 @media (max-width: 520px) {
-  .player { gap: 10px; }
-  .player-label { display: none; }
-  .player-top { justify-content: flex-end; }
+  .player { gap: 8px; }
+  .player-speed { display: none; }
 }
 .summary-text { color: var(--ink-700); line-height: 1.55; white-space: pre-line; }
 .summary-list { margin: 0; padding-left: 18px; color: var(--ink-700); line-height: 1.55; }
@@ -617,3 +743,117 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
   .login-headline { font-size: var(--fs-h1); }
   .login-side { padding: 32px 24px 48px; }
 }
+
+/* ---------- COE teams ---------- */
+.coe-table td { vertical-align: top; }
+.coe-table td.num, .coe-table td.coe-code { padding-top: 15px; }
+.coe-code { font-weight: 600; color: var(--ink-700); }
+.coe-table tr.coe-editing { background: var(--blue-bg); }
+/* The warm transfer team: numbered chips, in the order they are tried. */
+.coe-chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 360px; margin: 0; padding: 0; list-style: none; }
+.coe-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 3px; border-radius: var(--r-round);
+  background: var(--neutral-bg); border: 1px solid var(--neutral-bdr); font-size: var(--fs-meta); font-weight: 500;
+  color: var(--ink-900); white-space: nowrap;
+}
+.coe-n {
+  flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--navy); color: #fff; font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.coe-person { font-weight: 600; white-space: nowrap; }
+.coe-person.fallback { color: var(--warn-ink); }
+.coe-person.lt { color: var(--link); }
+.coe-actions { display: inline-flex; align-items: center; gap: 4px; }
+.btn.icon { width: 40px; padding: 0; justify-content: center; }
+
+.coe-form { display: flex; flex-direction: column; gap: 22px; }
+.coe-errors { margin: 6px 0 0; padding-left: 18px; }
+.coe-names { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 12px; }
+.coe-code-input { text-transform: uppercase; letter-spacing: 0.04em; }
+.coe-section { margin: 0; padding: 0; border: 0; min-width: 0; }
+.coe-section legend { padding: 0; font-size: var(--fs-small); font-weight: 600; color: var(--ink-900); }
+.coe-section > .field-help { margin: 4px 0 12px; }
+/* The clients, ticked as chips. */
+.pick-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pick-chip {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1px solid var(--line-200);
+  border-radius: var(--r-ctl); background: var(--surface-0); font-size: var(--fs-small); color: var(--ink-700); cursor: pointer;
+}
+.pick-chip:hover { border-color: var(--blue-bdr); }
+.pick-chip:has(input:checked) { background: var(--blue-bg); border-color: var(--blue-bdr); color: var(--ink-900); font-weight: 500; }
+.pick-chip:has(input:focus-visible) { outline: 3px solid var(--primary); outline-offset: 2px; }
+/* One member: their place, name, number, then move and remove. */
+.coe-members { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; padding: 0; list-style: none; }
+.coe-member { display: grid; grid-template-columns: 20px minmax(0, 1.3fr) minmax(0, 0.7fr) minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.coe-member-tools { display: flex; gap: 2px; grid-column: 5; grid-row: 1; }
+/* The companies a member looks after, under their details. */
+.coe-member-clients { grid-column: 2 / 5; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.coe-member-clients-label { font-size: var(--fs-meta); color: var(--ink-500); margin-right: 2px; }
+.pick-chip.small { min-height: 32px; padding: 0 10px; gap: 6px; font-size: var(--fs-meta); }
+.pick-chip.small input { width: 15px; height: 15px; }
+.coe-members > .coe-member + .coe-member { padding-top: 10px; border-top: 1px solid var(--line-100); }
+.coe-chip.idle { opacity: 0.6; border-style: dashed; }
+.coe-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 22px; }
+.coe-person-inputs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.coe-person-inputs .input:first-child { grid-column: 1 / -1; }
+.coe-emp-code { text-transform: uppercase; }
+@media (max-width: 640px) {
+  .coe-names, .coe-person-inputs { grid-template-columns: 1fr; }
+  .coe-member { grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .coe-member .input:not(.mono) { grid-column: 2 / 4; }
+  .coe-member .input.mono { grid-row: 2; }
+  .coe-member .coe-emp-code { grid-column: 2; }
+  .coe-member-tools { grid-column: 4; }
+  .coe-member-clients { grid-column: 2 / -1; }
+}
+
+/* ---------- who a query or case is about ---------- */
+.person-head { display: flex; gap: 16px; align-items: flex-start; }
+.person-avatar {
+  flex: none; display: grid; place-items: center; width: 60px; height: 60px; border-radius: 50%;
+  color: #fff; font-size: 20px; font-weight: 700; letter-spacing: 0.02em;
+}
+.person-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.person-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; font-size: var(--fs-small); color: var(--ink-600); }
+.person-name { margin: 0; font-size: var(--fs-h2); line-height: 1.3; color: var(--ink-900); }
+.person-meta { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-600); }
+.person-meta svg { color: var(--ink-500); flex: none; }
+.code-chip { display: inline-block; margin-left: 4px; padding: 1px 8px; border-radius: var(--r-chip); background: var(--neutral-bg); color: var(--ink-900); font-size: var(--fs-meta); }
+.channel-pill {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: var(--r-round);
+  font-size: var(--fs-meta); font-weight: 600; white-space: nowrap;
+}
+.channel-pill.wa { background: var(--ok-bg); color: var(--ok-ink); }
+.channel-pill.voice { background: var(--blue-bg); color: var(--link); }
+
+/* ---------- a query's ticket ---------- */
+.ticket-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 12px; padding-top: 16px; border-top: 1px solid var(--line-100); }
+.ticket-head h3 { margin: 0; font-size: var(--fs-small); font-weight: 600; color: var(--ink-900); }
+.chip.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.ticket-form { display: grid; grid-template-columns: minmax(110px, 160px) minmax(0, 1fr); gap: 12px 16px; align-items: start; }
+.ticket-label { padding-top: 11px; font-size: var(--fs-small); color: var(--ink-600); }
+.ticket-form .textarea { height: auto; min-height: 104px; padding: 10px; line-height: 1.5; resize: vertical; }
+.ticket-mark { margin: 6px 0 0; font-size: var(--fs-meta); color: var(--warn-ink); }
+.ticket-lt { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; }
+.ticket-lt select:disabled { background: var(--surface-50); color: var(--ink-500); }
+.ticket-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+@media (max-width: 640px) {
+  .ticket-form { grid-template-columns: 1fr; gap: 6px; }
+  .ticket-label { padding-top: 6px; }
+}
+
+/* ---------- the training sheet, on COE Teams ---------- */
+.sheet-upload-ok { margin: 10px 0 0; font-size: var(--fs-meta); color: var(--ok-ink); }
+.coe-types td { vertical-align: top; }
+.coe-type-desc { max-width: 520px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.coe-keywords { max-width: 360px; font-size: var(--fs-meta); color: var(--ink-600); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.coe-missing { color: var(--warn-ink); font-family: var(--font-sans), system-ui, sans-serif; white-space: nowrap; }
+.ticket-no { margin-left: 4px; font-size: var(--fs-meta); color: var(--ink-600); }
+/* What has been sent about a ticket, and what came back. */
+.ticket-activity { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-100); }
+.ticket-activity h4 { margin: 0 0 8px; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-700); }
+.ticket-activity ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.ticket-activity li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; font-size: var(--fs-meta); color: var(--ink-700); }
+.ticket-activity-when { color: var(--ink-500); }
+.ticket-activity li.failed .ticket-activity-when { color: var(--err-ink); font-weight: 600; }
+.ticket-activity-error { flex-basis: 100%; color: var(--err-ink); }

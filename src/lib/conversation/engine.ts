@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import {
   cases,
@@ -10,13 +10,15 @@ import {
   aiDecisions,
   type tenantSettings,
 } from '@/db/schema';
-import type { MessageChannel, InboundMessage, Outbound } from '@/lib/channels/types';
+import type { MessageChannel, InboundMessage, MessagePricing, Outbound } from '@/lib/channels/types';
 import { ChannelError } from '@/lib/channels/types';
 import type { Meaning } from '@/lib/mapping/meanings';
 import { classifyByRules, classifyReply, type Classification } from './classify';
 import { addMessagesToQuery, recentCaseContact, whatsappQuery } from './queries';
 import { answerFeedbackTap, answerFeedbackTyped, parseFeedbackSelection } from './feedback';
-import { handleStep, handleTopOption, handleTyped, parseSheetSelectionId, sheetState } from './sheet';
+import { handleLeaveType, handleStep, handleTopOption, handleTyped, parseSheetSelectionId, sheetState } from './sheet';
+import { decideApproval, typedManagerReply } from '@/lib/approvals';
+import type { ApplyContext } from './apply';
 import type { ChatVerdict } from './talk';
 import {
   allClearedMessage,
@@ -33,6 +35,7 @@ import {
   parseApprovalSelectionId,
   parseFollowUpSelectionId,
   parseOfferSelectionId,
+  parseLeaveTypeSelectionId,
   type OptionNumber,
 } from './flow';
 
@@ -384,10 +387,11 @@ export async function chainNextPending(ctx: EngineContext, employee: EmployeeRow
 
   const pending = await pendingCases(ctx, employee.id, justAnsweredCaseId);
   if (!pending.length) {
+    // Every date they answered, wherever it went after: with the manager, with HR, closed.
     const [answered] = await ctx.tx
       .select({ count: sql<number>`count(*)::int` })
       .from(cases)
-      .where(and(eq(cases.employeeId, employee.id), eq(cases.status, 'answered')));
+      .where(and(eq(cases.employeeId, employee.id), isNotNull(cases.answeredAt)));
     if ((answered?.count ?? 0) > 1) {
       await sendText(ctx, employee, allClearedMessage(answered?.count ?? 1));
     }
@@ -427,6 +431,24 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
   const employee = await ctx.tx.query.employees.findFirst({
     where: and(eq(employees.tenantId, ctx.tenantId), eq(employees.mobileE164, inbound.from), isNull(employees.deletedAt)),
   });
+  // A manager deciding a request: by the button, which names the request - a
+  // manager may not be an employee at all. Writing instead, a manager who is not
+  // also an employee is read as answering the request waiting on them.
+  const approvalTap = parseApprovalSelectionId(inbound.selectionId);
+  if (approvalTap && approvalTap.choice !== 'details') {
+    const decided = await decideApproval(ctx as ApplyContext, approvalTap.approvalId, approvalTap.choice, inbound.from);
+    if (decided.handled) return { handled: true, caseId: null, classification: { intent: 'other', option: null, confidence: 1, source: 'rules' }, action: 'logged' };
+  }
+  if (inbound.text?.trim() && !inbound.selectionId) {
+    // A manager who is also an employee, with no dates of their own waiting, may be answering as a manager.
+    const ownOpen = employee
+      ? await ctx.tx.query.cases.findFirst({ where: and(eq(cases.employeeId, employee.id), inArray(cases.status, [...UNANSWERED])), columns: { id: true } })
+      : null;
+    if (!ownOpen && (await typedManagerReply(ctx as ApplyContext, inbound.from, inbound.text, Boolean(employee)))) {
+      return { handled: true, caseId: null, classification: { intent: 'other', option: null, confidence: 1, source: 'rules' }, action: 'logged' };
+    }
+  }
+
   // A deleted employee's number is a stranger's again: their frozen cases must
   // not start moving because somebody replied to an old message.
   if (!employee) return { handled: false, reason: 'unknown_sender' };
@@ -528,6 +550,19 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     };
   }
 
+  // A leave type chosen for the agent to apply names its case.
+  const leaveTap = parseLeaveTypeSelectionId(inbound.selectionId);
+  if (leaveTap) {
+    const tapped = await ctx.tx.query.cases.findFirst({
+      where: and(eq(cases.id, leaveTap.caseId), eq(cases.employeeId, employee.id), inArray(cases.status, [...UNANSWERED])),
+    });
+    if (tapped) {
+      await ctx.tx.update(messages).set({ caseId: tapped.id }).where(eq(messages.id, inboundRow.id));
+      await handleLeaveType(ctx, tapped, employee, leaveTap.leaveType);
+      return { handled: true, caseId: tapped.id, classification: { intent: 'other', option: null, confidence: 1, source: 'rules' }, action: 'answered' };
+    }
+  }
+
   // A row or button from the flow sheet's menus names its case and its step.
   const sheetTap = parseSheetSelectionId(inbound.selectionId);
   if (sheetTap) {
@@ -581,7 +616,7 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
       confidence: 1,
       source: 'rules',
     };
-    await answerOption(ctx, target.caseRow, employee, target.option);
+    await answerOption(ctx, target.caseRow, employee, target.option, undefined, target.legacy);
     return { handled: true, caseId: target.caseRow.id, classification, action: 'answered' };
   }
 
@@ -751,11 +786,11 @@ async function answerOption(
   caseRow: CaseRow,
   employee: EmployeeRow,
   option: OptionNumber,
-  classification?: Classification,
+  _classification?: Classification,
+  legacy = false,
 ) {
-  if (!ctx.settings.actionsEnabled) return handleTopOption(ctx, caseRow, employee, option);
-  const outcome = await applyAnswer(ctx, caseRow, employee, option, classification);
-  if (!outcome.offered) await chainNextPending(ctx, employee, caseRow.id);
+  // Applying is part of the sheet now (`apply.ts`), with or without an HRMS.
+  return handleTopOption(ctx, caseRow, employee, option, legacy);
 }
 
 /**
@@ -771,13 +806,13 @@ async function resolveCase(
   employeeId: string,
   inbound: InboundMessage,
   activeCaseId: string | null,
-): Promise<{ caseRow: CaseRow | null; option: OptionNumber | null }> {
+): Promise<{ caseRow: CaseRow | null; option: OptionNumber | null; legacy?: boolean }> {
   const selection = parseSelectionId(inbound.selectionId);
   if (selection) {
     const row = await ctx.tx.query.cases.findFirst({
       where: and(eq(cases.id, selection.caseId), eq(cases.employeeId, employeeId)),
     });
-    if (row) return { caseRow: row, option: selection.option };
+    if (row) return { caseRow: row, option: selection.option, legacy: selection.legacy };
   }
 
   if (inbound.replyToProviderId) {
@@ -871,7 +906,7 @@ async function markCasesNeedHr(ctx: EngineContext, employeeId: string, reason: s
 export async function applyDeliveryUpdate(
   tx: Db,
   tenantId: string,
-  update: { providerMessageId: string; status: 'sent' | 'delivered' | 'read' | 'failed'; error?: string; at: Date },
+  update: { providerMessageId: string; status: 'sent' | 'delivered' | 'read' | 'failed'; error?: string; at: Date; pricing?: MessagePricing },
 ) {
   const message = await tx.query.messages.findFirst({
     where: and(eq(messages.tenantId, tenantId), eq(messages.providerMessageId, update.providerMessageId)),
@@ -885,6 +920,8 @@ export async function applyDeliveryUpdate(
       error: update.error,
       deliveredAt: update.status === 'delivered' ? update.at : message.deliveredAt,
       readAt: update.status === 'read' ? update.at : message.readAt,
+      // Kept from the first receipt that says, for the message's cost.
+      pricing: update.pricing ?? message.pricing,
     })
     .where(eq(messages.id, message.id));
 

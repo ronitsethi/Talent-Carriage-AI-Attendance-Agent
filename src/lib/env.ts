@@ -34,6 +34,13 @@ const schema = z.object({
 
   // WhatsApp (Meta Cloud API) - per tenant in the database, these are fallbacks
   WA_GRAPH_VERSION: z.string().default('v23.0'),
+  /**
+   * The approved template the first question about a date goes out as, for every
+   * customer without one of its own. attendance_absent_v2 carries the new
+   * options ("I didn't come", "I was working", "I was on leave", "Weekly off /
+   * Comp off"); until Meta approves it, the old template stays in use.
+   */
+  WA_FIRST_TEMPLATE: z.string().optional(),
   WA_PHONE_NUMBER_ID: z.string().optional(),
   WA_ACCESS_TOKEN: z.string().optional(),
   WA_APP_SECRET: z.string().optional(),
@@ -44,6 +51,12 @@ const schema = z.object({
   /** Azure OpenAI: https://<resource>.openai.azure.com/openai/v1. Unset means OpenAI itself. */
   OPENAI_BASE_URL: z.string().url().optional(),
   OPENAI_MODEL: z.string().default('gpt-4.1-mini'),
+  /** Rupees to the dollar, for showing dollar-priced costs (Azure, LiveKit) in rupees. */
+  USD_INR_RATE: z.coerce.number().positive().default(88),
+  /** The LiveKit Cloud plan, which decides what its minutes cost. */
+  LIVEKIT_PLAN: z.enum(['build', 'ship', 'scale']).default('build'),
+  /** The currency Plivo bills this account in, which its hangup callback does not say. */
+  PLIVO_BILLING_CURRENCY: z.enum(['INR', 'USD']).default('INR'),
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-haiku-4-5-20251001'),
   SARVAM_API_KEY: z.string().optional(),

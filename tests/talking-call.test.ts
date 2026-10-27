@@ -98,12 +98,12 @@ describe('how a talking call words its questions', () => {
       expect(said).not.toContain('Press 1');
       expect(said).not.toContain('press');
       expect(said).toContain('23 September');
-      expect(said).toContain('were you absent that day');
+      expect(said).toContain('did you not come in');
     });
   });
 
   it('still spells out the keys on a keypad call', () => {
-    expect(datePrompt('21 September', 'keypad')).toContain('Press 1 if you were absent');
+    expect(datePrompt('21 September', 'keypad')).toContain('Press 1 if you did not come to work');
     expect(datePrompt('21 September', 'spoken')).not.toContain('Press');
     expect(followUpPrompt(1, '21 September', 'keypad')).toContain('Press 1 if it is done');
     expect(followUpPrompt(1, '21 September', 'spoken')).not.toContain('Press');

@@ -5,6 +5,7 @@ import { calls, cases, employees } from '@/db/schema';
 import { runDailyCheck } from '@/lib/detection/run';
 import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { sendDueFollowUps } from '@/lib/conversation/followup';
+import { recordAnswer } from '@/lib/conversation/engine';
 import { giveAttendance, makeScenario, type Scenario } from './helpers/scenario';
 
 /**
@@ -15,6 +16,13 @@ import { giveAttendance, makeScenario, type Scenario } from './helpers/scenario'
  * employee has to press a key. The employee hears one sentence either way.
  */
 const heard = (turn: { intro?: string; speak: string }) => [turn.intro, turn.speak].filter(Boolean).join(' ');
+
+/** Presses keys one after another on the same date, as the menus ask; the last turn back. */
+async function press(ctx: Parameters<typeof handleTurn>[0], callId: string, caseId: string, keys: string[]) {
+  let turn = await handleTurn(ctx, callId, caseId, { digits: keys[0] });
+  for (const key of keys.slice(1)) turn = await handleTurn(ctx, callId, caseId, { digits: key });
+  return turn;
+}
 
 /**
  * The call placed about one date.
@@ -119,29 +127,37 @@ describe('the call that is finally answered', () => {
       expect(heard(opening)).toContain('25 September');
       expect(opening.done).toBe(false);
 
-      // Answer 25 September with "1 - I was absent".
+      // 25 September: did not come, unwell - then the menus that follow.
+      const reason = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
+      expect(heard(reason)).toContain('Press 1 for unwell');
+      const leaveOrPay = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
+      expect(heard(leaveOrPay)).toContain('Press 2 for');
+      const applied = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
+      expect(heard(applied)).toContain('applied');
       const afterFirst = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
-      expect(heard(afterFirst)).toContain('Please apply leave for 25 September');
+      expect(heard(afterFirst)).toContain('25 September');
       expect(heard(afterFirst)).toContain('4 more days pending');
       expect(heard(afterFirst)).toContain('21 September'); // oldest next
       expect(afterFirst.done).toBe(false);
 
-      // Work through the rest in the same call.
+      // Work through the rest in the same call: each a weekly off.
       let turn = afterFirst;
       const answeredDates: string[] = ['2026-09-25'];
       while (!turn.done && turn.nextCaseId) {
         const current = await tx.query.cases.findFirst({ where: eq(cases.id, turn.nextCaseId) });
         answeredDates.push(current!.attDate);
-        turn = await handleTurn(ctx, latest.id, turn.nextCaseId, { digits: '2' });
+        turn = await press(ctx, latest.id, turn.nextCaseId, ['4', '1']);
       }
 
       expect(answeredDates).toEqual(['2026-09-25', '2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24']);
       expect(turn.speak).toContain('All 5 days are now confirmed');
 
       const rows = await tx.select().from(cases);
-      expect(rows.every((r) => r.status === 'answered')).toBe(true);
+      expect(rows.every((r) => r.answeredAt !== null)).toBe(true);
       expect(rows.filter((r) => r.replyOption === 1)).toHaveLength(1);
-      expect(rows.filter((r) => r.replyOption === 2)).toHaveLength(4);
+      expect(rows.filter((r) => r.replyOption === 4)).toHaveLength(4);
+      // No manager in this file: the leave goes to HR to approve; a weekly off is HR's anyway.
+      expect(rows.every((r) => r.status === 'needs_hr')).toBe(true);
     });
   });
 
@@ -156,9 +172,10 @@ describe('the call that is finally answered', () => {
       // No key pressed; they just said it. Handled by the same classifier that
       // reads typed WhatsApp replies.
       const turn = await handleTurn(ctx, latest.id, opening.nextCaseId!, { speech: 'no I was working that day' });
-      const answered = await tx.query.cases.findFirst({ where: eq(cases.id, opening.nextCaseId!) });
-      expect(answered!.replyOption).toBe(2);
-      expect(heard(turn)).toContain('regularisation');
+      // "Working" opens what kind of working, as pressing 2 would.
+      expect(heard(turn)).toContain('Press 1 for');
+      const asked = await tx.query.cases.findFirst({ where: eq(cases.id, opening.nextCaseId!) });
+      expect((asked!.context as { sheet?: { menu?: string } }).sheet?.menu).toBe('working');
     });
   });
 
@@ -270,16 +287,12 @@ describe('contacting several dates at once', () => {
  * the question they have already answered.
  */
 describe('the follow-up call', () => {
+  /** A week answered "I was working" the old way, each date awaiting its regularisation. */
   async function answeredWeek() {
     await absentAllWeek();
     await withTenant(scenario.tenantId, async (tx) => {
       const ctx = scenario.context(tx);
-      const latest = await callAbout(tx, '2026-09-25');
-      const opening = await openingTurn(ctx, latest.id);
-      let turn = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
-      while (!turn.done && turn.nextCaseId) {
-        turn = await handleTurn(ctx, latest.id, turn.nextCaseId, { digits: '2' });
-      }
+      for (const row of await tx.select().from(cases)) await recordAnswer(ctx, row, 2);
     });
     scenario.voice.clear();
   }
@@ -302,7 +315,7 @@ describe('the follow-up call', () => {
       const said = heard(opening);
       expect(said).toContain('Last time');
       expect(said).toContain('21 September');
-      expect(said).not.toContain('Press 1 if you were absent');
+      expect(said).not.toContain('Press 1 if you did not come to work');
       expect(said).toContain('Press 1 if it is done');
     });
   });

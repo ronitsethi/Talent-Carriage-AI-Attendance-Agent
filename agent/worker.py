@@ -73,8 +73,16 @@ STT_HINT = (
 
 # How long the caller must be quiet before their turn is over. Half a second
 # cut sentences with a pause in them into two turns, and each was answered.
+# The ceiling was 1.5s; 1.2s takes a little off every answer.
 END_OF_TURN_MIN_S = 0.8
-END_OF_TURN_MAX_S = 1.5
+END_OF_TURN_MAX_S = 1.2
+
+# How long Sarvam waits in silence before it calls the speech over and hands
+# the final words across. Left to Sarvam, that was about 1.2s - and a turn can
+# not end before its words arrive, so it set the pace of every answer whatever
+# the ceiling above said. Lower answers sooner; too low, and a caller who
+# pauses mid-sentence is answered half way through. AGENT_STT_SILENCE_MS tunes it.
+STT_SILENCE_MS = int(os.environ.get("AGENT_STT_SILENCE_MS", "800"))
 
 TURN_HANDLING = {
     "endpointing": {"min_delay": END_OF_TURN_MIN_S, "max_delay": END_OF_TURN_MAX_S},
@@ -100,6 +108,10 @@ TURN_HANDLING = {
 # the verb says so - as the voice speaking it. A language with none here gets
 # silence rather than a filler in the wrong language.
 FILLER_AFTER_S = 0.5
+# Fillers are off: with the connections kept warm the real answer comes soon
+# enough. Everything below stays as it was - AGENT_FILLERS=on, or True here,
+# brings them back.
+FILLERS_ON = os.environ.get("AGENT_FILLERS", "off").lower() == "on"
 FILLERS = {
     ("en-IN", "female"): [
         "Okay, one moment.",
@@ -235,6 +247,15 @@ class TurnApi:
         # files the call under, from the greeting.
         self.caller = ""
         self.query_id: str | None = None
+        # Telling the platform the call is over. Asked for when the line drops
+        # and again on the way out; both wait on the one report, and once it has
+        # gone through it is not sent again.
+        self._ended = False
+        self._ending: asyncio.Future | None = None
+        # For the call's costs: when the employee picked up, and what the speech
+        # models and the session's own model used - see count_usage.
+        self.answered_at: float | None = None
+        self.usage: dict = {}
 
     async def opening(self) -> Turn:
         """The introduction, written for this call. Asked for while it rings."""
@@ -405,11 +426,27 @@ class TurnApi:
 
     async def ended(self) -> None:
         """The line has dropped. Without this a call sits 'in progress' for ever."""
+        if self._ended:
+            return
+        if self._ending is None or self._ending.done():
+            self._ending = asyncio.ensure_future(self._report_end())
+        await asyncio.shield(self._ending)
+
+    async def _report_end(self) -> None:
         try:
+            # How long they were on the line, from when they answered, and what
+            # was used, so the platform can put a price on the call.
+            spent = {"usage": self.usage}
+            if self.answered_at is not None:
+                spent["durationSeconds"] = round(time.monotonic() - self.answered_at)
             if self._call_id:
-                await self._post({"ended": True})
+                await self._post({"ended": True, **spent})
             elif self.query_id:
-                await self._raw({"ended": True, "ask": {"from": self.caller}, "queryId": self.query_id})
+                await self._raw({"ended": True, "ask": {"from": self.caller}, "queryId": self.query_id, **spent})
+            else:
+                return
+            self._ended = True
+            log.info("reported the end of call %s", self._call_id or self.query_id)
         except Exception:
             log.exception("could not report the end of call %s", self._call_id or self.query_id)
 
@@ -629,7 +666,7 @@ class TalkingAgent(Agent):
         self._writing, self._new_speech, self._cut_in = True, False, False
         try:
             first = asyncio.ensure_future(first_text())
-            if filler:
+            if filler and FILLERS_ON:
                 try:
                     await asyncio.wait_for(asyncio.shield(first), FILLER_AFTER_S)
                 except asyncio.TimeoutError:
@@ -959,6 +996,39 @@ def search_early(session: AgentSession, prepare):  # noqa: ANN001, ANN201
     return forget
 
 
+def count_usage(session: AgentSession, api_client: TurnApi, tts_model: str) -> None:
+    """
+    Adds up what the call used, as LiveKit reports it: seconds heard by speech
+    to text, characters spoken, and any tokens the session's own model used.
+    The platform prices it when the call ends.
+    """
+    used = api_client.usage
+    used.update({
+        "sttModel": "Sarvam streaming" if STT_VENDOR == "sarvam" else STT_MODEL,
+        "ttsModel": tts_model,
+        "llmModel": LLM_MODEL,
+        "sttSeconds": 0.0,
+        "ttsCharacters": 0,
+        "llmInputTokens": 0,
+        "llmOutputTokens": 0,
+    })
+
+    @session.on("metrics_collected")
+    def _count(ev) -> None:  # noqa: ANN001
+        m = ev.metrics
+        kind = getattr(m, "type", "")
+        try:
+            if kind == "stt_metrics":
+                used["sttSeconds"] += float(getattr(m, "audio_duration", 0) or 0)
+            elif kind == "tts_metrics":
+                used["ttsCharacters"] += int(getattr(m, "characters_count", 0) or 0)
+            elif kind == "llm_metrics":
+                used["llmInputTokens"] += int(getattr(m, "prompt_tokens", 0) or 0)
+                used["llmOutputTokens"] += int(getattr(m, "completion_tokens", 0) or 0)
+        except Exception:  # noqa: BLE001 - counting must never disturb the call
+            log.exception("could not count the call's usage")
+
+
 async def wait_until_answered(room, answered: asyncio.Event) -> None:  # noqa: ANN001
     """
     Sets `answered` once the employee picks up.
@@ -1009,8 +1079,8 @@ def make_stt(language: str | None):  # noqa: ANN201
     if STT_VENDOR != "sarvam":
         return openai.STT(model=STT_MODEL)
     listen = stt_language(language)
-    log.info("listening in %s, %s", listen, STT_MODE)
-    return sarvam.STTRealtime(language=listen, mode=STT_MODE, prompt=STT_HINT)
+    log.info("listening in %s, %s, turn over after %dms of silence", listen, STT_MODE, STT_SILENCE_MS)
+    return sarvam.STTRealtime(language=listen, mode=STT_MODE, prompt=STT_HINT, vad_min_silence_ms=STT_SILENCE_MS)
 
 
 def prewarm(proc: JobProcess) -> None:
@@ -1035,19 +1105,34 @@ async def entrypoint(ctx: JobContext) -> None:
     # `session.start()` returns once the agent is running, not when the call
     # ends, so this must not be closed in a `finally` around it - that shut the
     # connection mid-conversation and the agent apologised and hung up.
-    http = aiohttp.ClientSession()
+    # The connection to the platform stays open between turns. aiohttp lets it
+    # go after 15s, and the turns of a call come 15-25s apart, so each answer
+    # waited on a new one.
+    http = aiohttp.ClientSession(connector=aiohttp.TCPConnector(keepalive_timeout=90))
     api_client = TurnApi(call_id, http)
     recorder: CallRecorder | None = None
 
+    def caller_left(*_args) -> None:  # noqa: ANN002
+        # The line dropping is the end of the call, so the platform hears it
+        # now. Leaving it to the shutdown below meant waiting for the session
+        # to close, which has taken a full minute when speech recognition broke
+        # on the way out - and the call's ticket and feedback wait on this.
+        if not ctx.room.remote_participants:
+            asyncio.ensure_future(api_client.ended())
+
+    ctx.room.on("participant_disconnected", caller_left)
+
     async def on_shutdown() -> None:
-        # The recording first: the call is over, and it is all there is of it.
+        # The end before the recording. Usually it was reported when the line
+        # dropped; if not, it goes now, ahead of an upload that can be slow or
+        # cut short when the process is stopped.
+        await api_client.ended()
         audio = await recorder.finish() if recorder else None
         if audio:
             try:
                 await api_client.send_recording(audio)
             except Exception:
                 log.exception("could not hand over the recording")
-        await api_client.ended()
         await http.close()
 
     ctx.add_shutdown_callback(on_shutdown)
@@ -1083,6 +1168,9 @@ async def entrypoint(ctx: JobContext) -> None:
             turn_handling=TURN_HANDLING,
         )
         watch_timing(session)
+        count_usage(session, api_client, VOICE_MODEL)
+        # Somebody who rang us is on the line already.
+        api_client.answered_at = time.monotonic()
         agent = QuestionAgent(api_client, caller, brief)
         agent.forget_heard = search_early(session, lambda said: api_client.prepare(said, caller))
         # `record=False` keeps LiveKit's paid cloud recording off, whatever the
@@ -1128,6 +1216,7 @@ async def entrypoint(ctx: JobContext) -> None:
         turn_handling=TURN_HANDLING,
     )
     watch_timing(session)
+    count_usage(session, api_client, VOICE_MODEL)
     answered = asyncio.Event()
     asyncio.ensure_future(wait_until_answered(ctx.room, answered))
     agent = AttendanceAgent(api_client, answered, gender=brief.get("gender") or "female")
@@ -1138,6 +1227,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     async def record_once_answered() -> None:
         await answered.wait()
+        api_client.answered_at = time.monotonic()
         await recorder.start()
 
     asyncio.ensure_future(record_once_answered())

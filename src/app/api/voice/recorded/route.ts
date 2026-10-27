@@ -4,6 +4,8 @@ import { withPlatformScope, withTenant } from '@/db';
 import { calls, queries, tenants } from '@/db/schema';
 import { employeeByNumber } from '@/lib/knowledge';
 import { withCallContext } from '@/lib/voice/resolve';
+import { recordCallCosts, spokenAnswers } from '@/lib/costs/calls';
+import { queueChargeLookup } from '@/lib/costs/plivo';
 import { fetchPlivoRecording, recordingPath, saveRecording } from '@/lib/recordings';
 import { endCallQuery } from '@/lib/conversation/queries';
 
@@ -45,12 +47,21 @@ export async function POST(request: Request) {
             if (!employee) return false;
             const query = await t.query.queries.findFirst({
               where: and(eq(queries.id, queryId), eq(queries.employeeId, employee.id)),
-              columns: { id: true },
+              columns: { id: true, startedAt: true, transcript: true, providerCallId: true },
             });
             if (!query) return false;
             const path = recordingPath('queries', queryId, 'mp3');
             await saveRecording(path, await fetchPlivoRecording(recordUrl));
             await endCallQuery(t, queryId, path);
+            // A keypad call to us has no hangup callback of its own: the
+            // recording, which runs the length of the call, is its end.
+            const seconds = Number(form.get('RecordingDuration') ?? NaN);
+            await recordCallCosts(t, tenant.id, { queryId }, {
+              provider: 'plivo',
+              durationSeconds: Number.isFinite(seconds) ? seconds : Math.round((Date.now() - query.startedAt.getTime()) / 1000),
+              spokenAnswers: spokenAnswers(query.transcript),
+            });
+            await queueChargeLookup({ tenantId: tenant.id, key: `query:${queryId}`, via: 'voice', callUuid: query.providerCallId, startedAt: query.startedAt.toISOString() });
             return true;
           });
           if (done) return;

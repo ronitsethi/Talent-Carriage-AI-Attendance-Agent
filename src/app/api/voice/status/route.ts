@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { closeAnsweredCall, recordNoAnswer } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
+import { eq } from 'drizzle-orm';
+import { calls } from '@/db/schema';
+import { env } from '@/lib/env';
+import { recordCallCosts, spokenAnswers } from '@/lib/costs/calls';
 
 /**
  * Plivo's hangup callback.
@@ -14,6 +18,9 @@ export async function POST(request: Request) {
   const hangupCause = String(form.get('HangupCause') ?? '');
   const callStatus = String(form.get('CallStatus') ?? '');
   const duration = Number(form.get('Duration') ?? 0);
+  // What Plivo charged, when it says: in the account's currency, for the billed seconds.
+  const totalCost = Number(form.get('TotalCost') ?? NaN);
+  const billed = Number(form.get('BillDuration') ?? duration);
 
   await withCallContext(callId, async (ctx) => {
     const answered = duration > 0 && callStatus !== 'no-answer' && callStatus !== 'busy';
@@ -22,6 +29,15 @@ export async function POST(request: Request) {
       // Picking up and saying nothing is not a confirmation, so a call that
       // reached no answer is recorded as exactly that.
       await closeAnsweredCall(ctx, callId, duration);
+      const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
+      if (call) {
+        await recordCallCosts(ctx.tx, ctx.tenantId, { callId, caseId: call.caseId }, {
+          provider: 'plivo',
+          durationSeconds: duration,
+          plivoCharge: Number.isFinite(totalCost) ? { amount: totalCost, currency: env.PLIVO_BILLING_CURRENCY, billedSeconds: billed } : null,
+          spokenAnswers: spokenAnswers(call.transcript),
+        });
+      }
     } else {
       await recordNoAnswer(ctx, callId, callStatus === 'busy' ? 'busy' : 'no_answer');
     }

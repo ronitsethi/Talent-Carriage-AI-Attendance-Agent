@@ -71,7 +71,11 @@ export type DeliveryUpdate = {
   status: 'sent' | 'delivered' | 'read' | 'failed';
   error?: string;
   at: Date;
+  /** What Meta charges for the message, from the receipt's `pricing`. */
+  pricing?: MessagePricing;
 };
+
+export type MessagePricing = { billable?: boolean; category?: string; type?: string; pricingModel?: string };
 
 export type ChannelCapabilities = {
   /** False for the fake channel, so the portal can say so plainly. */

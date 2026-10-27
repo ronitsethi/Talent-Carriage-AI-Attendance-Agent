@@ -99,6 +99,55 @@
       "when": 1790483191269,
       "tag": "0013_query_feedback",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790483192269,
+      "tag": "0014_coe_teams",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790483193269,
+      "tag": "0015_coe_emp_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790483194269,
+      "tag": "0016_tickets",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790483195269,
+      "tag": "0017_ticket_whatsapp",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790483196269,
+      "tag": "0018_manager_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790483197269,
+      "tag": "0019_reply_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790483198269,
+      "tag": "0020_cost_lines",
+      "breakpoints": true
     }
   ]
 }

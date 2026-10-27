@@ -1,5 +1,6 @@
 import { timed } from '@/lib/timing';
 import { assertBudget, chargeBudget } from './budget';
+import { noteModelCost } from '@/lib/costs/record';
 import { AnthropicProvider, OpenAIProvider, SarvamProvider, StubProvider } from './providers';
 import { isIndic, ModelError, type ModelProvider, type ModelRequest, type ModelResult, type ModelTask } from './types';
 
@@ -70,6 +71,7 @@ export class ModelGateway {
             console.error('[budget] could not record the cost:', (error as Error).message),
           );
         }
+        noteModelCost(provider.name, result.model, result.usage, TASK_PURPOSE[request.task]);
         return {
           ...result,
           provider: provider.name,
@@ -93,6 +95,16 @@ export class ModelGateway {
     );
   }
 }
+
+/** What each task is called on a cost line. */
+const TASK_PURPOSE: Record<ModelRequest['task'], string> = {
+  classify_reply: 'Reading the reply',
+  extract_details: 'Picking out the details',
+  answer_policy: 'Guideline answer',
+  suggest_mapping: 'Mapping suggestion',
+  summarise: 'Summary',
+  voice_turn: 'Call reply',
+};
 
 /** Shared instance; tests construct their own with fakes. */
 export const models = new ModelGateway();

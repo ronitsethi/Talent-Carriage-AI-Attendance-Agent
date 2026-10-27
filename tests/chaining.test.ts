@@ -26,6 +26,14 @@ afterEach(async () => {
   await scenario?.cleanup();
 });
 
+/** Settles a date in the fewest taps: "I was on leave", then "Applied, pending". */
+async function settleDate(tx: Parameters<Parameters<typeof withTenant>[1]>[0], caseId: string) {
+  await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(caseId, 3)));
+  await handleInbound(scenario.context(tx), tapOption(scenario.mobile, sheetSelectionId(caseId, 'leave_done')));
+}
+
+const UNSETTLED = ['queued', 'asked', 'delivered', 'read'];
+
 async function setupFourAbsences(settings = {}) {
   scenario = await makeScenario(settings);
   await withTenant(scenario.tenantId, async (tx) => {
@@ -87,10 +95,12 @@ describe('answering one date moves the chain along', () => {
       // Down the flow sheet: working -> missed punch -> the in-punch.
       await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(second!.id, 2)));
       await handleInbound(scenario.context(tx), tapOption(scenario.mobile, sheetSelectionId(second!.id, 'punch')));
+      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, sheetSelectionId(second!.id, 'punch_in')));
       scenario.channel.clear();
+      // Then where the regularisation stands.
       const outcome = await handleInbound(
         scenario.context(tx),
-        tapOption(scenario.mobile, sheetSelectionId(second!.id, 'punch_in')),
+        tapOption(scenario.mobile, sheetSelectionId(second!.id, 'app_not')),
       );
       expect(outcome).toMatchObject({ handled: true, action: 'answered', caseId: second!.id });
     });
@@ -116,7 +126,7 @@ describe('answering one date moves the chain along', () => {
 
     await withTenant(scenario.tenantId, async (tx) => {
       const [last] = await tx.select().from(cases).where(eq(cases.attDate, '2026-08-20'));
-      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(last!.id, 3)));
+      await settleDate(tx, last!.id);
     });
 
     const list = scenario.channel.history().find((s) => s.message.kind === 'list')!;
@@ -139,13 +149,13 @@ describe('answering one date moves the chain along', () => {
           .orderBy(asc(cases.attDate))
           .limit(1);
         expect(next, `expected an outstanding date on round ${i + 1}`).toBeDefined();
-        await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(next!.id, 3)));
+        await settleDate(tx, next!.id);
       });
     }
 
     await withTenant(scenario.tenantId, async (tx) => {
       const rows = await tx.select().from(cases);
-      expect(rows.every((r) => r.status === 'answered')).toBe(true);
+      expect(rows.every((r) => !UNSETTLED.includes(r.status) && r.answeredAt)).toBe(true);
       expect(await pendingCases(scenario.context(tx), scenario.employeeId)).toHaveLength(0);
     });
 
@@ -153,16 +163,15 @@ describe('answering one date moves the chain along', () => {
     expect(bodies.some((b) => b.includes('All 4 pending attendance dates are now confirmed'))).toBe(true);
   });
 
-  it('starts the escalation clocks only for the date that was answered', async () => {
+  it('settles only the date that was answered', async () => {
     await setupFourAbsences();
 
     await withTenant(scenario.tenantId, async (tx) => {
       const [first] = await tx.select().from(cases).where(eq(cases.attDate, '2026-08-17'));
-      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(first!.id, 3)));
+      await settleDate(tx, first!.id);
 
       const answered = await tx.query.cases.findFirst({ where: eq(cases.id, first!.id) });
-      expect(answered!.followUpDueAt).not.toBeNull();
-      expect(answered!.callDueAt).not.toBeNull();
+      expect(answered!.answeredAt).not.toBeNull();
 
       const untouched = await tx.query.cases.findFirst({ where: eq(cases.attDate, '2026-08-19') });
       expect(untouched!.followUpDueAt).toBeNull();
@@ -185,14 +194,14 @@ describe('the outstanding-question cap', () => {
     scenario.channel.clear();
     await withTenant(scenario.tenantId, async (tx) => {
       const [first] = await tx.select().from(cases).where(eq(cases.attDate, '2026-08-17'));
-      await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(first!.id, 3)));
+      await settleDate(tx, first!.id);
 
       const rows = await tx.select().from(cases).orderBy(asc(cases.attDate));
       // The chain asks one date at a time: the next-oldest is re-offered inside
       // the conversation, and the held-back dates stay queued until their turn.
       // Releasing them early would push out questions the employee never asked
       // for, which is the noise the cap exists to prevent.
-      expect(rows.map((r) => r.status)).toEqual(['answered', 'asked', 'queued', 'queued']);
+      expect(rows.map((r) => (UNSETTLED.includes(r.status) ? r.status : 'settled'))).toEqual(['settled', 'asked', 'queued', 'queued']);
     });
 
     // The summary still names the full backlog, so nothing is hidden from them.
@@ -209,7 +218,7 @@ describe('the outstanding-question cap', () => {
     await withTenant(scenario.tenantId, async (tx) => {
       for (const date of ['2026-08-17', '2026-08-18']) {
         const [row] = await tx.select().from(cases).where(eq(cases.attDate, date));
-        await handleInbound(scenario.context(tx), tapOption(scenario.mobile, selectionId(row!.id, 3)));
+        await settleDate(tx, row!.id);
       }
       const third = await tx.query.cases.findFirst({ where: eq(cases.attDate, '2026-08-19') });
       expect(third!.status).toBe('asked');

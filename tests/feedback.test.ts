@@ -78,7 +78,8 @@ describe('feedback after a call to us', () => {
       tx.update(jobs).set({ runAt: new Date(Date.now() - 1000) }).where(and(eq(jobs.kind, 'query_feedback'), eq(jobs.tenantId, scenario.tenantId))),
     );
     const claimed = (await claim('test-runner', 50)).filter((job) => job.tenantId === scenario.tenantId);
-    expect(claimed.map((job) => job.kind)).toEqual(['query_feedback']);
+    // The call's ticket check is due the moment it ends, so it is picked up alongside.
+    expect(claimed.map((job) => job.kind).sort()).toEqual(['query_feedback', 'query_ticket']);
     for (const job of claimed) await complete(job.id);
   });
 

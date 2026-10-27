@@ -19,6 +19,7 @@ import {
   unmappedCodes,
 } from '@/db/schema';
 import { callsForCase, caseConversation, messageTime, queryConversation } from '@/lib/conversation/summary';
+import { caseCostBox, queryCostBox } from '@/lib/costs/summary';
 
 /** Read helpers for the portal. Everything tenant-scoped runs inside withTenant. */
 
@@ -346,7 +347,9 @@ export async function caseDetail(tenantId: string, caseId: string) {
       .orderBy(asc(cases.attDate));
 
     const lines = await caseConversation(tx, row.caseRow);
-    return { ...row, transcript, calls: caseCalls, actions: caseActions, approvals: caseApprovals, manager, otherPending, lines };
+    const company = (await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId), columns: { name: true } }))?.name ?? '';
+    const costs = await caseCostBox(tx, caseId, transcript, caseCalls.map((call) => call.id));
+    return { ...row, transcript, calls: caseCalls, actions: caseActions, approvals: caseApprovals, manager, otherPending, lines, company, costs };
   });
 }
 
@@ -654,11 +657,11 @@ export async function queryDetail(tenantId: string, queryId: string) {
       ? await tx.query.employees.findFirst({ where: eq(employees.id, row.employee.managerEmployeeId) })
       : null;
     const lines = await queryConversation(tx, row.query);
-    // After a call, the feedback asked for on WhatsApp.
-    const feedbackMessages =
-      row.query.channel === 'voice'
-        ? await tx.select().from(messages).where(eq(messages.queryId, queryId)).orderBy(messageTime)
-        : [];
-    return { ...row, manager: manager ?? null, lines, feedbackMessages };
+    // The chat itself when the query came in on WhatsApp; after a call, the
+    // feedback asked for on WhatsApp once it ended.
+    const chatMessages = await tx.select().from(messages).where(eq(messages.queryId, queryId)).orderBy(messageTime);
+    const company = (await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId), columns: { name: true } }))?.name ?? '';
+    const costs = await queryCostBox(tx, queryId, chatMessages);
+    return { ...row, manager: manager ?? null, lines, chatMessages, company, costs };
   });
 }

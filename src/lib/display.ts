@@ -109,3 +109,44 @@ export function relativeDays(value: Date | string | null | undefined): string {
   if (days === 1) return 'yesterday';
   return `${days} days ago`;
 }
+
+const IST = 'Asia/Kolkata';
+
+/** The day a moment fell on in IST, as `2026-10-21`, so two can be compared. */
+function istDay(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: IST }).format(date);
+}
+
+/** Just the time, for the corner of a chat bubble: `9:02 AM`. */
+export function clockTime(value: Date | string | null | undefined): string {
+  if (!value) return '';
+  const date = typeof value === 'string' ? new Date(value) : value;
+  return new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: IST })
+    .format(date)
+    .replace(/\s*(am|pm)$/i, (_, meridiem: string) => ` ${meridiem.toUpperCase()}`);
+}
+
+/** The pill between one day's messages and the next: `Today`, `Yesterday`, `21 Oct 2026`. */
+export function dayLabel(value: Date | string): string {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  const day = istDay(date);
+  const now = new Date();
+  if (day === istDay(now)) return 'Today';
+  if (day === istDay(new Date(now.getTime() - 86_400_000))) return 'Yesterday';
+  return new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: IST }).format(date);
+}
+
+/** How long a call ran, as `3:41`. Null when the provider never said. */
+export function durationLabel(seconds: number | null | undefined): string | null {
+  if (!seconds || seconds < 0) return null;
+  const whole = Math.floor(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+/** The one or two letters an avatar shows for a name. */
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  const first = parts[0]![0]!;
+  return (parts.length > 1 ? first + parts[parts.length - 1]![0]! : first).toUpperCase();
+}

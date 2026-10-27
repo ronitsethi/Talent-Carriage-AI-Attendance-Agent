@@ -144,7 +144,7 @@ export async function buildContext(tx: Db, tenantId: string): Promise<FullContex
     baseUrl: env.APP_BASE_URL,
     companyName: tenant.name,
     template: {
-      name: templateConfig.templateName ?? 'attendance_absent_check',
+      name: templateConfig.templateName ?? env.WA_FIRST_TEMPLATE ?? 'attendance_absent_check',
       language: templateConfig.templateLanguage ?? settings.defaultLanguage,
       buttonCount: templateConfig.buttonCount ?? 4,
     },

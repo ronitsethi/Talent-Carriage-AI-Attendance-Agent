@@ -4,6 +4,7 @@ import { calls, cases, messages, queries } from '@/db/schema';
 import { env } from '@/lib/env';
 import { assertBudget } from '@/lib/models/budget';
 import { openai } from '@/lib/knowledge';
+import { withCostScope } from '@/lib/costs/record';
 
 /**
  * Summaries of a conversation, for HR reading a case or a query.
@@ -41,6 +42,8 @@ export async function callsForCase(tx: Db, caseRow: CaseRow) {
     .where(
       and(
         eq(calls.employeeId, caseRow.employeeId),
+        // A manager rung to approve it is not part of the employee's conversation.
+        sql`${calls.purpose} <> 'manager_approval'`,
         or(
           eq(calls.caseId, caseRow.id),
           sql`exists (
@@ -95,7 +98,7 @@ export function summaryIsStale(summarisedAt: Date | null, lines: Line[]): boolea
   return !summarisedAt || summarisedAt.toISOString() < last;
 }
 
-function transcriptText(lines: Line[]): string {
+export function transcriptText(lines: Line[]): string {
   return lines
     .map((line) => {
       const who = line.role === 'agent' ? 'Agent' : 'Employee';
@@ -108,7 +111,15 @@ function transcriptText(lines: Line[]): string {
     .slice(-12_000);
 }
 
-async function ask<T>(system: string, transcript: string, schema: Record<string, unknown>, budget: 'call' | 'whatsapp'): Promise<T> {
+/** One structured answer from the model, charged to the channel's allowance. Shared with the ticket writer. */
+export async function ask<T>(
+  system: string,
+  transcript: string,
+  schema: Record<string, unknown>,
+  budget: 'call' | 'whatsapp',
+  maxTokens = 500,
+  purpose = 'Summary',
+): Promise<T> {
   await assertBudget(budget);
   const json = await openai(
     '/chat/completions',
@@ -119,10 +130,11 @@ async function ask<T>(system: string, transcript: string, schema: Record<string,
         { role: 'user', content: transcript },
       ],
       temperature: 0.2,
-      max_tokens: 500,
+      max_tokens: maxTokens,
       response_format: { type: 'json_schema', json_schema: { name: 'summary', strict: true, schema } },
     },
     budget,
+    purpose,
   );
   const content = (json.choices as { message?: { content?: string } }[] | undefined)?.[0]?.message?.content ?? '';
   return JSON.parse(content) as T;
@@ -140,13 +152,14 @@ export async function summariseCase(tx: Db, caseRow: CaseRow): Promise<string | 
   if (!lines.length) return null;
   if (!summaryIsStale(caseRow.summarisedAt, lines)) return caseRow.summary;
 
-  const { summary } = await ask<{ summary: string }>(
+  // Counted with the case, whichever page asked for it.
+  const { summary } = await withCostScope({ tenantId: caseRow.tenantId, caseId: caseRow.id }, () => ask<{ summary: string }>(
     CASE_PROMPT,
     `THE DATE THIS CASE IS ABOUT: ${caseRow.attDate}. The conversation may also cover other dates: summarise only what ` +
       `concerns this one, and do not mention the others.\n\n${transcriptText(lines)}`,
     { type: 'object', additionalProperties: false, required: ['summary'], properties: { summary: { type: 'string' } } },
     caseRow.channel === 'voice' ? 'call' : 'whatsapp',
-  );
+  ));
   await tx.update(cases).set({ summary, summarisedAt: new Date() }).where(eq(cases.id, caseRow.id));
   return summary;
 }
@@ -166,7 +179,7 @@ export async function summariseQuery(tx: Db, query: QueryRow): Promise<{ queries
     return { queries: query.summaryQueries ?? '', reply: query.summaryReply ?? '' };
   }
 
-  const result = await ask<{ queries: string[]; reply: string[] }>(
+  const result = await withCostScope({ tenantId: query.tenantId, queryId: query.id }, () => ask<{ queries: string[]; reply: string[] }>(
     QUERY_PROMPT,
     transcriptText(lines),
     {
@@ -176,7 +189,7 @@ export async function summariseQuery(tx: Db, query: QueryRow): Promise<{ queries
       properties: { queries: { type: 'array', items: { type: 'string' } }, reply: { type: 'array', items: { type: 'string' } } },
     },
     query.channel === 'voice' ? 'call' : 'whatsapp',
-  );
+  ));
   const summary = { queries: result.queries.join('\n'), reply: result.reply.join('\n') };
   await tx
     .update(queries)

@@ -10,7 +10,12 @@ export type JobKind =
   | 'verify_action'
   | 'import_file'
   | 'refresh_leave_balances'
-  | 'query_feedback';
+  | 'query_feedback'
+  | 'query_ticket'
+  | 'ticket_notify'
+  | 'ticket_reminder'
+  | 'ticket_escalate'
+  | 'plivo_charge';
 
 export type Job = typeof jobs.$inferSelect;
 

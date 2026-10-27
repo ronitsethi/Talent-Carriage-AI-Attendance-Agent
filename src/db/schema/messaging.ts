@@ -77,11 +77,43 @@ export const queries = pgTable(
     feedbackRating: text('feedback_rating').$type<'good' | 'okay' | 'poor'>(),
     feedbackComment: text('feedback_comment'),
     feedbackAnsweredAt: timestamp('feedback_answered_at', { withTimezone: true }),
+    /**
+     * The ticket raised from this query, when the agent could not settle it: all
+     * of it written by the AI once the conversation is over, and all of it open
+     * to HR to correct. Null status means no ticket was raised.
+     */
+    ticketStatus: text('ticket_status').$type<'open' | 'resolved'>(),
+    ticketRaisedAt: timestamp('ticket_raised_at', { withTimezone: true }),
+    /** The query type, and its name and COE as they were - a later sheet may rename or drop it. */
+    queryTypeId: uuid('query_type_id'),
+    queryTypeName: text('query_type_name'),
+    coeCode: text('coe_code'),
+    priority: text('priority').$type<'low' | 'medium' | 'high' | 'urgent'>(),
+    problemDescription: text('problem_description'),
+    assignedPersonId: uuid('assigned_person_id'),
+    assignedTeamId: uuid('assigned_team_id'),
+    assignedAt: timestamp('assigned_at', { withTimezone: true }),
+    /**
+     * Why the assignee is not simply the least-busy member of the query type's
+     * team: 'other_team' when nobody on that team looks after this company and
+     * another team's member took it, 'no_cover' when nobody anywhere does,
+     * 'no_type' when the query matched no type in the sheet.
+     */
+    assignmentMark: text('assignment_mark').$type<'other_team' | 'no_cover' | 'no_type'>(),
+    /** Moved to the team's LT person, after going unresolved for 48 hours. */
+    ltTransferredAt: timestamp('lt_transferred_at', { withTimezone: true }),
+    ltPersonId: uuid('lt_person_id'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    /** Shown as TKT-00012: what a WhatsApp message about the ticket calls it. */
+    ticketNo: integer('ticket_no'),
+    /** When its assignee was warned it escalates to the LT person in 12 hours. */
+    remindedAt: timestamp('reminded_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('queries_tenant_started_idx').on(t.tenantId, t.startedAt),
     index('queries_employee_open_idx').on(t.employeeId, t.channel, t.lastActivityAt),
+    index('queries_ticket_assignee_idx').on(t.assignedPersonId, t.ticketStatus),
   ],
 );
 
@@ -117,6 +149,8 @@ export const messages = pgTable(
     /** Raw provider payload, kept for audit and debugging. */
     payload: jsonb('payload').$type<Record<string, unknown>>(),
 
+    /** What Meta said about billing it, on its delivery receipt. */
+    pricing: jsonb('pricing').$type<{ billable?: boolean; category?: string; type?: string; pricingModel?: string }>(),
     /** Set when a model generated or interpreted this message. */
     aiModel: text('ai_model'),
     error: text('error'),

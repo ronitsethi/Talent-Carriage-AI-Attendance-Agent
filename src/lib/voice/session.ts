@@ -11,24 +11,23 @@ import {
   followUpChoiceFromSpeech,
   followUpPrompt,
   optionFromDigits,
-  spokenBacklogSummary,
-  spokenClosing,
   spokenDate,
   spokenFollowUpAcknowledgement,
   spokenFollowUpClosing,
   spokenFollowUpNotUnderstood,
   spokenFollowUpSummary,
-  spokenGuidance,
   spokenHandover,
   spokenNotUnderstood,
   type PromptStyle,
 } from '@/lib/conversation/voice-script';
-import { recordAnswer, UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from '@/lib/conversation/engine';
+import { UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from '@/lib/conversation/engine';
 import { recordFollowUpChoice } from '@/lib/conversation/follow-up-state';
 import { followUpAcknowledgement, type FollowUpChoice } from '@/lib/conversation/flow';
 import { halfOfDay, type Meaning } from '@/lib/mapping/meanings';
 import { answerQuestion } from '@/lib/knowledge';
 import type { CallTurnInput, VoiceProvider } from './types';
+import { afterApprovalCall, APPROVAL_CALL_PURPOSES, approvalOpening, approvalTurn, type ApprovalCallPurpose } from './approval-calls';
+import { keypadMenuTurn, keypadTopOption } from './keypad-sheet';
 
 export type VoiceContext = EngineContext & {
   voice: VoiceProvider;
@@ -48,7 +47,7 @@ export type CallRow = typeof calls.$inferSelect;
  * reminder: it asks whether the action the employee was given has been done,
  * so the keypad means something different and the script must say so.
  */
-export type CallPurpose = 'first_contact' | 'follow_up';
+export type CallPurpose = 'first_contact' | 'follow_up' | 'manager_approval' | 'approval_outcome';
 
 /** One spoken turn: what the agent says, and what happens next. */
 export type CallTurn = {
@@ -67,7 +66,7 @@ export type CallTurn = {
   retry?: boolean;
 };
 
-const spokenFor = (row: { attDate: string; meaning: string }) =>
+export const spokenFor = (row: { attDate: string; meaning: string }) =>
   spokenDate(row.attDate, halfOfDay(row.meaning as Meaning) as 'first' | 'second' | null);
 
 /**
@@ -77,10 +76,10 @@ const spokenFor = (row: { attDate: string; meaning: string }) =>
  * agent asks the question the way a person would, because the employee can
  * simply answer.
  */
-const styleOf = (call: { provider: string }): PromptStyle => (call.provider === 'livekit' ? 'spoken' : 'keypad');
+export const styleOf = (call: { provider: string }): PromptStyle => (call.provider === 'livekit' ? 'spoken' : 'keypad');
 
 /** Dates this employee still has to answer, oldest first. */
-async function pending(ctx: VoiceContext, employeeId: string, excludeCaseId?: string) {
+export async function pending(ctx: VoiceContext, employeeId: string, excludeCaseId?: string) {
   return ctx.tx
     .select()
     .from(cases)
@@ -219,6 +218,8 @@ export async function placeCaseCall(
 export async function openingTurn(ctx: VoiceContext, callId: string): Promise<CallTurn> {
   const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
   if (!call) return { speak: spokenHandover(), nextCaseId: null, done: true };
+  // A manager asked to approve, or an employee told the decision: see approval-calls.ts.
+  if (APPROVAL_CALL_PURPOSES.includes(call.purpose as ApprovalCallPurpose)) return approvalOpening(ctx, call);
 
   const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, call.employeeId) });
   const target = call.caseId ? await ctx.tx.query.cases.findFirst({ where: eq(cases.id, call.caseId) }) : null;
@@ -272,6 +273,7 @@ export async function handleTurn(
   input: CallTurnInput,
 ): Promise<CallTurn> {
   const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
+  if (call?.purpose === 'manager_approval') return approvalTurn(ctx, call, input);
   const caseRow = await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseId) });
   if (!call || !caseRow) return { speak: spokenHandover(), nextCaseId: null, done: true };
 
@@ -283,6 +285,10 @@ export async function handleTurn(
   if (call.purpose === 'follow_up' && caseRow.replyOption) {
     return followUpTurn(ctx, call, caseRow, employee, input);
   }
+
+  // Inside the flow-sheet menus: a key for each choice, as on WhatsApp.
+  const inMenu = await keypadMenuTurn(ctx, call, caseRow, employee, input);
+  if (inMenu) return inMenu;
 
   // Keypad first, exactly as agreed; speech is understood the same way a typed
   // WhatsApp reply is, through the same classifier.
@@ -338,28 +344,8 @@ export async function handleTurn(
     return { speak: question, intro: spokenNotUnderstood(style), nextCaseId: caseId, done: false, retry: true };
   }
 
-  await recordAnswer(ctx, caseRow, option, usedSpeech ? { intent: 'was_absent', option, confidence: 1, source: 'model' } : undefined);
-  await recordSpokenMessage(ctx, caseRow, employee, option);
-
-  const outstanding = await pending(ctx, employee.id, caseRow.id);
-  const cleared = (call.transcript ?? []).filter((t) => t.role === 'agent' && t.text.startsWith('Thank you.')).length + 1;
-
-  // A tenant may cap how long one call runs; 0 means carry on until cleared.
-  const cap = ctx.settings.maxDatesPerCall;
-  const reachedCap = cap > 0 && cleared >= cap;
-
-  if (!outstanding.length || reachedCap) {
-    const closing = `${spokenGuidance(option, spokenFor(caseRow))} ${spokenClosing(cleared, outstanding.length)}`;
-    await appendTurn(ctx, callId, 'agent', closing);
-    await finishCall(ctx, callId, outstanding.length ? 'not_completed' : 'completed_confirmed');
-    return { speak: closing, nextCaseId: null, done: true };
-  }
-
-  const next = outstanding[0]!;
-  const intro = [spokenGuidance(option, spokenFor(caseRow)), spokenBacklogSummary(outstanding.length)].join(' ');
-  const question = datePrompt(spokenFor(next), styleOf(call));
-  await appendTurn(ctx, callId, 'agent', `${intro} ${question}`);
-  return { speak: question, intro, nextCaseId: next.id, done: false };
+  // The first question answered: the branch of the sheet it opens comes next.
+  return keypadTopOption(ctx, call, caseRow, option);
 }
 
 /**
@@ -445,37 +431,10 @@ async function followUpTurn(
 }
 
 /** The transcript is the call's equivalent of a chat history. */
-async function appendTurn(ctx: VoiceContext, callId: string, role: 'agent' | 'employee', text: string) {
+export async function appendTurn(ctx: VoiceContext, callId: string, role: 'agent' | 'employee', text: string) {
   const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
   const transcript = [...(call?.transcript ?? []), { role, text, at: new Date().toISOString() }];
   await ctx.tx.update(calls).set({ transcript }).where(eq(calls.id, callId));
-}
-
-/** Mirrors what was said into the case's message history, so HR sees one story. */
-async function recordSpokenMessage(ctx: VoiceContext, caseRow: CaseRow, employee: EmployeeRow, option: OptionNumber) {
-  const label = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
-  await ctx.tx.insert(messages).values([
-    {
-      tenantId: ctx.tenantId,
-      caseId: caseRow.id,
-      direction: 'inbound',
-      channel: 'voice',
-      kind: 'voice',
-      status: 'received',
-      waId: employee.mobileE164,
-      body: `Answered option ${option} on the call`,
-    },
-    {
-      tenantId: ctx.tenantId,
-      caseId: caseRow.id,
-      direction: 'outbound',
-      channel: 'voice',
-      kind: 'voice',
-      status: 'sent',
-      waId: employee.mobileE164,
-      body: spokenGuidance(option, label),
-    },
-  ]);
 }
 
 /** The reminder's answer, mirrored into the case history like a chat message. */
@@ -542,12 +501,12 @@ export async function closeAnsweredCall(ctx: VoiceContext, callId: string, durat
 
   if (call.outcome) {
     await ctx.tx.update(calls).set({ durationSeconds, endedAt: new Date() }).where(eq(calls.id, callId));
-    return;
+  } else {
+    // `no_answer` would be wrong here - the phone was picked up. Nothing was
+    // settled on it, which is what `not_completed` says.
+    await finishCall(ctx, callId, 'not_completed', { durationSeconds });
   }
-
-  // `no_answer` would be wrong here - the phone was picked up. Nothing was
-  // settled on it, which is what `not_completed` says.
-  await finishCall(ctx, callId, 'not_completed', { durationSeconds });
+  if (APPROVAL_CALL_PURPOSES.includes(call.purpose as ApprovalCallPurpose)) await afterApprovalCall(ctx, call, true);
 }
 
 /**
@@ -557,6 +516,11 @@ export async function closeAnsweredCall(ctx: VoiceContext, callId: string, durat
 export async function recordNoAnswer(ctx: VoiceContext, callId: string, status: 'no_answer' | 'busy' | 'failed') {
   const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
   await finishCall(ctx, callId, status);
+  // What a missed call about an approval was carrying goes on WhatsApp instead.
+  if (call && APPROVAL_CALL_PURPOSES.includes(call.purpose as ApprovalCallPurpose)) {
+    await afterApprovalCall(ctx, call, false);
+    return;
+  }
   if (call?.caseId) {
     await ctx.tx
       .update(cases)

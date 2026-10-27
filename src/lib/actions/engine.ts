@@ -390,11 +390,16 @@ export async function executeAction(
   caseRow: CaseRow,
   employee: EmployeeRow,
   approver?: EmployeeRow,
+  /**
+   * `chain: false` when the employee's next date was already asked as they
+   * answered this one; `notify: false` when the caller tells the employee itself.
+   */
+  opts: { chain?: boolean; notify?: boolean } = {},
 ) {
   if (!ctx.hrms) return { ok: false as const, reason: 'No HRMS connector configured' };
 
   const label = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
-  const what = actionLabels[action.type as keyof typeof actionLabels] ?? 'request';
+  const what = (action.inputs as { what?: string }).what ?? actionLabels[action.type as keyof typeof actionLabels] ?? 'request';
   const inputs = action.inputs as { date: string; leaveType?: string; halfDay?: 'first' | 'second' | null; reason?: string };
 
   await ctx.tx
@@ -430,7 +435,7 @@ export async function executeAction(
       .update(cases)
       .set({ status: 'needs_hr', needsHrReason: `Action failed: ${response.message}`, updatedAt: new Date() })
       .where(eq(cases.id, caseRow.id));
-    await sendPlainText(ctx, employee, actionFailedMessage(what, label), caseRow.id);
+    if (opts.notify !== false) await sendPlainText(ctx, employee, actionFailedMessage(what, label), caseRow.id);
     return { ok: false as const, reason: response.message };
   }
 
@@ -479,7 +484,7 @@ export async function executeAction(
     })
     .where(eq(cases.id, caseRow.id));
 
-  await sendPlainText(ctx, employee, actionApprovedMessage(what, label, reference), caseRow.id);
-  await chainNextPending(ctx, employee, caseRow.id);
+  if (opts.notify !== false) await sendPlainText(ctx, employee, actionApprovedMessage(what, label, reference), caseRow.id);
+  if (opts.chain !== false) await chainNextPending(ctx, employee, caseRow.id);
   return { ok: true as const, reference, status: finalStatus };
 }

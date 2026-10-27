@@ -1,15 +1,18 @@
 import { NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
-import { calls, cases, employees, tenants, tenantSettings } from '@/db/schema';
+import { calls, cases, employees, queries, tenants, tenantSettings } from '@/db/schema';
 import { closeAnsweredCall, handleTurn, openingTurn } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
 import { withPlatformScope, withTenant, type Db } from '@/db';
-import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
+import { answerQuestion, employeeByNumber, warmModel } from '@/lib/knowledge';
 import { env } from '@/lib/env';
 import { collectTimings, mark, timed } from '@/lib/timing';
 import { buildContext } from '@/lib/runtime';
 import { agentGender } from '@/lib/voice/voices';
 import { addCallTurn, endCallQuery, startCallQuery } from '@/lib/conversation/queries';
+import { addToCostScope, withCostScope } from '@/lib/costs/record';
+import { recordCallCosts, type WorkerUsage } from '@/lib/costs/calls';
+import { queueChargeLookup } from '@/lib/costs/plivo';
 import {
   ground,
   onlyPleasantries,
@@ -77,6 +80,10 @@ type Body = {
   heard?: string;
   /** On a call somebody made to us: the query it is filed under, from the greeting. */
   queryId?: string;
+  /** With `ended`: how long the employee was on the line, as the worker timed it. */
+  durationSeconds?: number;
+  /** With `ended`: what the worker's speech models used, for the call's costs. */
+  usage?: WorkerUsage;
 };
 
 const UNKNOWN_CALLER =
@@ -99,7 +106,7 @@ async function withCaller<T>(
     for (const tenant of all) {
       const found = await withTenant(tenant.id, async (t) => {
         const employee = await timed('caller_lookup', () => employeeByNumber(t, tenant.id, from));
-        return employee ? { value: await fn({ tx: t, tenantId: tenant.id, employee }) } : null;
+        return employee ? { value: await withCostScope({ tenantId: tenant.id }, () => fn({ tx: t, tenantId: tenant.id, employee })) } : null;
       });
       if (found) return found.value;
     }
@@ -181,7 +188,7 @@ function unauthorised() {
  * the worker logs beside its own timings: the caller hears the sum as silence.
  */
 export async function POST(request: Request) {
-  const { result: response, header } = await collectTimings(() => turn(request));
+  const { result: response, header } = await collectTimings(() => withCostScope({}, () => turn(request)));
   response.headers.set('Server-Timing', header);
   return response;
 }
@@ -194,11 +201,24 @@ async function turn(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as Body;
   const callId = body.callId ?? '';
+  // A call somebody made to us is filed under its query; whatever it costs is too.
+  if (body.queryId) addToCostScope({ queryId: body.queryId });
 
   if (body.ended && body.ask && body.queryId) {
     const queryId = body.queryId;
-    const ended = await withCaller(body.ask.from, async ({ tx }) => {
+    const ended = await withCaller(body.ask.from, async ({ tx, tenantId }) => {
       await endCallQuery(tx, queryId);
+      const query = await tx.query.queries.findFirst({ where: eq(queries.id, queryId) });
+      if (query) {
+        await recordCallCosts(tx, tenantId, { queryId }, {
+          provider: 'livekit',
+          durationSeconds: body.durationSeconds ?? Math.round((Date.now() - query.startedAt.getTime()) / 1000),
+          worker: body.usage,
+        });
+        await queueChargeLookup({
+          tenantId, key: `query:${queryId}`, via: 'trunk', number: body.ask!.from, direction: 'inbound', startedAt: query.startedAt.toISOString(),
+        });
+      }
       return true;
     });
     return NextResponse.json({ closed: Boolean(ended) });
@@ -210,7 +230,19 @@ async function turn(request: Request) {
     // this the call would sit "in progress" for ever and the portal would show
     // a conversation that is long finished.
     const closed = await withCallContext(callId, async (ctx) => {
-      await closeAnsweredCall(ctx, callId, 0);
+      const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
+      // Timed by the worker from the moment they answered; an older worker sends
+      // nothing, and the call is timed from its first line instead.
+      const firstLine = call?.transcript?.[0]?.at;
+      const seconds = body.durationSeconds ?? (firstLine ? Math.round((Date.now() - new Date(firstLine).getTime()) / 1000) : 0);
+      await closeAnsweredCall(ctx, callId, seconds);
+      if (call) {
+        await recordCallCosts(ctx.tx, ctx.tenantId, { callId, caseId: call.caseId }, { provider: 'livekit', durationSeconds: seconds, worker: body.usage });
+        await queueChargeLookup({
+          tenantId: ctx.tenantId, key: `call:${callId}`, via: 'trunk', number: call.toNumber, direction: 'outbound',
+          startedAt: (call.startedAt ?? new Date(Date.now() - seconds * 1000)).toISOString(),
+        });
+      }
       return true;
     });
     return NextResponse.json({ closed: Boolean(closed) });
@@ -274,9 +306,11 @@ async function turn(request: Request) {
       // No question yet: this is the greeting, so say who is speaking - and
       // open the query the rest of the call is filed under.
       if (!question) {
+        warmModel();
         const greet = INBOUND_GREETINGS[Math.floor(Math.random() * INBOUND_GREETINGS.length)]!;
         const say = greet(employee.fullName.split(/\s+/)[0] ?? employee.fullName, company?.name ?? 'your employer');
         const queryId = await startCallQuery(t, { tenantId, employeeId: employee.id, style: 'agent', greeting: say });
+        addToCostScope({ queryId });
         return {
           say,
           queryId,
@@ -350,6 +384,7 @@ async function turn(request: Request) {
   if (body.talk && !body.caseId) {
     // The opening, asked for while the phone is still ringing, so it is ready
     // the moment they pick up.
+    warmModel();
     const opening = await withCallContext(callId, async (ctx) => {
       const args = await talkArgs(ctx, callId, undefined, null);
       if (!args) return null;

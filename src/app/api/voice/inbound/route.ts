@@ -5,6 +5,7 @@ import { employeeByNumber } from '@/lib/knowledge';
 import { questionXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
 import { voiceLines } from '@/lib/voice/say';
+import { withCostScope } from '@/lib/costs/record';
 import { recordingsConfigured } from '@/lib/recordings';
 import { startCallQuery } from '@/lib/conversation/queries';
 
@@ -71,10 +72,12 @@ export async function inboundXml(request: Request): Promise<Response> {
   });
   const asked = `from=${encodeURIComponent(from)}${queryId ? `&query=${queryId}` : ''}`;
 
-  const audio = await voiceLines(
-    [intro, question, 'Sorry, I did not catch that. Please say it once more.', 'I could not hear you. Please call again, or contact your H R team. Goodbye.'],
-    found.voice,
-    env.APP_BASE_URL,
+  const audio = await withCostScope({ tenantId: found.tenantId, queryId }, () =>
+    voiceLines(
+      [intro, question, 'Sorry, I did not catch that. Please say it once more.', 'I could not hear you. Please call again, or contact your H R team. Goodbye.'],
+      found.voice,
+      env.APP_BASE_URL,
+    ),
   );
 
   return xmlResponse(

@@ -6,6 +6,7 @@ import { questionXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
 import { voiceLines } from '@/lib/voice/say';
 import { addCallTurn } from '@/lib/conversation/queries';
+import { withCostScope } from '@/lib/costs/record';
 
 /**
  * One spoken question on an incoming call, answered and then asked for another.
@@ -34,11 +35,13 @@ export async function POST(request: Request) {
       const found = await withTenant(tenant.id, async (t) => {
         const employee = await employeeByNumber(t, tenant.id, from);
         if (!employee) return null;
-        const answer = await answerQuestion(t, tenant.id, said, {
-          employeeId: employee.id,
-          employeeName: employee.fullName,
-          budget: 'call',
-        });
+        const answer = await withCostScope({ tenantId: tenant.id, queryId }, () =>
+          answerQuestion(t, tenant.id, said, {
+            employeeId: employee.id,
+            employeeName: employee.fullName,
+            budget: 'call',
+          }),
+        );
         if (queryId) {
           await addCallTurn(t, queryId, employee.id, [
             { role: 'employee', text: said },
@@ -47,6 +50,7 @@ export async function POST(request: Request) {
         }
         const settings = await t.query.tenantSettings.findFirst({ where: eq(tenantSettings.tenantId, tenant.id) });
         return {
+          tenantId: tenant.id,
           text: answer.text,
           voice: { speaker: settings?.agentVoice ?? 'ritu', pace: Number(settings?.agentVoicePace ?? 0.95) },
         };
@@ -60,10 +64,12 @@ export async function POST(request: Request) {
   const more = 'Is there anything else?';
   const voice = result?.voice ?? { speaker: 'ritu', pace: 0.95 };
 
-  const audio = await voiceLines(
-    [text, more, 'Sorry, I did not catch that. Please say it once more.', 'I could not hear you. Please call again, or contact your H R team. Goodbye.'],
-    voice,
-    env.APP_BASE_URL,
+  const audio = await withCostScope({ tenantId: result?.tenantId, queryId }, () =>
+    voiceLines(
+      [text, more, 'Sorry, I did not catch that. Please say it once more.', 'I could not hear you. Please call again, or contact your H R team. Goodbye.'],
+      voice,
+      env.APP_BASE_URL,
+    ),
   );
 
   return xmlResponse(

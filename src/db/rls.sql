@@ -37,7 +37,7 @@ DECLARE
     'attendance_days', 'cases', 'detection_runs',
     'conversations', 'messages', 'templates',
     'actions', 'approvals',
-    'policy_packs', 'policy_sources', 'policy_chunks',
+    'policy_packs', 'policy_sources', 'policy_chunks', 'managers', 'cost_lines',
     'ai_decisions', 'calls', 'queries', 'usage_events', 'consent_events'
   ];
 BEGIN

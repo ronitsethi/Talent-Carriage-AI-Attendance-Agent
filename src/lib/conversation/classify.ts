@@ -8,6 +8,8 @@ export type ReplyIntentName =
   | 'was_working'
   | 'leave_already_applied'
   | 'regularisation_already_sent'
+  | 'on_leave'
+  | 'weekly_off'
   | 'question'
   | 'needs_help'
   | 'opt_out'
@@ -70,10 +72,10 @@ export function classifyByRules(text: string): Classification | null {
 const SYSTEM_PROMPT = `You read an employee's WhatsApp reply to an HR attendance question and report what they meant.
 
 The employee was told their attendance shows them absent on a date, and offered four options:
-1 was_absent - they were not at work and have not applied anything yet (sick, personal, emergency, travel without approval)
-2 was_working - they were working; attendance was not captured (forgot to punch, biometric failed, worked from site or home, was on field duty)
-3 leave_already_applied - they have already applied leave and it is waiting for approval
-4 regularisation_already_sent - they have already submitted a regularisation or attendance correction request
+1 was_absent - they did not come to work (sick, personal, emergency), or have left the company
+2 was_working - they were working; attendance was not captured (came late, left early, forgot to punch, biometric failed, worked outside on a client visit, field work, travel or training) - including when they have already sent a regularisation
+3 on_leave - they were on leave, whether or not they have applied it yet
+4 weekly_off - it was their weekly off, or a comp off
 
 Other intents:
 - question: they asked something instead of answering (leave balance, deadlines, process, who approves)
@@ -96,8 +98,8 @@ const SCHEMA = {
       enum: [
         'was_absent',
         'was_working',
-        'leave_already_applied',
-        'regularisation_already_sent',
+        'on_leave',
+        'weekly_off',
         'question',
         'needs_help',
         'opt_out',

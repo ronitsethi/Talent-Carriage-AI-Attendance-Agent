@@ -25,6 +25,8 @@ type Verdict = {
   action: 'continue' | 'handover' | 'end';
   outcome?: string;
   leave_choice?: string;
+  application?: string;
+  leave_type?: string | null;
   follow_up?: string;
   handover_reason?: string | null;
   note?: string | null;
@@ -38,6 +40,8 @@ function says(verdict: Verdict): NonNullable<TalkArgs['model']> {
     action: verdict.action,
     outcome: verdict.outcome ?? 'none',
     leave_choice: verdict.leave_choice ?? 'not_said',
+    application: verdict.application ?? 'not_said',
+    leave_type: verdict.leave_type ?? null,
     follow_up: verdict.follow_up ?? 'none',
     handover_reason: verdict.handover_reason ?? null,
     note: verdict.note ?? null,
@@ -102,11 +106,20 @@ describe('a talking turn', () => {
   it('records an outcome heard in any words, and moves on to the oldest date left', async () => {
     await threeAbsentDays();
     const { after, result, call } = await turn(
-      { action: 'continue', outcome: 'came_late', note: 'bike broke down, reached at 11', reply: 'Please raise a late-coming regularisation…' },
-      'bike kharab ho gayi thi, 11 baje pahuncha',
+      {
+        action: 'continue',
+        outcome: 'came_late',
+        application: 'not_applied',
+        note: 'bike broke down, reached at 11',
+        reply: 'Please raise a late-coming regularisation…',
+      },
+      'bike kharab ho gayi thi, nahi kiya abhi',
     );
 
-    expect(after.status).toBe('answered');
+    // Recorded, and on to approval - HR's here, since this file names no manager.
+    expect(after.answeredAt).not.toBeNull();
+    expect(after.status).toBe('needs_hr');
+    expect(after.needsHrReason).toBe('No manager in the file to approve it');
     expect(after.replyOption, 'came late is "I was working"').toBe(2);
     expect((after.context as { outcome?: { code: string } }).outcome?.code).toBe('came_late');
     expect(after.replyText).toContain('bike broke down');
@@ -114,6 +127,14 @@ describe('a talking turn', () => {
     const next = await withTenant(scenario.tenantId, (tx) => tx.query.cases.findFirst({ where: eq(cases.id, result.nextCaseId!) }));
     expect(next!.attDate).toBe('2026-09-21');
     expect(call.transcript!.map((t) => t.role)).toEqual(['employee', 'agent']);
+  });
+
+  it('does not write down something applied for until they say where it stands', async () => {
+    await threeAbsentDays();
+    const { after, result } = await turn({ action: 'continue', outcome: 'came_late' }, '11 baje pahuncha');
+
+    expect(after.status).toBe('asked');
+    expect(result.nextCaseId, 'still on this date').toBe(after.id);
   });
 
   it('does not settle an absence until they say leave or Loss of Pay', async () => {
@@ -143,10 +164,10 @@ describe('a talking turn', () => {
 
   it('keeps the last answer when the same turn says goodbye', async () => {
     await threeAbsentDays();
-    const { after, result } = await turn({ action: 'end', outcome: 'on_duty_client_visit', note: 'client in Gurgaon' });
+    const { after, result } = await turn({ action: 'end', outcome: 'on_duty_client_visit', application: 'applied', note: 'client in Gurgaon' });
 
     expect(result.done).toBe(true);
-    expect(after.status).toBe('answered');
+    expect(after.answeredAt).not.toBeNull();
     expect((after.context as { outcome?: { code: string } }).outcome?.code).toBe('on_duty_client_visit');
   });
 

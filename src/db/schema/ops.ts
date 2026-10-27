@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -276,3 +277,45 @@ export const aiBudgetTopups = pgTable('ai_budget_topups', {
   addedBy: uuid('added_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * What one call or message cost, one line per thing used: a model's tokens,
+ * speech to text and back, the phone line, LiveKit's minutes. See
+ * `lib/costs`. The links are loose - no foreign keys - because a cost is
+ * written from its own connection, often before what it belongs to has been
+ * committed, and money spent stays spent when the work is rolled back.
+ */
+export const costLines = pgTable(
+  'cost_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    caseId: uuid('case_id'),
+    callId: uuid('call_id'),
+    queryId: uuid('query_id'),
+    /** The WhatsApp message whose handling this was: the one that came in and was answered. */
+    providerMessageId: text('provider_message_id'),
+    /** Set on a line that is replaced rather than added to, e.g. a call's minutes once it ends. */
+    sourceKey: text('source_key'),
+    provider: text('provider').notNull(),
+    item: text('item').notNull(),
+    quantity: doublePrecision('quantity').notNull().default(0),
+    unit: text('unit').notNull(),
+    /** In millionths of `currency`; null when there is no price to put on it. */
+    amountMicros: bigint('amount_micros', { mode: 'number' }),
+    currency: text('currency').$type<'INR' | 'USD'>().notNull().default('INR'),
+    /** False only when the provider itself reported the charge. */
+    estimated: boolean('estimated').notNull().default(true),
+    detail: jsonb('detail').$type<Record<string, unknown>>().notNull().default({}),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('cost_lines_call_idx').on(t.callId),
+    index('cost_lines_case_idx').on(t.caseId),
+    index('cost_lines_query_idx').on(t.queryId),
+    index('cost_lines_message_idx').on(t.providerMessageId),
+    uniqueIndex('cost_lines_source_key').on(t.tenantId, t.sourceKey),
+  ],
+);

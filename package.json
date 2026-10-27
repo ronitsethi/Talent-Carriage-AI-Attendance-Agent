@@ -40,6 +40,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "tesseract.js": "^7.0.0",
+    "undici": "^6.29.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.6.5"
   },

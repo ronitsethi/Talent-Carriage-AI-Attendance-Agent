@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
 import { calls } from '@/db/schema';
 import { buildContext, type FullContext } from '@/lib/runtime';
+import { withCostScope } from '@/lib/costs/record';
 
 /**
  * Plivo's callbacks carry only the call id, so the tenant is looked up first and
@@ -19,10 +20,13 @@ export async function withCallContext<T>(
 
   try {
     const call = await withPlatformScope((tx) =>
-      tx.query.calls.findFirst({ where: eq(calls.id, callId), columns: { tenantId: true } }),
+      tx.query.calls.findFirst({ where: eq(calls.id, callId), columns: { tenantId: true, caseId: true } }),
     );
     if (!call) return null;
-    return await withTenant(call.tenantId, async (tx) => fn(await buildContext(tx, call.tenantId), call.tenantId));
+    // Whatever this step of the call costs - a model, a spoken clip - is the call's.
+    return await withCostScope({ tenantId: call.tenantId, callId, caseId: call.caseId }, () =>
+      withTenant(call.tenantId, async (tx) => fn(await buildContext(tx, call.tenantId), call.tenantId)),
+    );
   } catch (error) {
     console.error(`[voice] call ${callId} failed:`, error);
     return null;

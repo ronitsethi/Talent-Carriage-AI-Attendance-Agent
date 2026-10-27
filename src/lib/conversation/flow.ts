@@ -12,37 +12,37 @@ import type { ListRow, OutboundList, OutboundTemplate } from '@/lib/channels/typ
 export const OPTIONS = {
   1: {
     intent: 'was_absent' as const,
-    label: 'Yes, I was absent',
+    label: "I didn't come",
     /** Template quick-reply titles may run to 25 characters. */
-    templateButton: 'Yes, I was absent',
+    templateButton: "I didn't come",
     /** In-conversation list rows may run to 24. */
-    listTitle: 'Yes, I was absent',
+    listTitle: "I didn't come",
     listDescription: 'I was not at work that day',
-    action: 'Apply leave or unpaid leave',
+    action: 'Apply leave, or Loss of Pay',
   },
   2: {
     intent: 'was_working' as const,
-    label: 'No, I was working',
-    templateButton: 'No, I was working',
-    listTitle: 'No, I was working',
+    label: 'I was working',
+    templateButton: 'I was working',
+    listTitle: 'I was working',
     listDescription: 'My attendance was not recorded',
-    action: 'Apply regularisation',
+    action: 'Apply regularisation or On-Duty',
   },
   3: {
-    intent: 'leave_already_applied' as const,
-    label: 'I have already applied leave',
-    templateButton: 'Already applied leave',
-    listTitle: 'Already applied leave',
-    listDescription: 'Waiting for my manager to approve',
-    action: 'Manager to approve leave',
+    intent: 'on_leave' as const,
+    label: 'I was on leave',
+    templateButton: 'I was on leave',
+    listTitle: 'I was on leave',
+    listDescription: 'Applied, or still to apply',
+    action: 'Apply leave, manager to approve',
   },
   4: {
-    intent: 'regularisation_already_sent' as const,
-    label: 'I have already sent regularisation request',
-    templateButton: 'Sent regularisation',
-    listTitle: 'Sent regularisation',
-    listDescription: 'Waiting for my manager to approve',
-    action: 'Manager to approve regularisation',
+    intent: 'weekly_off' as const,
+    label: 'Weekly off / Comp off',
+    templateButton: 'Weekly off / Comp off',
+    listTitle: 'Weekly off / Comp off',
+    listDescription: 'It was not a working day for me',
+    action: 'Weekly off to HR, or apply comp-off',
   },
 } as const;
 
@@ -52,9 +52,25 @@ export const OPTION_NUMBERS: OptionNumber[] = [1, 2, 3, 4];
 export const INTENT_TO_OPTION: Record<string, OptionNumber> = {
   was_absent: 1,
   was_working: 2,
+  on_leave: 3,
+  weekly_off: 4,
+  // What the classifier still calls the old options.
   leave_already_applied: 3,
-  regularisation_already_sent: 4,
+  regularisation_already_sent: 2,
 };
+
+/**
+ * The first question as it was: "Already applied leave" and "Sent regularisation"
+ * in the third and fourth places. A tap on one of those, from a message sent
+ * before the change, still means what it said then.
+ */
+export const LEGACY_OPTIONS = {
+  3: { label: 'I have already applied leave', outcome: 'leave_pending_approval' },
+  4: { label: 'I have already sent regularisation request', outcome: 'regularisation_already_sent' },
+} as const;
+
+/** The approved template the first question goes out as, since the options changed. */
+export const FIRST_STEP_TEMPLATE = 'attendance_absent_v2';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -90,8 +106,11 @@ export function firstStepBody(name: string, label: string): string {
 }
 
 /** Full text including the options, for the transcript and the HR preview. */
-export function firstStepPreview(name: string, label: string): string {
-  const options = OPTION_NUMBERS.map((n) => `${n}. ${OPTIONS[n].label}`).join('\n');
+export function firstStepPreview(name: string, label: string, legacy = false): string {
+  const options = OPTION_NUMBERS.map((n) => {
+    const old = legacy && (n === 3 || n === 4) ? LEGACY_OPTIONS[n].label : null;
+    return `${n}. ${old ?? OPTIONS[n].label}`;
+  }).join('\n');
   return `${firstStepBody(name, label)}\n\n${options}`;
 }
 
@@ -147,15 +166,20 @@ export function optionRows(caseId: string): ListRow[] {
   }));
 }
 
+/**
+ * A button or row's payload: the case and the option. Sent as `c2:` since the
+ * options changed; `case:` is what messages from before carry, and a tap on one
+ * of those means the old option (see LEGACY_OPTIONS).
+ */
 export function selectionId(caseId: string, option: OptionNumber): string {
-  return `case:${caseId}:${option}`;
+  return `c2:${caseId}:${option}`;
 }
 
 /** Reads a button or list payload back into the case and option it names. */
-export function parseSelectionId(value: string | undefined | null): { caseId: string; option: OptionNumber } | null {
-  const match = /^case:([0-9a-f-]{36}):([1-4])$/i.exec(value ?? '');
+export function parseSelectionId(value: string | undefined | null): { caseId: string; option: OptionNumber; legacy: boolean } | null {
+  const match = /^(c2|case):([0-9a-f-]{36}):([1-4])$/i.exec(value ?? '');
   if (!match) return null;
-  return { caseId: match[1]!, option: Number(match[2]) as OptionNumber };
+  return { caseId: match[2]!, option: Number(match[3]) as OptionNumber, legacy: match[1]!.toLowerCase() === 'case' };
 }
 
 /** Day-2 follow-up wording, which depends on what the employee originally said. */
@@ -235,8 +259,12 @@ export function buildFirstStepTemplate(args: {
     templateName: args.templateName,
     language: args.language,
     variables: [name, args.label],
-    buttonPayloads: OPTION_NUMBERS.slice(0, args.buttonCount).map((n) => selectionId(args.caseId, n)),
-    preview: firstStepPreview(name, args.label),
+    // The template's buttons are fixed by Meta: the old template still says
+    // "Already applied leave" and "Sent regularisation", so its taps are read as those.
+    buttonPayloads: OPTION_NUMBERS.slice(0, args.buttonCount).map((n) =>
+      args.templateName === FIRST_STEP_TEMPLATE ? selectionId(args.caseId, n) : `case:${args.caseId}:${n}`,
+    ),
+    preview: firstStepPreview(name, args.label, args.templateName !== FIRST_STEP_TEMPLATE),
   };
 }
 

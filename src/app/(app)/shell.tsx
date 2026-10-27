@@ -8,10 +8,12 @@ import {
   BookOpen,
   ClipboardCheck,
   ContactRound,
+  Headset,
   LayoutDashboard,
   Menu,
   MessagesSquare,
   SlidersHorizontal,
+  UserCheck,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -27,16 +29,21 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/cases', label: 'Follow-up cases', icon: ClipboardCheck },
   { href: '/queries', label: 'Queries', icon: MessagesSquare },
   { href: '/employees', label: 'Employees', icon: ContactRound },
+  { href: '/managers', label: 'Managers', icon: UserCheck },
   { href: '/mapping', label: 'Mapping & import', icon: ArrowLeftRight },
   { href: '/knowledge', label: 'Guidelines', icon: BookOpen },
   { href: '/settings', label: 'Settings', icon: SlidersHorizontal },
 ];
 
-const ADMIN = { href: '/admin', label: 'All customers', icon: Users };
+// Talent Carriage's own pages, which no customer sees.
+const STAFF = [
+  { href: '/coe', label: 'COE Teams', icon: Headset },
+  { href: '/admin', label: 'All customers', icon: Users },
+];
 
 export function Nav({ openCases, showAdmin }: { openCases: number; showAdmin: boolean }) {
   const pathname = usePathname();
-  const items = showAdmin ? [...NAV, ADMIN] : NAV;
+  const items = showAdmin ? [...NAV, ...STAFF] : NAV;
 
   return (
     <nav className="nav" aria-label="Main">

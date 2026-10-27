@@ -2,6 +2,7 @@ import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { messages, queries } from '@/db/schema';
 import { enqueue } from '@/lib/jobs/queue';
+import { queueTicketCheck } from '@/lib/tickets';
 
 /**
  * Queries: what an employee asks us of their own accord.
@@ -39,6 +40,8 @@ export async function whatsappQuery(tx: Db, tenantId: string, employeeId: string
     .insert(queries)
     .values({ tenantId, employeeId, channel: 'whatsapp', startedAt: at, lastActivityAt: at })
     .returning({ id: queries.id });
+  // A chat has no hang-up: whether it needs a ticket is looked at once it goes quiet.
+  await queueTicketCheck(tx, tenantId, created!.id, new Date(at.getTime() + QUERY_QUIET_MS));
   return created!.id;
 }
 
@@ -116,6 +119,7 @@ export async function endCallQuery(tx: Db, queryId: string, recordingUri?: strin
       { tenantId: ended.tenantId, runAt: new Date(ended.endedAt!.getTime() + FEEDBACK_AFTER_MS), dedupeKey: `feedback:${queryId}` },
       tx,
     );
+    await queueTicketCheck(tx, ended.tenantId, queryId, ended.endedAt!);
   }
 }
 

@@ -5,6 +5,20 @@ import { updateSettings } from '@/app/actions';
 import { AGENT_VOICES } from '@/lib/voice/voices';
 import { capabilities, env } from '@/lib/env';
 
+/** Where attendance comes from decides who applies leave and regularisation: the employee, or the agent. */
+const SOURCES = [
+  {
+    value: 'csv',
+    title: 'CSV upload',
+    copy: 'Attendance arrives as a file. The employee is asked whether they have applied it yet, is told to if not, and the manager is asked to approve it once it is in their system.',
+  },
+  {
+    value: 'hrms',
+    title: 'HRMS connected',
+    copy: 'The agent offers to apply it in the HRMS itself - asking the leave type first - and applies it once the manager approves.',
+  },
+] as const;
+
 const MODES = [
   { value: 'manual', title: 'Manual', copy: 'HR starts every check and reminder' },
   { value: 'automatic', title: 'Automatic', copy: 'The agent runs the daily check itself' },
@@ -184,11 +198,34 @@ export default async function SettingsPage() {
                   <input type="checkbox" name="sendBacklogSummary" defaultChecked={settings.sendBacklogSummary} />
                   Send the &quot;N days still pending&quot; summary after each answer
                 </label>
-                <label className="check">
-                  <input type="checkbox" name="actionsEnabled" defaultChecked={settings.actionsEnabled} />
-                  Let the agent apply leave and regularisation in the HRMS
-                </label>
               </div>
+            </div>
+
+            <div className="form-section">
+              <div className="section-head">
+                <h2>Leave and regularisation</h2>
+              </div>
+              <fieldset>
+                <legend className="label">Where this customer&apos;s attendance comes from</legend>
+                <div className="choice-cards">
+                  {SOURCES.map((source) => (
+                    <label key={source.value} className="choice-card">
+                      <input
+                        type="radio"
+                        name="attendanceSource"
+                        value={source.value}
+                        defaultChecked={settings.attendanceSource === source.value}
+                      />
+                      <span className="choice-title">{source.title}</span>
+                      <span className="choice-copy">{source.copy}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <p className="field-help">
+                Either way the employee&apos;s manager is asked to approve it - on the number in the file&apos;s manager mobile
+                column, or the manager code&apos;s own mobile. Each manager&apos;s contact settings are on the Managers page.
+              </p>
             </div>
 
             <div className="card-foot">

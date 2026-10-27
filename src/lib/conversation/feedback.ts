@@ -287,6 +287,7 @@ async function byModel(step: 'resolved' | 'rating', text: string): Promise<strin
         },
       },
       'whatsapp',
+      'Reading the feedback',
     );
     const content = (json.choices as { message?: { content?: string } }[] | undefined)?.[0]?.message?.content ?? '';
     const choice = (JSON.parse(content) as { choice: string }).choice;

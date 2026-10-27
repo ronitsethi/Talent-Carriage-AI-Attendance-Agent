@@ -227,6 +227,15 @@ export function parseMetaWebhook(body: unknown): {
           status: raw.status === 'failed' ? 'failed' : (raw.status as DeliveryUpdate['status']),
           error: error ? `${error.code}: ${error.title ?? error.message ?? 'failed'}` : undefined,
           at: raw.timestamp ? new Date(Number(raw.timestamp) * 1000) : new Date(),
+          // Whether Meta charges for it, and as what: on the sent and delivered receipts.
+          pricing: raw.pricing
+            ? {
+                billable: typeof raw.pricing.billable === 'boolean' ? raw.pricing.billable : undefined,
+                category: raw.pricing.category ? String(raw.pricing.category) : undefined,
+                type: raw.pricing.type ? String(raw.pricing.type) : undefined,
+                pricingModel: raw.pricing.pricing_model ? String(raw.pricing.pricing_model) : undefined,
+              }
+            : undefined,
         });
       }
     }

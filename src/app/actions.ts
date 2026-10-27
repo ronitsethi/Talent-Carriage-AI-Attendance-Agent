@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
-import { withTenant, type Db } from '@/db';
+import { withPlatformScope, withTenant, type Db } from '@/db';
 import {
   actions,
   approvals,
@@ -12,7 +12,9 @@ import {
   calls,
   cases,
   codeMappings,
+  coePeople,
   conversations,
+  managers,
   employees,
   imports,
   mappingProfiles,
@@ -24,6 +26,7 @@ import {
 } from '@/db/schema';
 import type { InboundMessage } from '@/lib/channels/types';
 import { handleInbound } from '@/lib/conversation/engine';
+import { withCostScope } from '@/lib/costs/record';
 import { selectionId, type OptionNumber } from '@/lib/conversation/flow';
 import { sendDueFollowUps } from '@/lib/conversation/followup';
 import { closeCasesExplainedByData, findGaps, runDailyCheckAndContact } from '@/lib/detection/run';
@@ -43,6 +46,10 @@ import { env } from '@/lib/env';
 import { DEFAULT_AGENT_VOICE, isAgentVoice } from '@/lib/voice/voices';
 import { datesInRange } from '@/lib/dates';
 import { summariseCase, summariseQuery } from '@/lib/conversation/summary';
+import { CodeTaken, PersonClash, readTeamInput, removeTeam, saveTeam, validateTeam } from '@/lib/coe';
+import { listQueryTypes, parseQueryTypeSheet, replaceQueryTypes } from '@/lib/query-types';
+import { PRIORITIES, queueAssignmentWork, type Priority } from '@/lib/tickets';
+import { sendApprovalRequest } from '@/lib/approvals';
 
 async function requireTenant() {
   const session = await getSession();
@@ -154,7 +161,7 @@ export async function simulateReply(formData: FormData) {
           }
         : { ...base, kind: 'text', text };
 
-    await handleInbound(ctx, inbound);
+    await withCostScope({ tenantId: ctx.tenantId, providerMessageId: base.providerMessageId }, () => handleInbound(ctx, inbound));
   });
 
   revalidatePath('/cases');
@@ -234,7 +241,7 @@ export async function updateSettings(formData: FormData) {
         checkTime: String(formData.get('checkTime') ?? '10:30'),
         operatingMode: formData.get('operatingMode') === 'automatic' ? 'automatic' : 'manual',
         sendingEnabled: bool('sendingEnabled'),
-        actionsEnabled: bool('actionsEnabled'),
+        attendanceSource: formData.get('attendanceSource') === 'hrms' ? 'hrms' : 'csv',
         sendBacklogSummary: bool('sendBacklogSummary'),
         maxOutstandingQuestions: int('maxOutstandingQuestions', 0),
         followUpAfterDays: int('followUpAfterDays', 2),
@@ -1101,4 +1108,157 @@ export async function askPolicyQuestion(formData: FormData) {
   const who = String(formData.get('employeeId') ?? '');
   if (who) params.set('who', who);
   redirect(`/knowledge?${params.toString()}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * COE teams: Talent Carriage's own, so staff only
+ * ------------------------------------------------------------------ */
+
+export type CoeFormState = { errors: string[] } | null;
+
+/** Saves a team from the COE Teams form, or hands back what is wrong with it. */
+export async function saveCoeTeam(_previous: CoeFormState, formData: FormData): Promise<CoeFormState> {
+  const session = await getSession();
+  if (!session || !isPlatformAdmin(session)) return { errors: ['Only Talent Carriage staff can change COE teams.'] };
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(String(formData.get('team') ?? ''));
+  } catch {
+    return { errors: ['The form could not be read. Reload the page and try again.'] };
+  }
+  const checked = validateTeam(readTeamInput(raw));
+  if ('errors' in checked) return checked;
+
+  try {
+    await saveTeam(checked.team);
+  } catch (error) {
+    if (error instanceof CodeTaken || error instanceof PersonClash) return { errors: [error.message] };
+    throw error;
+  }
+  revalidatePath('/coe');
+  redirect(`/coe?saved=${encodeURIComponent(checked.team.code)}`);
+}
+
+export async function removeCoeTeam(formData: FormData) {
+  const session = await getSession();
+  if (!session || !isPlatformAdmin(session)) throw new Error('Only Talent Carriage staff can change COE teams');
+  await removeTeam(String(formData.get('id') ?? ''));
+  revalidatePath('/coe');
+  redirect('/coe');
+}
+
+export type SheetUploadState = { errors: string[] } | { summary: string } | null;
+
+/** Replaces the query types with an uploaded training sheet, from the COE Teams page. */
+export async function uploadQueryTypeSheet(_previous: SheetUploadState, formData: FormData): Promise<SheetUploadState> {
+  const session = await getSession();
+  if (!session || !isPlatformAdmin(session)) return { errors: ['Only Talent Carriage staff can change the query types.'] };
+  const file = formData.get('sheet');
+  if (!(file instanceof File) || !file.size) return { errors: ['Choose the .xlsx file first.'] };
+  if (file.size > 5 * 1024 * 1024) return { errors: ['That file is over 5 MB; the training sheet is a few kilobytes.'] };
+
+  const parsed = parseQueryTypeSheet(Buffer.from(await file.arrayBuffer()));
+  if ('errors' in parsed) return parsed;
+  const { added, updated, removed } = await replaceQueryTypes(parsed.rows);
+  revalidatePath('/coe');
+  const parts = [`${parsed.rows.length} query types from ${file.name}`, `${added} new`, `${updated} updated`];
+  if (removed) parts.push(`${removed} no longer in the sheet removed`);
+  return { summary: parts.join(' · ') };
+}
+
+/* ------------------------------------------------------------------ *
+ * Tickets: written by the AI, corrected by HR
+ * ------------------------------------------------------------------ */
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Saves HR's corrections to a query's ticket. Each field is taken as given:
+ * the query type keeps its name and COE as they are now, a new assignee is
+ * timed from now, and a ticket marked as moved to the LT person records when.
+ */
+export async function updateTicket(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const queryId = String(formData.get('queryId') ?? '');
+  if (!UUID_PATTERN.test(queryId)) throw new Error('Unknown query');
+
+  const typeId = String(formData.get('queryTypeId') ?? '');
+  const priority = String(formData.get('priority') ?? '') as Priority;
+  const description = String(formData.get('description') ?? '').trim().slice(0, 4000);
+  const assignee = String(formData.get('assignedPersonId') ?? '');
+  const toLt = formData.get('ltTransferred') === 'yes';
+  const ltPerson = String(formData.get('ltPersonId') ?? '');
+
+  const [type] = UUID_PATTERN.test(typeId) ? (await listQueryTypes()).filter((t) => t.id === typeId) : [];
+  const people = await withPlatformScope((tx) =>
+    tx
+      .select({ id: coePeople.id })
+      .from(coePeople)
+      .where(inArray(coePeople.id, [assignee, ltPerson].filter((id) => UUID_PATTERN.test(id)))),
+  );
+  const known = new Set(people.map((p) => p.id));
+
+  await withTenant(tenantId, async (tx) => {
+    const query = await tx.query.queries.findFirst({ where: and(eq(queries.tenantId, tenantId), eq(queries.id, queryId)) });
+    if (!query?.ticketStatus) throw new Error('This query has no ticket');
+    const assignedPersonId = known.has(assignee) ? assignee : null;
+    const reassigned = assignedPersonId !== query.assignedPersonId;
+    const at = new Date();
+    // A new assignee is told on WhatsApp, and has their own 36 and 48 hours.
+    if (reassigned && assignedPersonId && query.ticketStatus === 'open') await queueAssignmentWork(tx, tenantId, queryId, at, !toLt);
+    await tx
+      .update(queries)
+      .set({
+        queryTypeId: type?.id ?? null,
+        queryTypeName: type?.name ?? null,
+        coeCode: type?.coeCode ?? null,
+        priority: PRIORITIES.includes(priority) ? priority : query.priority,
+        problemDescription: description || null,
+        assignedPersonId,
+        ...(reassigned ? { assignedAt: assignedPersonId ? at : null, assignmentMark: null } : {}),
+        ltTransferredAt: toLt ? query.ltTransferredAt ?? new Date() : null,
+        ltPersonId: toLt && known.has(ltPerson) ? ltPerson : null,
+      })
+      .where(eq(queries.id, queryId));
+  });
+  revalidatePath(`/queries/${queryId}`);
+  redirect(`/queries/${queryId}?saved=1`);
+}
+
+/* ------------------------------------------------------------------ *
+ * Managers: how each is asked to approve
+ * ------------------------------------------------------------------ */
+
+async function setManager(managerId: string, values: Partial<typeof managers.$inferInsert>) {
+  if (!managerId) return;
+  const { tenantId } = await requireTenant();
+  await withTenant(tenantId, (tx) =>
+    tx
+      .update(managers)
+      .set({ ...values, updatedAt: new Date() })
+      .where(and(eq(managers.tenantId, tenantId), eq(managers.id, managerId))),
+  );
+  revalidatePath('/managers');
+}
+
+export async function setManagerChannel(managerId: string, channel: string) {
+  await setManager(managerId, { preferredChannel: channel === 'voice' ? 'voice' : 'whatsapp' });
+}
+
+export async function setManagerCallMode(managerId: string, mode: string) {
+  await setManager(managerId, { callMode: mode === 'agent' ? 'agent' : 'keypad' });
+}
+
+export async function setManagerMode(managerId: string, mode: string) {
+  await setManager(managerId, { operatingMode: mode === 'manual' ? 'manual' : 'automatic' });
+}
+
+/** Sends a request waiting on a manager set to manual. */
+export async function sendApprovalNow(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const approvalId = String(formData.get('approvalId') ?? '');
+  if (!UUID_PATTERN.test(approvalId)) return;
+  await withTenant(tenantId, async (tx) => sendApprovalRequest(await buildContext(tx, tenantId), approvalId));
+  revalidatePath('/managers');
 }

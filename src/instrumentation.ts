@@ -25,6 +25,14 @@ export async function register() {
   // instrumentation is loaded on the edge runtime too, where there is no queue
   // and no database driver.
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+
+  // Connections to the model, and to everything else, stay open for a minute
+  // between requests. Node's default closes them after four seconds, and the
+  // turns of a call come fifteen to twenty-five seconds apart - so every answer
+  // paid for a fresh connection before the model saw a word of it.
+  const { Agent, setGlobalDispatcher } = await import('undici');
+  setGlobalDispatcher(new Agent({ keepAliveTimeout: 60_000, keepAliveMaxTimeout: 120_000 }));
+
   if (!env.BACKGROUND_WORKER) return;
 
   const { tick } = await import('@/lib/jobs/worker');

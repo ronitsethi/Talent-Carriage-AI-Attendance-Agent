@@ -8,7 +8,9 @@ import { presetByKey, presetCodeLookup } from '@/lib/mapping/presets';
 import { detectRunDate, pickTable, readWorkbook } from '@/lib/mapping/source';
 import { normaliseIndianMobile } from '@/lib/mapping/transforms';
 
-const DEMO_FILE = path.join(process.cwd(), 'demo', 'DEMO_Attendance_data_v1.0.xlsx');
+// A copy of the demo register as it was first exported, so editing the demo file to try something out
+// does not break these tests.
+const DEMO_FILE = path.join(process.cwd(), 'tests', 'fixtures', 'timeoffice-register-august-2026.xlsx');
 
 /** Builds an in-memory workbook, so each layout is tested against a real file. */
 function workbook(sheets: Record<string, Record<string, unknown>[]>) {

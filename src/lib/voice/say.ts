@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { env } from '@/lib/env';
+import { noteCost } from '@/lib/costs/record';
+import { SARVAM } from '@/lib/costs/prices';
 
 /**
  * Speaking on a Plivo-driven call in the customer's own voice.
@@ -60,6 +62,17 @@ export async function synthesise(text: string, voice: Voice): Promise<Buffer | n
     const body = (await response.json()) as { audios?: string[] };
     const first = body.audios?.[0];
     if (!response.ok || !first) return null;
+    const model = voice.model ?? 'bulbul:v3-beta';
+    const per10k = SARVAM.ttsPer10kChars(model);
+    noteCost({
+      provider: 'Sarvam',
+      item: `Text to speech (${model})`,
+      quantity: text.length,
+      unit: 'characters',
+      amountMicros: Math.round((text.length / 10_000) * per10k * 1_000_000),
+      currency: 'INR',
+      detail: { rate: `₹${per10k}/10K characters` },
+    });
     return Buffer.from(first, 'base64');
   } catch {
     // A call in Plivo's voice beats a call in silence, so the caller falls back

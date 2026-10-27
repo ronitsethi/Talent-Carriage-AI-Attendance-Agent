@@ -3,9 +3,12 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
 import { employees, messages as messageLog, tenantChannels } from '@/db/schema';
 import { parseMetaWebhook, verifyMetaSignature } from '@/lib/channels/meta';
+import type { InboundMessage } from '@/lib/channels/types';
 import { applyDeliveryUpdate, handleInbound } from '@/lib/conversation/engine';
 import { buildContext } from '@/lib/runtime';
 import { env } from '@/lib/env';
+import { applyTicketDeliveries, handleTicketReply } from '@/lib/ticket-whatsapp';
+import { withCostScope } from '@/lib/costs/record';
 
 /**
  * Meta's webhook.
@@ -52,7 +55,19 @@ export async function POST(request: Request) {
 }
 
 async function process(body: unknown) {
-  const { phoneNumberId, messages, statuses } = parseMetaWebhook(body);
+  const parsed = parseMetaWebhook(body);
+  const { phoneNumberId } = parsed;
+
+  // COE people writing about their tickets, and receipts for ticket messages,
+  // are Talent Carriage's own business, not any customer's: dealt with first,
+  // and whatever is left is a customer's employee.
+  const ticketReceipts = await applyTicketDeliveries(parsed.statuses);
+  const statuses = parsed.statuses.filter((s) => !ticketReceipts.has(s.providerMessageId));
+  const messages: InboundMessage[] = [];
+  for (const message of parsed.messages) {
+    if (await handleTicketReply(message)) console.log(`[webhook] ${message.from}: ticket reply`);
+    else messages.push(message);
+  }
   if (!messages.length && !statuses.length) return;
 
   const tenantId = await resolveTenant(phoneNumberId, {
@@ -71,7 +86,8 @@ async function process(body: unknown) {
     if (messages.length) {
       const ctx = await buildContext(tx, tenantId);
       for (const message of messages) {
-        const outcome = await handleInbound(ctx, message);
+        // What answering it costs is written against the message it answers.
+        const outcome = await withCostScope({ tenantId, providerMessageId: message.providerMessageId }, () => handleInbound(ctx, message));
         console.log(`[webhook] ${message.from}:`, JSON.stringify(outcome));
       }
     }

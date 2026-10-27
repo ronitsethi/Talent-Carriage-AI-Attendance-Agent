@@ -6,7 +6,10 @@ import { closeCasesExplainedByData, runDailyCheckAndContact } from '@/lib/detect
 import { buildContext } from '@/lib/runtime';
 import { sendPlainText } from '@/lib/conversation/engine';
 import { sendQueryFeedback } from '@/lib/conversation/feedback';
+import { queueTicketCheck, raiseTicket } from '@/lib/tickets';
+import { escalateToLt, notifyAssignee, remindAssignee } from '@/lib/ticket-whatsapp';
 import { enqueue, type Job, type JobKind } from './queue';
+import { applyPlivoCharge, type ChargeLookup } from '@/lib/costs/plivo';
 
 export type JobHandler = (job: Job) => Promise<Record<string, unknown>>;
 
@@ -135,6 +138,36 @@ const queryFeedback: JobHandler = async (job) => {
   });
 };
 
+/**
+ * Raises a query's ticket once its conversation is over, if anything is left
+ * for a person to do. A chat that has moved on since is looked at again later.
+ */
+const queryTicket: JobHandler = async (job) => {
+  const tenantId = job.tenantId!;
+  const queryId = String(job.payload.queryId ?? '');
+  const outcome = await raiseTicket(queryId);
+  if (outcome.done === 'later') await withTenant(tenantId, (tx) => queueTicketCheck(tx, tenantId, queryId, outcome.at, true));
+  return outcome as unknown as Record<string, unknown>;
+};
+
+/** A ticket's WhatsApp message to whoever it was just given to. */
+const ticketNotify: JobHandler = async (job) => {
+  const { queryId, assignedAt } = job.payload as { queryId: string; assignedAt?: string };
+  return (await notifyAssignee(queryId, assignedAt)) as Record<string, unknown>;
+};
+
+/** At 36 hours: the warning that it moves to the LT person in 12. */
+const ticketReminder: JobHandler = async (job) => {
+  const { queryId, assignedAt } = job.payload as { queryId: string; assignedAt: string };
+  return (await remindAssignee(queryId, assignedAt)) as Record<string, unknown>;
+};
+
+/** At 48 hours: the move to the LT person. */
+const ticketEscalate: JobHandler = async (job) => {
+  const { queryId, assignedAt } = job.payload as { queryId: string; assignedAt: string };
+  return (await escalateToLt(queryId, assignedAt)) as Record<string, unknown>;
+};
+
 /** Placed here so the queue is complete; the voice provider arrives in its phase. */
 const placeCall: JobHandler = async (job) => {
   return { skipped: 'voice provider not configured', caseId: job.payload.caseId };
@@ -149,4 +182,10 @@ export const handlers: Record<JobKind, JobHandler> = {
   place_call: placeCall,
   import_file: async () => ({ skipped: 'handled by the upload route for now' }),
   query_feedback: queryFeedback,
+  query_ticket: queryTicket,
+  ticket_notify: ticketNotify,
+  ticket_reminder: ticketReminder,
+  ticket_escalate: ticketEscalate,
+  // Plivo's own charge for a talking call, or a keypad call to us, once its record is in.
+  plivo_charge: async (job) => applyPlivoCharge(job.payload as unknown as ChargeLookup),
 };

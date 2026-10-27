@@ -53,17 +53,17 @@ export function datePrompt(spoken: string, style: PromptStyle = 'keypad'): strin
     return [
       `I am calling about ${spoken}.`,
       `Our records show you were absent.`,
-      `Could you tell me what happened - were you absent that day, were you actually working,`,
-      `or have you already applied for leave or sent a regularisation request?`,
+      `Could you tell me what happened - did you not come in, were you actually working, were you on leave,`,
+      `or was it your weekly off or a comp off?`,
     ].join(' ');
   }
 
   return [
     `About ${spoken}.`,
-    `Press 1 if you were absent.`,
+    `Press 1 if you did not come to work.`,
     `Press 2 if you were working.`,
-    `Press 3 if you have already applied leave.`,
-    `Press 4 if you have already sent a regularisation request.`,
+    `Press 3 if you were on leave.`,
+    `Press 4 if it was your weekly off, or a comp off.`,
     `You can also just say your answer.`,
   ].join(' ');
 }

@@ -106,8 +106,10 @@ export const caseStatus = pgEnum('case_status', [
 export const replyIntent = pgEnum('reply_intent', [
   'was_absent', // 1
   'was_working', // 2
-  'leave_already_applied', // 3
-  'regularisation_already_sent', // 4
+  'leave_already_applied', // 3, before the first question changed
+  'regularisation_already_sent', // 4, before the first question changed
+  'on_leave', // 3
+  'weekly_off', // 4
   'question', // asked something instead of answering
   'needs_help', // wants a human
   'other', // on-topic but none of the above
@@ -140,6 +142,8 @@ export const actionType = pgEnum('action_type', [
   'apply_leave',
   'apply_regularisation',
   'apply_unpaid_leave',
+  'apply_on_duty',
+  'apply_comp_off',
   'approve_leave',
   'approve_regularisation',
   'cancel_request',

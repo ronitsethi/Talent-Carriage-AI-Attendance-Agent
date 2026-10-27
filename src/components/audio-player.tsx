@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { LoaderCircle, Pause, Play, RotateCcw } from 'lucide-react';
 
 /**
@@ -12,11 +12,27 @@ import { LoaderCircle, Pause, Play, RotateCcw } from 'lucide-react';
  */
 
 const SPEEDS = [1, 1.25, 1.5, 2];
+const BARS = 64;
 
 function clock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
   const whole = Math.floor(seconds);
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+/**
+ * The bars behind the seek bar. They are decoration, not the recording's
+ * amplitude: reading that would mean downloading and decoding the whole file
+ * before the page could be drawn. They are derived from the path so that one
+ * recording always draws the same shape and the strip never flickers.
+ */
+function bars(seed: string): number[] {
+  let state = 0;
+  for (const character of seed) state = (state * 31 + character.charCodeAt(0)) >>> 0;
+  return Array.from({ length: BARS }, () => {
+    state = (state * 1_103_515_245 + 12_345) >>> 0;
+    return 24 + ((state >>> 8) % 77);
+  });
 }
 
 export function AudioPlayer({ src, label }: { src: string; label: string }) {
@@ -27,6 +43,7 @@ export function AudioPlayer({ src, label }: { src: string; label: string }) {
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState(1);
+  const shape = useMemo(() => bars(src), [src]);
 
   useEffect(() => {
     if (audio.current) audio.current.playbackRate = speed;
@@ -60,7 +77,7 @@ export function AudioPlayer({ src, label }: { src: string; label: string }) {
         type="button"
         className="player-play"
         onClick={toggle}
-        aria-label={failed ? 'Try again' : playing ? 'Pause' : ended ? 'Play again' : 'Play'}
+        aria-label={`${failed ? 'Try again' : playing ? 'Pause' : ended ? 'Play again' : 'Play'} ${label}`}
       >
         {failed ? (
           <RotateCcw size={18} strokeWidth={2.2} aria-hidden />
@@ -73,12 +90,15 @@ export function AudioPlayer({ src, label }: { src: string; label: string }) {
         )}
       </button>
 
-      <div className="player-body">
-        <div className="player-top">
-          <span className="player-label">{failed ? 'The recording could not be played' : label}</span>
-          <span className="player-time mono">
-            {clock(time)} <span className="player-of">/ {known ? clock(duration) : '–:––'}</span>
-          </span>
+      <div className="player-wave">
+        <div className="player-bars" aria-hidden>
+          {shape.map((height, index) => (
+            <span
+              key={index}
+              className={(index + 0.5) * (100 / BARS) <= progress ? 'played' : undefined}
+              style={{ height: `${height}%` }}
+            />
+          ))}
         </div>
         <input
           type="range"
@@ -98,6 +118,16 @@ export function AudioPlayer({ src, label }: { src: string; label: string }) {
           }}
         />
       </div>
+
+      <span className="player-time mono">
+        {failed ? (
+          <span className="player-failed">Could not be played</span>
+        ) : (
+          <>
+            {clock(time)} <span className="player-of">/ {known ? clock(duration) : '–:––'}</span>
+          </>
+        )}
+      </span>
 
       <button
         type="button"

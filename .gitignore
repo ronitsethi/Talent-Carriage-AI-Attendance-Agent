@@ -26,7 +26,10 @@ next-env.d.ts
 # unpacked copy of the demo distribution zip
 /Talent-Carriage-Attendance-Agent/
 /tmp/
-recordings/
+# call recordings kept on disk locally - only the top-level folder, not the
+# src/app/api/recordings route that serves them
+/recordings/
+__pycache__/
 agent/.venv/
 agent/.env
 voices/

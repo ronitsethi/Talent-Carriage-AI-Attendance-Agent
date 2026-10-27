@@ -60,6 +60,34 @@ export const actions = pgTable(
 );
 
 /** One approval request; an action may need several in order. */
+/**
+ * Whoever approves an employee's leave or regularisation: found from the
+ * employee's manager mobile when the file has one, else their manager code. Known
+ * by number, because a manager may not be in the attendance file at all.
+ */
+export const managers = pgTable(
+  'managers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    mobileE164: text('mobile_e164').notNull(),
+    fullName: text('full_name').notNull(),
+    /** Set when the manager is also an employee in the file. */
+    employeeId: uuid('employee_id').references(() => employees.id, { onDelete: 'set null' }),
+    /** How approval requests reach them: 'whatsapp' or 'voice'. */
+    preferredChannel: text('preferred_channel').$type<'whatsapp' | 'voice'>().notNull().default('whatsapp'),
+    /** On a call: 'keypad' or 'agent'; null follows the customer's setting. */
+    callMode: text('call_mode').$type<'keypad' | 'agent' | null>(),
+    /** 'automatic' sends a request the moment it exists; 'manual' waits for HR to send it. */
+    operatingMode: text('operating_mode').$type<'automatic' | 'manual'>().notNull().default('automatic'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('managers_tenant_mobile_key').on(t.tenantId, t.mobileE164)],
+);
+
 export const approvals = pgTable(
   'approvals',
   {
@@ -73,6 +101,10 @@ export const approvals = pgTable(
     /** Whoever must decide: usually the reporting manager. */
     approverEmployeeId: uuid('approver_employee_id').references(() => employees.id, { onDelete: 'set null' }),
     approverUserId: uuid('approver_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** The manager asked, by number - who may not be an employee in the file at all. */
+    approverManagerId: uuid('approver_manager_id').references(() => managers.id, { onDelete: 'set null' }),
+    /** When it went to them; null while it waits for HR to send it (a manager set to manual). */
+    sentAt: timestamp('sent_at', { withTimezone: true }),
     sequence: smallint('sequence').notNull().default(1),
 
     decision: approvalDecision('decision').notNull().default('pending'),

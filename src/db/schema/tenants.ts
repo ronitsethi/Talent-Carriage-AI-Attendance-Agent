@@ -116,6 +116,11 @@ export const tenantSettings = pgTable('tenant_settings', {
   languages: jsonb('languages').$type<string[]>().notNull().default(['en']),
 
   /** Whether the agent may write to the HRMS at all, and with what. */
+  /**
+   * Where attendance comes from: 'csv' (uploaded files) or 'hrms' (a connected
+   * HRMS). With an HRMS the agent offers to apply leave and regularisation itself.
+   */
+  attendanceSource: text('attendance_source').$type<'csv' | 'hrms'>().notNull().default('csv'),
   actionsEnabled: boolean('actions_enabled').notNull().default(false),
   allowedActions: jsonb('allowed_actions').$type<string[]>().notNull().default([]),
   allowedLeaveTypes: jsonb('allowed_leave_types').$type<string[]>().notNull().default([]),

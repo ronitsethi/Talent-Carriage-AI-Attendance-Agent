@@ -6,6 +6,7 @@ import { MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings';
 import { env } from '@/lib/env';
 import { timed } from '@/lib/timing';
 import { assertBudget, BudgetExhausted, chargeBudget, type AiBudget } from '@/lib/models/budget';
+import { noteModelCost } from '@/lib/costs/record';
 import { readPdf } from './ocr';
 
 /**
@@ -36,7 +37,13 @@ const OPENAI = (env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/+
  */
 export const RELEVANCE_FLOOR = 0.12;
 
-export async function openai(path: string, body: { model: string; [key: string]: unknown }, budget?: AiBudget): Promise<Record<string, unknown>> {
+export async function openai(
+  path: string,
+  body: { model: string; [key: string]: unknown },
+  budget?: AiBudget,
+  /** What it is for, on the cost line of the call or message it is part of. */
+  purpose = path === '/embeddings' ? 'Guideline search (embeddings)' : 'AI answer',
+): Promise<Record<string, unknown>> {
   const label = path === '/embeddings' ? 'embed' : 'answer_model';
   const { response, json } = await timed(label, async () => {
     const response = await fetch(`${OPENAI}${path}`, {
@@ -48,14 +55,35 @@ export async function openai(path: string, body: { model: string; [key: string]:
     return { response, json: (await response.json()) as Record<string, unknown> };
   });
   if (!response.ok) throw new Error(JSON.stringify((json as { error?: unknown }).error ?? json).slice(0, 300));
+  const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  noteModelCost('openai', body.model, { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }, purpose);
   if (budget) {
-    const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
     // Recorded without waiting: on a call the answer is what matters next.
     void chargeBudget(budget, body.model, { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }).catch(
       (error) => console.error('[budget] could not record the cost:', (error as Error).message),
     );
   }
   return json;
+}
+
+let warmedAt = 0;
+
+/**
+ * Opens the connections to the model while a call is still on its greeting.
+ *
+ * The first answer of a call took over a second longer than the rest: it was
+ * the first request in a while, so it waited on a new connection to the model,
+ * and its guideline search on a new one for embeddings. A one-token request to
+ * each, sent the moment the call opens, has them ready by the first question.
+ * Not charged to any allowance - it costs next to nothing - and sent at most
+ * once every half minute, however many calls open at once.
+ */
+export function warmModel(): void {
+  if (!env.OPENAI_API_KEY || Date.now() - warmedAt < 30_000) return;
+  warmedAt = Date.now();
+  const quietly = (error: Error) => console.warn('[knowledge] warming the model failed:', error.message);
+  void openai('/embeddings', { model: EMBED_MODEL, input: 'hello' }, undefined, 'Warming up the connection').catch(quietly);
+  void openai('/chat/completions', { model: ANSWER_MODEL, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }, undefined, 'Warming up the connection').catch(quietly);
 }
 
 /**
@@ -383,7 +411,7 @@ export async function answerQuestion(
   const prepared = await prepareAnswer(tx, tenantId, question, opts);
   if ('ready' in prepared) return prepared.ready;
 
-  const json = await openai('/chat/completions', prepared.request, opts.budget);
+  const json = await openai('/chat/completions', prepared.request, opts.budget, 'Guideline answer');
   const choices = json.choices as { message?: { content?: string } }[] | undefined;
   return readReply(choices?.[0]?.message?.content, prepared.fallback);
 }
@@ -519,6 +547,7 @@ export async function streamAnswer(
     }
   });
 
+  noteModelCost('openai', prepared.request.model, { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }, 'Guideline answer');
   if (opts.budget) {
     void chargeBudget(opts.budget, prepared.request.model, {
       inputTokens: usage?.prompt_tokens,

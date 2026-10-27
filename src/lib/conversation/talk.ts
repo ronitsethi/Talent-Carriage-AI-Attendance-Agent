@@ -4,15 +4,20 @@ import { calls, cases, employees, messages } from '@/db/schema';
 import { env } from '@/lib/env';
 import { today } from '@/lib/dates';
 import { assertBudget, BudgetExhausted, chargeBudget } from '@/lib/models/budget';
+import { noteModelCost } from '@/lib/costs/record';
 import { attendanceSummary, findPassages, openai, RELEVANCE_FLOOR, ReplyExtractor, streamChat, type Passage } from '@/lib/knowledge';
 import { halfOfDay, MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings';
 import { timed } from '@/lib/timing';
 import { agentGender } from '@/lib/voice/voices';
 import { recordFollowUpChoice } from './follow-up-state';
 import { dateLabel, formatDate, OPTIONS } from './flow';
-import { instructionFor, OUTCOME_CODES, OUTCOMES, outcomeGuide, type LeaveChoice, type OutcomeCode } from './outcomes';
+import { instructionFor, OUTCOME_CODES, OUTCOMES, outcomeGuide, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
 import { recordAnswer, UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from './engine';
 import { spokenDate } from './voice-script';
+import { agentCanApply, leaveTypesFor, needsApplication, submitApplication, type ApplyContext } from './apply';
+import { managerFirstName } from '@/lib/approvals';
+import { APPROVAL_CALL_PURPOSES, approvalOpening, approvalTurn, type ApprovalCallPurpose } from '@/lib/voice/approval-calls';
+import type { VoiceContext } from '@/lib/voice/session';
 
 /**
  * The talking call, as a conversation rather than a script.
@@ -51,6 +56,10 @@ type Verdict = {
   action: Action;
   outcome: OutcomeCode | 'none';
   leave_choice: LeaveChoice | 'not_said';
+  /** Where an application stands - see APPLYING. */
+  application: ApplicationStage | 'not_said';
+  /** With an HRMS: the leave type they chose for the agent to apply. */
+  leave_type: string | null;
   follow_up: 'done' | 'not_done' | 'none';
   handover_reason: string | null;
   note: string | null;
@@ -137,6 +146,7 @@ export async function onlyPleasantries(said: string): Promise<boolean | null> {
         max_tokens: 2,
       },
       'call',
+      'Small-talk check',
     );
     const answer = (json.choices as { message?: { content?: string } }[] | undefined)?.[0]?.message?.content ?? '';
     return /^\s*yes/i.test(answer) ? true : /^\s*no/i.test(answer) ? false : null;
@@ -219,6 +229,17 @@ RECORDING
 - For an absence, ask what happened if they have not said, and ask whether they will apply leave or take it as Loss of
   Pay. Do not push either way.
 
+APPLYING (outcomes marked "applied for", and an absence where they choose leave)
+- Once you know the outcome, ask the one question in APPLY QUESTION below, unless they have already answered it. Put
+  their answer in application: "not_applied", "applied", or "apply_for_me" (the last only when APPLY QUESTION offers it).
+  For "apply_for_me" with leave, also ask which leave type from the list given, and put it in leave_type.
+- The outcome is only written down once application is known: keep outcome set, and application "not_said", until then.
+- Then tell them, in your own words: not_applied - what to do (the line above, keeping its facts) and that their manager
+  has been told so they can approve it once it is applied; applied - that you have asked their manager to approve it;
+  apply_for_me - that you have sent it to their manager, and will apply it once they approve.
+- For on_leave outcomes, their answer to "have you applied it yet" is the outcome itself: leave_not_applied or
+  leave_pending_approval; set application to match ("not_applied", "applied", or "apply_for_me" for leave_not_applied).
+
 REMINDER CALLS
 On a reminder call, ask whether they have done what they were told last time. Set follow_up "done" or "not_done"
 once they say. If not done, remind them kindly of what to do. Then the next date, if any.
@@ -279,7 +300,7 @@ const SCHEMA = {
       additionalProperties: false,
       // The reply comes second, straight after its language, so it can be
       // spoken while the verdict after it is still being written.
-      required: ['reply_language', 'reply', 'action', 'outcome', 'leave_choice', 'follow_up', 'handover_reason', 'note'],
+      required: ['reply_language', 'reply', 'action', 'outcome', 'leave_choice', 'application', 'leave_type', 'follow_up', 'handover_reason', 'note'],
       properties: {
         reply_language: {
           type: 'string',
@@ -291,6 +312,8 @@ const SCHEMA = {
         action: { type: 'string', enum: ['continue', 'handover', 'end'] },
         outcome: { type: 'string', enum: [...OUTCOME_CODES, 'none'] },
         leave_choice: { type: 'string', enum: ['leave', 'loss_of_pay', 'not_said'] },
+        application: { type: 'string', enum: ['not_applied', 'applied', 'apply_for_me', 'not_said'] },
+        leave_type: { type: ['string', 'null'] },
         follow_up: { type: 'string', enum: ['done', 'not_done', 'none'] },
         handover_reason: { type: ['string', 'null'] },
         note: { type: ['string', 'null'] },
@@ -397,7 +420,7 @@ const spokenFor = (row: { attDate: string; meaning: string }) =>
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-function addDays(iso: string, days: number): string {
+export function addDays(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
@@ -417,6 +440,8 @@ type Situation = {
   grounding: Grounding | null;
   /** On WhatsApp: where they are in the menus, if part-way through. */
   menu?: string | null;
+  /** Whether the agent can apply things itself, and the leave types it could apply. */
+  applying?: { agent: boolean; leaveTypes: string[] };
 };
 
 function describe(ctx: TalkContext, s: Situation): string {
@@ -472,6 +497,14 @@ function describe(ctx: TalkContext, s: Situation): string {
       );
     }
     lines.push(`FACTS FOR WHAT THEY ARE TOLD: date "${dateOf(s.caseRow)}", deadline "${deadline}", manager "${s.manager ?? 'your manager'}"`);
+    lines.push(
+      chat
+        ? 'APPLY QUESTION: never ask it in a chat - it is asked with buttons once the outcome is set. Set application only if they have already said where it stands.'
+        : s.applying?.agent
+        ? `APPLY QUESTION: whether you should apply it for them in the H R M S ("apply_for_me"), or they will do it themselves ("not_applied"), or it is already applied ("applied").` +
+            (s.applying.leaveTypes.length ? ` Leave types they can choose: ${s.applying.leaveTypes.join(', ')}.` : '')
+        : 'APPLY QUESTION: whether they have already applied it and it is waiting for approval ("applied"), or not yet ("not_applied").',
+    );
   }
 
   if (s.grounding?.passages.length) {
@@ -533,6 +566,15 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
   const { employee, call, mode } = args;
   const caseRow = args.caseRow;
 
+  // A call about a manager's approval asks one fixed question - see approval-calls.ts.
+  if (call && APPROVAL_CALL_PURPOSES.includes(call.purpose as ApprovalCallPurpose)) {
+    const voice = ctx as unknown as VoiceContext;
+    const turn = args.said === null ? await approvalOpening(voice, call) : await approvalTurn(voice, call, { speech: args.said });
+    onEvent({ type: 'lang', language: 'en-IN' });
+    onEvent({ type: 'text', text: [turn.intro, turn.speak].filter(Boolean).join(' ') });
+    return { done: turn.done, nextCaseId: turn.nextCaseId, language: 'en-IN' };
+  }
+
   // What the employee missed is written down before what they said in reply,
   // so the model knows not to treat an unheard question as asked.
   const transcript = call && args.heard != null ? await markHeard(ctx.tx, call, args.heard) : (call?.transcript ?? []);
@@ -565,6 +607,12 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
       ? Promise.resolve(null)
       : ((args.preparedKey ? takePrepared(args.preparedKey) : null) ?? ground(ctx.tx, ctx.tenantId, employee.id, args.said)),
   ]);
+  // What the agent may offer at the apply step: to apply it itself, with an HRMS - and which leave.
+  const agent = mode === 'first_contact' && agentCanApply(ctx as ApplyContext);
+  const applying = {
+    agent,
+    leaveTypes: agent ? (await leaveTypesFor(ctx as ApplyContext, employee)).map((t) => `${t.type} (${t.days} days left)`) : [],
+  };
 
   const request = {
     model: env.OPENAI_MODEL,
@@ -572,7 +620,7 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
       { role: 'system', content: SYSTEM },
       {
         role: 'user',
-        content: describe(ctx, { mode, employee, caseRow, upcoming, manager, history, said: args.said, grounding }),
+        content: describe(ctx, { mode, employee, caseRow, upcoming, manager, history, said: args.said, grounding, applying }),
       },
     ],
     temperature: 0.3,
@@ -601,6 +649,7 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
       }
     });
     raw = result.raw;
+    noteModelCost('openai', request.model, { inputTokens: result.usage?.prompt_tokens, outputTokens: result.usage?.completion_tokens }, 'Conversation reply');
     void chargeBudget(budgetOf(mode), request.model, {
       inputTokens: result.usage?.prompt_tokens,
       outputTokens: result.usage?.completion_tokens,
@@ -640,6 +689,8 @@ export type ChatVerdict = {
   reply: string;
   outcome: OutcomeCode | null;
   leaveChoice: LeaveChoice | null;
+  /** Where an application stands, when they said it unasked ("I've already applied it"). */
+  application: ApplicationStage | null;
   note: string | null;
   action: Action;
   handoverReason: string | null;
@@ -704,6 +755,7 @@ export async function chatTurn(
 
   try {
     const result = await (args.model ?? streamChat)(request, () => {});
+    noteModelCost('openai', request.model, { inputTokens: result.usage?.prompt_tokens, outputTokens: result.usage?.completion_tokens }, 'Chat reply');
     void chargeBudget('whatsapp', request.model, {
       inputTokens: result.usage?.prompt_tokens,
       outputTokens: result.usage?.completion_tokens,
@@ -715,6 +767,7 @@ export async function chatTurn(
       reply: verdict.reply.trim(),
       outcome,
       leaveChoice: verdict.leave_choice === 'not_said' ? null : verdict.leave_choice,
+      application: verdict.application === 'not_said' ? null : verdict.application,
       note: verdict.note,
       action: verdict.action,
       handoverReason: verdict.handover_reason,
@@ -744,11 +797,28 @@ async function apply(
   // carry the last answer with it.
   let next = caseRow?.id ?? null;
   if (caseRow && mode === 'first_contact' && verdict.outcome !== 'none') {
-    const outcome = OUTCOMES[verdict.outcome];
+    const code = verdict.outcome;
+    const outcome = OUTCOMES[code];
     const choice = verdict.leave_choice === 'not_said' ? null : verdict.leave_choice;
-    // An absence is not settled until they have said leave or Loss of Pay.
-    if (outcome && !(outcome.asksLeaveOrLossOfPay && !choice)) {
-      await recordOutcome(ctx, caseRow, args.employee, verdict.outcome, choice, verdict.note, manager);
+    const stage = verdict.application === 'not_said' ? outcome?.application?.preset ?? null : verdict.application;
+    // An absence is not settled until they have said leave or Loss of Pay, nor
+    // anything applied for until they have said where it stands.
+    const waiting = (outcome?.asksLeaveOrLossOfPay && !choice) || (needsApplication(code, choice) && !stage);
+    if (outcome && !waiting) {
+      await recordOutcome(ctx, caseRow, args.employee, code, choice, verdict.note, manager);
+      if (needsApplication(code, choice) && stage) {
+        const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseRow.id) })) ?? caseRow;
+        const facts = { date: spokenFor(caseRow), deadline: spokenDate(addDays(today(ctx.settings.timezone), ctx.settings.followUpAfterDays)), manager };
+        await submitApplication(ctx as ApplyContext, fresh, args.employee, {
+          code,
+          choice,
+          stage,
+          leaveType: verdict.leave_type,
+          note: verdict.note,
+          via: 'call',
+          facts,
+        });
+      }
       next = upcoming[0]?.id ?? caseRow.id;
     }
   }
@@ -847,13 +917,9 @@ async function remainingDates(ctx: TalkContext, employeeId: string, mode: TalkMo
     .orderBy(asc(cases.attDate));
 }
 
+/** The manager's first name: from their mobile in the file, else their code - see `approvals.ts`. */
 async function managerName(tx: Db, employee: EmployeeRow): Promise<string | null> {
-  if (!employee.managerEmployeeId) return null;
-  const manager = await tx.query.employees.findFirst({
-    where: eq(employees.id, employee.managerEmployeeId),
-    columns: { fullName: true },
-  });
-  return manager?.fullName.split(/\s+/)[0] ?? null;
+  return managerFirstName(tx, employee.tenantId, employee);
 }
 
 async function appendLine(tx: Db, callId: string, role: 'agent' | 'employee', text: string) {
