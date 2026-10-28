@@ -50,11 +50,11 @@ _Populated from the codebase on 2026-10-13. Edit only the section that changed._
 
 **Other folders**
 - `demo/` is an earlier, separate Express prototype that covers only the first WhatsApp step. It is not part of the platform.
-- `docs/` holds `scope.html`, `azure-cost-estimate.html` and `azure-capacity-and-cost.pdf` (fixed Azure cost, current capacity and the upgrade steps by company size, 2026-10-27).
+- `docs/` holds `scope.html`, `azure-cost-estimate.html` `azure-capacity-and-cost.pdf` (fixed Azure cost, current capacity and the upgrade steps by company size, 2026-10-27) and `plivo-livekit-costs.pdf` (Plivo and LiveKit cost, fixed vs per-use, and limits at the same steps, 2026-10-28).
 
 ## Database
 
-Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0020` are in `src/db/migrations/` (0011 soft-deleted employees, 0012–0013 queries, recordings and call feedback, 0014–0017 COE teams and tickets, 0018–0019 manager approvals, 0020 cost lines). `src/db/rls.sql` holds the RLS policies and triggers and is re-applied on every migrate.
+Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0021` are in `src/db/migrations/` (0011 soft-deleted employees, 0012–0013 queries, recordings and call feedback, 0014–0017 COE teams and tickets, 0018–0019 manager approvals, 0020 cost lines, 0021 a one-off correction of Plivo phone-line amounts). `src/db/rls.sql` holds the RLS policies and triggers and is re-applied on every migrate.
 
 **Tenant isolation (RLS)**
 - The app connects as `tc_app`: not a superuser, no `BYPASSRLS`. Migrations use `MIGRATION_DATABASE_URL`, the owner connection.
@@ -266,7 +266,7 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 
 Every case and query page ends with one cost box, split by service (`src/lib/costs/`, `src/components/cost-box.tsx`).
 - **Recording:** places where work starts open a cost scope (`withCostScope` in `record.ts`): the WhatsApp webhook per inbound message, `withCallContext` for keypad call steps, `/api/agent/turn`, the keypad question routes, summaries and the ticket check. Model use is noted in the gateway, the knowledge `openai()` helper and the streaming reply points; Sarvam clips in `say.ts`. A call's own lines are written when it ends (`calls.ts`). Nothing outside a scope is written. **A new model call site must call `noteModelCost`, and a new entry point must open a scope.**
-- **Priced from:** list prices in `src/lib/costs/prices.ts` (checked 2026-10-27). Azure OpenAI from tokens, Sarvam STT ₹30/hour and TTS ₹30 per 10K characters, Plivo ₹0.38/min in 30s pulses plus ₹1.70 per spoken keypad answer, LiveKit by `LIVEKIT_PLAN` (Build = ₹0). Plivo's own charge replaces the estimate where available: `TotalCost` on keypad hangups, and the `plivo_charge` job for SIP-trunk calls. WhatsApp fees are worked out when the page is read, from each message's kind and Meta's receipt (`messages.pricing`), at Meta's India rate card (₹0.115 utility and service, ₹0.8631 marketing). Dollars are shown at `USD_INR_RATE` (88).
+- **Priced from:** list prices in `src/lib/costs/prices.ts` (checked 2026-10-27). Azure OpenAI from tokens, Sarvam STT ₹30/hour and TTS ₹30 per 10K characters, Plivo ₹0.38/min in 30s pulses plus ₹1.70 per spoken keypad answer, LiveKit by `LIVEKIT_PLAN` (Build = ₹0). Plivo's own figures replace the estimate where available: `TotalCost`/`BillDuration` on keypad hangups, and the `plivo_charge` job for SIP-trunk calls. Plivo's API reports amounts in US dollars whatever the account is billed in, so on a rupee account (`PLIVO_BILLING_CURRENCY=INR`) the line is the seconds Plivo billed × ₹0.38/min, which is what its console shows; the dollar amount is kept in the line's detail (`plivoUsd`). WhatsApp fees are worked out when the page is read, from each message's kind and Meta's receipt (`messages.pricing`), at Meta's India rate card (₹0.115 utility and service, ₹0.8631 marketing). Dollars are shown at `USD_INR_RATE` (88).
 - Costs are only recorded from 2026-10-27 13:30 IST; older conversations show WhatsApp fees only.
 
 `capabilities()` in `env.ts` reports what is live. It is shown on the dashboard, `/admin` and `/api/health`.
@@ -310,7 +310,7 @@ Every case and query page ends with one cost box, split by service (`src/lib/cos
 - **Per-process memory state:** TTS clips, fake channels and the mock HRMS live in memory, so they are not shared across instances.
 - **Unwired actions:** `runCheck` and `previewCheck` are not referenced by any page; the dashboard uses `contactSelected`.
 - **Summaries are rewritten on page view:** a case or query summary is written again whenever its page is opened after something new was said, which costs a model request each time.
-- **Plivo charge unconfirmed:** `TotalCost` on the keypad hangup callback, and the field names of the SIP trunk CDR API, were taken from Plivo's docs and have not yet been seen on a live call; without them the phone line stays an estimate.
+- **Plivo charge:** the SIP trunk CDR lookup was confirmed on live calls on 2026-10-28 (its amounts are in USD). `TotalCost` on the keypad hangup callback has not yet been seen on a live call; without it the phone line stays an estimate.
 - **Tests:** two voice tests need an AI provider key and fail without one (`calls.test.ts` "understands the employee speaking…", `talking-call.test.ts` "…sweeps the backlog"). The job-runner test in `feedback.test.ts` failed once in a full run and passed on its own, so it may be flaky. The mapping tests use `tests/fixtures/timeoffice-register-august-2026.xlsx`, so editing the demo file does not break them.
 - **Legacy code:** the `approval_outcome` call purpose and the `/api/voice/inbound` keypad line for calls to us are still in the code, but production sends incoming calls to LiveKit and decisions only go on WhatsApp.
 - **Capacity (checked 2026-10-27):** the live setup handles about 2–3 calls at once (voice worker: 0.5 vCPU / 1 GiB, max 1 replica) and roughly 500 WhatsApp conversations an hour (gpt-4.1-mini quota: 200K tokens and 200 requests per minute).

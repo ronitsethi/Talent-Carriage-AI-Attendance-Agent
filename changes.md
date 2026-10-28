@@ -91,3 +91,15 @@ Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` follow
 - **Why:** The document still described the platform as of migration 0010.
 - **Where:** `CURRENT_STATE.md`.
 - **Technical details:** No code was changed.
+
+### 2026-10-28 — Add the Plivo and LiveKit cost PDF
+- **What changed:** Added `docs/plivo-livekit-costs.pdf`, a 4-page document on calling costs. It covers how much of the Plivo and LiveKit bills is fixed and how much is per use, the prices used, the cost per call (~INR 2.5) and per employee (~INR 3 a month), the cost at each scaling step (Today ~INR 6,100, Step 1 ~INR 33,700, Step 2 ~INR 3 lakh, Step 3 ~INR 27.8 lakh a month), the Plivo and LiveKit limits to raise at each step, and ways to cut the cost.
+- **Why:** The user asked for a separate document on Plivo and LiveKit across the same steps as the Azure PDF, and whether they can be counted as fixed charges.
+- **Where:** `docs/plivo-livekit-costs.pdf`, `CURRENT_STATE.md` (Other folders).
+- **Technical details:** Built with reportlab from a throwaway script (not committed). Prices come from livekit.com/pricing and plivo.com/voice/pricing/in, checked 27 Oct 2026; the defaults for Plivo's calls per second and calls at once come from Plivo's docs. The cost model is: 5% of employees called per working day, 22 days a month, ~3.5 billed minutes per call on Plivo and ~4 on LiveKit. It flags as unconfirmed whether LiveKit charges agent session minutes for a self-hosted agent (+~INR 3.5 per call if it does).
+
+### 2026-10-28 — Show Plivo's phone charge in rupees
+- **What changed:** The Plivo phone line in the cost box now matches Plivo's console: the seconds Plivo billed at ₹0.38 a minute. Lines already saved were corrected.
+- **Why:** The user saw ₹0.0047 for a call the Plivo console shows as ₹0.38, and ₹0.017 for one shown as ₹1.33. Plivo's API gives amounts in US dollars even for a rupee account, and they had been stored as rupees.
+- **Where:** `src/lib/costs/calls.ts` (`plivoCharged`), `src/lib/costs/plivo.ts`, `src/app/api/voice/status/route.ts`, new migration `0021_plivo_rupees.sql`, `tests/costs.test.ts`, `CURRENT_STATE.md`.
+- **Technical details:** Converting the dollar amount at ₹88/$ would have given ₹0.41 and ₹1.50, because Plivo uses its own exchange rate; billed seconds × the rupee rate gives the console's figures exactly. The dollar amount is kept as `detail.plivoUsd`. With `PLIVO_BILLING_CURRENCY=USD` the dollar amount is used as it is. Migration 0021 recomputes saved Plivo lines that carry Plivo's own figure (not estimates) from their billed seconds, sets `app.bypass_rls` for the update because `cost_lines` is under forced RLS, and skips lines already corrected. Tested on a local line (₹0.017 → ₹1.33) and with the two calls from the user's console in `tests/costs.test.ts`.

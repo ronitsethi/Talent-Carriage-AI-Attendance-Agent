@@ -3,7 +3,6 @@ import { closeAnsweredCall, recordNoAnswer } from '@/lib/voice/session';
 import { withCallContext } from '@/lib/voice/resolve';
 import { eq } from 'drizzle-orm';
 import { calls } from '@/db/schema';
-import { env } from '@/lib/env';
 import { recordCallCosts, spokenAnswers } from '@/lib/costs/calls';
 
 /**
@@ -34,7 +33,7 @@ export async function POST(request: Request) {
         await recordCallCosts(ctx.tx, ctx.tenantId, { callId, caseId: call.caseId }, {
           provider: 'plivo',
           durationSeconds: duration,
-          plivoCharge: Number.isFinite(totalCost) ? { amount: totalCost, currency: env.PLIVO_BILLING_CURRENCY, billedSeconds: billed } : null,
+          plivoCharge: Number.isFinite(totalCost) ? { usdAmount: totalCost, billedSeconds: billed } : null,
           spokenAnswers: spokenAnswers(call.transcript),
         });
       }

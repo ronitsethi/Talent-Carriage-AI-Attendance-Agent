@@ -11,6 +11,12 @@ Format:
 - **Impact:** e.g. breaking API change, migration required, new env var
 ```
 
+## 2026-10-28 13:36
+- **Files:** src/lib/costs/calls.ts, src/lib/costs/plivo.ts, src/app/api/voice/status/route.ts, src/db/migrations/0021_plivo_rupees.sql, src/db/migrations/meta/_journal.json
+- **Change:** Plivo phone lines are priced as the seconds Plivo billed × ₹0.38/min on a rupee account, instead of Plivo's API amount (which is in US dollars) stored as rupees. Migration 0021 corrects the lines already saved.
+- **Why:** The cost box showed ₹0.0047 for a call Plivo bills at ₹0.38.
+- **Impact:** Migration 0021 required (data only: updates `cost_lines`; no schema change). `PLIVO_BILLING_CURRENCY` now decides how Plivo's figures are read.
+
 ## 2026-10-28 12:25
 - **Files:** .gitignore
 - **Change:** Ignore only the top-level `/recordings/` folder, and `__pycache__/`.

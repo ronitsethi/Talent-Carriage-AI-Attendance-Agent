@@ -3,6 +3,7 @@ import { withTenant } from '@/db';
 import { costLines } from '@/db/schema';
 import { env } from '@/lib/env';
 import { enqueue } from '@/lib/jobs/queue';
+import { plivoCharged } from './calls';
 
 /**
  * Plivo's own charge for a call whose callback does not carry it.
@@ -107,11 +108,9 @@ export async function applyPlivoCharge(payload: ChargeLookup & { attempt?: numbe
     tx
       .update(costLines)
       .set({
-        amountMicros: Math.round(charge.amount * 1_000_000),
-        currency: env.PLIVO_BILLING_CURRENCY,
+        ...plivoCharged(charge.billedSeconds, charge.amount, `Plivo call record ${charge.uuid}`),
         quantity: charge.billedSeconds,
         estimated: false,
-        detail: { source: `Plivo call record ${charge.uuid}` },
       })
       .where(and(eq(costLines.tenantId, payload.tenantId), like(costLines.sourceKey, `${payload.key}:%`), eq(costLines.provider, 'Plivo'), like(costLines.item, 'Phone%')))
       .returning({ id: costLines.id }),

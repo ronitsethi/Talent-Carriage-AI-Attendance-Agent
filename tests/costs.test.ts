@@ -24,15 +24,17 @@ afterEach(async () => {
 const rupees = (micros: number | null) => (micros === null ? null : micros / 1_000_000);
 
 describe('a call\'s own costs', () => {
-  it('takes Plivo\'s own charge for a keypad call, and adds the answers it had to recognise', () => {
+  it('charges a keypad call the seconds Plivo billed at the rupee rate, not its dollar amount, and adds the answers it recognised', () => {
+    // Aryan's call on 27 Oct: Plivo's console shows 60s billed, ₹0.38; its API says $0.0047.
     const lines = callCostLines({
       provider: 'plivo',
-      durationSeconds: 75,
-      plivoCharge: { amount: 0.57, currency: 'INR', billedSeconds: 90 },
+      durationSeconds: 44,
+      plivoCharge: { usdAmount: 0.0047, billedSeconds: 60 },
       spokenAnswers: 2,
     });
+    expect(lines[0]!.detail).toMatchObject({ plivoUsd: 0.0047 });
     expect(lines.map((l) => [l.item, rupees(l.amountMicros), l.estimated ?? true])).toEqual([
-      ['Phone call', 0.57, false],
+      ['Phone call', 0.38, false],
       ['Speech recognition (answers spoken, not pressed)', 3.4, true],
       ['Recording', 0, true],
     ]);
@@ -195,7 +197,8 @@ describe("Plivo's own charge for a talking call", () => {
         JSON.stringify({
           objects: [
             { call_uuid: 'other', initiation_time: '2026-10-26 09:00:00', total_amount: '0.95', bill_duration: 150 },
-            { call_uuid: 'ours', initiation_time: '2026-10-26 13:45:04', total_amount: '0.57', bill_duration: 90 },
+            // Jeet's call on 28 Oct: the console shows 210s billed, ₹1.33; the API gives dollars.
+            { call_uuid: 'ours', initiation_time: '2026-10-26 13:45:04', total_amount: '0.017', bill_duration: 210 },
           ],
         }),
         { status: 200 },
@@ -205,7 +208,7 @@ describe("Plivo's own charge for a talking call", () => {
       const result = await applyPlivoCharge({
         tenantId: scenario.tenantId, key: `call:${callId}`, via: 'trunk', number: '919718290560', direction: 'outbound', startedAt: started.toISOString(),
       });
-      expect(result).toMatchObject({ found: true, amount: 0.57, lines: 1 });
+      expect(result).toMatchObject({ found: true, amount: 0.017, lines: 1 });
       expect(asked[0]).toContain('/Zentrunk/Call/');
       expect(asked[0]).toContain('to_number=919718290560');
     } finally {
@@ -213,6 +216,6 @@ describe("Plivo's own charge for a talking call", () => {
       Object.assign(env, { PLIVO_AUTH_ID: undefined, PLIVO_AUTH_TOKEN: undefined });
     }
     const box = await withTenant(scenario.tenantId, (tx) => caseCostBox(tx, '00000000-0000-4000-8000-0000000000ff', [], [callId]));
-    expect(box.groups.find((g) => g.title === 'Phone line (Plivo)')!.rows[0]).toMatchObject({ inr: 0.57, estimated: false, note: 'Plivo call record ours' });
+    expect(box.groups.find((g) => g.title === 'Phone line (Plivo)')!.rows[0]).toMatchObject({ inr: 1.33, estimated: false, note: 'Plivo call record ours: 210s billed at ₹0.38/min' });
   });
 });

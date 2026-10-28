@@ -28,14 +28,32 @@ export type CallReport = {
   /** 'plivo' for the keypad line, 'livekit' for the talking agent. */
   provider: string;
   durationSeconds: number;
-  /** A keypad call's charge as Plivo's hangup callback gave it, in the account's currency. */
-  plivoCharge?: { amount: number; currency: 'INR' | 'USD'; billedSeconds: number } | null;
+  /** A keypad call's charge as Plivo's hangup callback gave it: the seconds billed, and its amount in dollars. */
+  plivoCharge?: { usdAmount: number; billedSeconds: number } | null;
   /** On the keypad line: answers said rather than pressed, each recognised by Plivo. */
   spokenAnswers?: number;
   worker?: WorkerUsage | null;
 };
 
 const rupees = (amount: number) => Math.round(amount * 1_000_000);
+
+/**
+ * What Plivo charged for a call, from what it reports: the seconds it billed,
+ * and the amount - which its API gives in US dollars whatever the account is
+ * billed in. A rupee account is charged the seconds billed at its rupee rate,
+ * which is the figure the console shows; the dollar amount, converted at
+ * Plivo's own exchange rate, would not match it.
+ */
+export function plivoCharged(billedSeconds: number, usdAmount: number, source: string) {
+  if (env.PLIVO_BILLING_CURRENCY === 'USD') {
+    return { amountMicros: Math.round(usdAmount * 1_000_000), currency: 'USD' as const, detail: { source } };
+  }
+  return {
+    amountMicros: rupees((billedSeconds / 60) * PLIVO.callPerMinute),
+    currency: 'INR' as const,
+    detail: { source: `${source}: ${billedSeconds}s billed at ₹${PLIVO.callPerMinute}/min`, plivoUsd: usdAmount },
+  };
+}
 const dollars = rupees;
 const pulses = (seconds: number) => Math.ceil(seconds / PLIVO.pulseSeconds);
 const minutes = (seconds: number) => Math.ceil(seconds / 60);
@@ -139,10 +157,8 @@ export function callCostLines(report: CallReport): CostLine[] {
           item: 'Phone call',
           quantity: charge.billedSeconds,
           unit: 'seconds',
-          amountMicros: rupees(charge.amount),
-          currency: charge.currency,
+          ...plivoCharged(charge.billedSeconds, charge.usdAmount, 'Plivo hangup callback'),
           estimated: false,
-          detail: { source: 'Plivo hangup callback' },
         }
       : {
           provider: 'Plivo',
