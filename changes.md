@@ -31,3 +31,63 @@ Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` follow
 - **Why:** Deploying the redesign without these would have undone them on the live site.
 - **Where:** `src/app/(app)/admin/page.tsx` (merge conflict resolved), `src/app/globals.css` (`.meter`), `CURRENT_STATE.md` (Database, Routes & Pages, Integrations).
 - **Technical details:** `main`'s card used colour variables the new stylesheet no longer defines (`--border-soft`, `--danger-text`, `--accent`), so its inline-styled bar became `.meter` / `.meter.full` on the brand tokens. Checked with `tsc`, `next build` and `vitest` (100 passed; the same 2 voice tests fail as on untouched code). On a local database with migration 0010 applied, topping up $5 took the WhatsApp allowance from $10.00 to $15.00. CURRENT_STATE.md now records `ai_budgets` / `ai_budget_topups`, `OPENAI_BASE_URL` / gpt-4.1-mini on Azure OpenAI, and `topUpAiBudget`.
+
+### 2026-10-27 — Record the Azure footprint and fixed monthly cost
+- **What changed:** Added an "Azure footprint" table to the Deploy section of CURRENT_STATE.md: every Azure resource the platform runs on, with its size and approximate fixed monthly cost (about $74/month). Created the missing `Backend-changes.md`.
+- **Why:** The user asked for the platform's fixed monthly Azure cost. The state doc did not list the Container Apps voice worker, the container registry, the recordings storage account or the Azure OpenAI deployments.
+- **Where:** `CURRENT_STATE.md`, new `Backend-changes.md`.
+- **Technical details:** The resources were read with `az` (tenant Default Directory, `rg-client-hub`) and priced from the Azure Retail Prices API (Central India, USD list price, 730 h/month). The Cost Management and consumption APIs returned RBACAccessDenied for this login, so these are list-price estimates, not billed amounts. The Container Apps cost subtracts the monthly free grant. It assumes active-rate billing, because the worker averaged about 47 millicores over 7 days, above the idle threshold. No code or infrastructure was changed.
+
+### 2026-10-27 — Record capacity limits in CURRENT_STATE.md
+- **What changed:** Added three open issues: how many calls and chats the current setup handles at once, model calls holding a DB connection, and contacting being serial and done inside the request.
+- **Why:** The user asked how far the platform scales, and these are the limits found in the code and the live Azure settings.
+- **Where:** `CURRENT_STATE.md` (Open Issues).
+- **Technical details:** The limits come from the Azure OpenAI deployment rate limits (`az cognitiveservices account deployment list`), the Postgres `max_connections` setting (50), the container app's size and replica count, and the code paths `src/app/api/webhook/route.ts:82`, `src/app/api/agent/turn/route.ts:279` and `src/app/actions.ts:485`. No code was changed.
+
+### 2026-10-27 — Add the Azure capacity and fixed-cost PDF
+- **What changed:** Added `docs/azure-capacity-and-cost.pdf`, a 5-page document. It covers the current Azure setup and its ~$74/month fixed cost, what that setup can handle (2–3 calls at once, ~500 WhatsApp chats an hour), the peak demand for companies of 100 to 1,000,000 employees, and three upgrade steps. Each step lists the resource changes and its fixed cost: Step 1 ~$310, Step 2 ~$950 and Step 3 ~$4,850 a month. It ends with the limits outside Azure (WhatsApp, Plivo, LiveKit, Sarvam).
+- **Why:** The user asked for a PDF on fixed costs, the resource upgrades at each step, and what the current setup can do.
+- **Where:** `docs/azure-capacity-and-cost.pdf`, `CURRENT_STATE.md` (Other folders).
+- **Technical details:** Built with reportlab from a throwaway script (not committed). Prices come from the Azure Retail Prices API (Central India; South India for Azure OpenAI), at list price, before GST and at 730 h/month. P1v3 and P2v3 are taken as 2× and 4× the P0v3 price, because the price API did not return them. The capacity figures use the assumptions printed in the document (5% of employees a day, a 2-hour peak, ~30K tokens a call, ~25K a chat, ~5 calls per voice-worker vCPU).
+
+### 2026-10-26 — Manager approvals, the new first question and the CSV/HRMS switch
+- **What changed:** The first question is now I didn't come / I was working / I was on leave / Weekly off-Comp off. Every outcome that needs leave, regularisation, On-Duty or comp-off asks where it stands, and the request goes to the employee's manager to approve. Added a Managers page (Contact by, Call style, Mode per manager, and the approvals waiting) and a Settings switch between a CSV upload and a connected HRMS. A manager's rejection closes the case; an approval closes it or, with an HRMS, applies it.
+- **Why:** The user's spec: managers approve only after approving in their own system, the same flow for every apply outcome, and one platform for customers with and without HRMS access.
+- **Where:** `src/lib/approvals.ts`, `src/lib/conversation/apply.ts`, `sheet.ts`, `flow.ts`, `outcomes.ts`, `classify.ts`, `talk.ts`, `engine.ts`, `src/app/(app)/managers/page.tsx`, `settings/page.tsx`, `src/app/actions.ts`, `src/db/schema/actions.ts`, `tenants.ts`, `enums.ts`, migrations `0018_manager_approvals.sql`, `0019_reply_intents.sql`, `scripts/create-ticket-templates.ts`.
+- **Technical details:** The manager is found from the manager mobile column, else the manager code's own mobile, and kept in `managers`. New taps carry `c2:` payloads; the old template's `case:` taps keep their old meaning. Templates `attendance_absent_v2`, `manager_approval_request` and `approval_outcome` were created on Meta; `manager_approval_request` was cut to 4 variables after Meta refused 6 as too many for its length.
+
+### 2026-10-26 — Manager calls and the keypad version of the flow sheet
+- **What changed:** Managers set to Call are rung (press 1 to approve, 2 to reject, or say it), and a missed or undecided call sends the request on WhatsApp. Keypad calls to employees now walk the same flow-sheet menus as WhatsApp.
+- **Why:** The user chose a contact medium per manager, and the keypad had to ask the new questions.
+- **Where:** `src/lib/voice/approval-calls.ts`, `keypad-sheet.ts`, `session.ts`, `src/lib/conversation/voice-script.ts`, `tests/approval-calls.test.ts`, `tests/calls.test.ts`, `tests/talking-call.test.ts`.
+- **Technical details:** The keypad walker reuses `MENUS`/`STEPS` from `sheet.ts` and keeps its place in `case.context.sheet`, so a date half-answered on one channel continues on the other. "Other reason" cannot be typed on a keypad and is noted as such.
+
+### 2026-10-27 — Tell the employee and the manager the decision on WhatsApp only
+- **What changed:** After a manager decides, the employee is always told on WhatsApp, whatever their Contact by, and the manager always gets "X has been told on WhatsApp", also after deciding on a call.
+- **Why:** The user asked for decision notices to go only by WhatsApp.
+- **Where:** `src/lib/approvals.ts`, `scripts/create-ticket-templates.ts`, `tests/approval-calls.test.ts`, `tests/whatsapp-sheet.test.ts`.
+- **Technical details:** The note to the manager is free text right after a tap, else the new `approval_noted` template (one variable). Approval requests that fall back from a call to WhatsApp now record the channel as WhatsApp.
+
+### 2026-10-27 — The cost of every case and query, by service
+- **What changed:** Each case and query page ends with a Costs card: WhatsApp, AI (Azure OpenAI), Speech (Sarvam), Phone line (Plivo) and Talking calls (LiveKit), each with its subtotal and what made it up. Plivo's own charge is used where it reports one. The voice worker (v14) reports each talking call's length and speech usage.
+- **Why:** The user asked for the cost of every call and message, split by service. It went through three layouts on their feedback: inside each transcript, cards under each conversation, then one box per case or query, by service, at the bottom.
+- **Where:** new `src/lib/costs/` (`prices.ts`, `record.ts`, `calls.ts`, `plivo.ts`, `summary.ts`), new `src/components/cost-box.tsx`, `src/lib/models/gateway.ts`, `src/lib/knowledge/index.ts`, `src/lib/conversation/talk.ts`, `summary.ts`, `feedback.ts`, `src/lib/tickets.ts`, `src/lib/voice/say.ts`, `resolve.ts`, `src/app/api/webhook/route.ts`, `api/agent/turn/route.ts`, `api/voice/status|recorded|ask|inbound/route.ts`, `src/lib/channels/meta.ts`, `types.ts`, `src/lib/conversation/engine.ts`, `src/lib/jobs/*`, `src/lib/env.ts`, `src/lib/queries.ts`, the case and query pages, `src/app/globals.css`, `agent/worker.py`, migration `0020_cost_lines.sql`, `tests/costs.test.ts`.
+- **Technical details:** An `AsyncLocalStorage` cost scope ties model use to the call, message, case or query it was for, written on its own connection without waiting. WhatsApp fees come from Meta's receipt (`messages.pricing`) and the India rate card the user downloaded (₹0.115 utility, effective 1 Oct 2026). LiveKit is priced at the Build plan (₹0), Plivo in INR. Costs start from the 27 Oct deploy; older conversations say so.
+
+### 2026-10-27 — Keep the mapping tests off the editable demo file
+- **What changed:** The mapping tests read a copy of the original demo register in `tests/fixtures/` instead of `demo/DEMO_Attendance_data_v1.0.xlsx`.
+- **Why:** The user had edited the demo file down to one test row, which broke four mapping tests.
+- **Where:** `tests/mapping.test.ts`, new `tests/fixtures/timeoffice-register-august-2026.xlsx`.
+- **Technical details:** The fixture is `git show HEAD:demo/DEMO_Attendance_data_v1.0.xlsx`. The edited demo file was left as the user had it and not committed.
+
+### 2026-10-28 — Stop ignoring the recordings route
+- **What changed:** `.gitignore` ignores `/recordings/` (the top-level folder of local recordings) instead of every `recordings/` folder, and ignores `__pycache__/`.
+- **Why:** The old rule also hid `src/app/api/recordings/`, so the route that serves recordings was never committed.
+- **Where:** `.gitignore`.
+- **Technical details:** None.
+
+### 2026-10-28 — Bring CURRENT_STATE.md up to date
+- **What changed:** Recorded migrations 0011–0020 and the queries, COE/ticket, manager and cost tables; the new routes, jobs, pages, env settings and templates; two new sections, Conversation flow and approvals, and Costs; and four open issues (summaries rewritten on view, Plivo charge unconfirmed live, test caveats, legacy code).
+- **Why:** The document still described the platform as of migration 0010.
+- **Where:** `CURRENT_STATE.md`.
+- **Technical details:** No code was changed.

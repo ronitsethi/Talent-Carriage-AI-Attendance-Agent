@@ -35,13 +35,26 @@ _Populated from the codebase on 2026-10-13. Edit only the section that changed._
 - The database is an Azure PostgreSQL Flexible Server shared with Client Hub (`tc-clienthub-pg-99772`). This app has its own database (`attendance`) and its own `tc_app` role, both set up by `scripts/azure-db-setup.ts`.
 - The in-process worker relies on App Service "Always On".
 
+**Azure footprint** (subscription "Azure subscription 1", tenant Default Directory, resource group `rg-client-hub`; checked 2026-10-27). Fixed cost is about **$74/month** at Central India list price, before tax. Azure OpenAI is pay-per-token, so it is not part of that figure.
+
+| Resource | What it is | Approx. fixed $/month |
+|---|---|---|
+| `tc-attendance-plan` / `tc-attendance-99772` | App Service plan B1 Linux, 1 instance | 13.1 |
+| `tc-clienthub-pg-99772` | PostgreSQL Flexible Server B1ms, 32 GB P4, 7-day backups, no HA. Shared with Client Hub | 22.1 |
+| `tc-attendance-env` / `tc-attendance-worker` | Container Apps (Consumption), LiveKit voice worker, 0.5 vCPU / 1 GiB, min = max = 1 replica | ~34 (~10 if idle-billed) |
+| `tcattendanceacr99772` | Container Registry Basic (~2.2 GB of the 10 GB included) | 5.1 |
+| `tcattendancerec99772` | Storage account StorageV2 Hot LRS, call recordings (~27 MB) | <0.1 |
+| `tc-attendance-aoai` (South India) | Azure OpenAI S0: `gpt-4.1-mini`, `text-embedding-3-small`, `gpt-4o-transcribe` (GlobalStandard) | usage only |
+
+`aryanjain-9962-resource` (AI Services, West US 3) and the Client Hub web app on the F1 plan also sit in this resource group. They are not part of this platform.
+
 **Other folders**
 - `demo/` is an earlier, separate Express prototype that covers only the first WhatsApp step. It is not part of the platform.
-- `docs/` holds `scope.html` and `azure-cost-estimate.html`.
+- `docs/` holds `scope.html`, `azure-cost-estimate.html` and `azure-capacity-and-cost.pdf` (fixed Azure cost, current capacity and the upgrade steps by company size, 2026-10-27).
 
 ## Database
 
-Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0010` are in `src/db/migrations/`. `src/db/rls.sql` holds the RLS policies and triggers and is re-applied on every migrate.
+Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0020` are in `src/db/migrations/` (0011 soft-deleted employees, 0012–0013 queries, recordings and call feedback, 0014–0017 COE teams and tickets, 0018–0019 manager approvals, 0020 cost lines). `src/db/rls.sql` holds the RLS policies and triggers and is re-applied on every migrate.
 
 **Tenant isolation (RLS)**
 - The app connects as `tc_app`: not a superuser, no `BYPASSRLS`. Migrations use `MIGRATION_DATABASE_URL`, the owner connection.
@@ -60,11 +73,14 @@ Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0010` are in 
 | People | `employees`, `employee_history`, `leave_balances`, `shifts`, `calendars`, `calendar_days` | Employees are unique on `(tenant_id, emp_code)`; `mobile_e164` is the WhatsApp id. Per-employee settings: `preferred_channel` (whatsapp/voice), `follow_up_channel`, `operating_mode` (manual/automatic/null), `call_mode` (keypad/agent/null), and opt-out flags. |
 | Data intake | `mapping_profiles`, `code_mappings`, `unmapped_codes`, `imports`, `attendance_days` | Mapping profiles are versioned (`draft`/`active`/`archived`); a draft keeps the uploaded file (`source_file`, base64) and `detected` analysis. `code_mappings` turns a customer's codes into the canonical `attendance_meaning`. `attendance_days` has PK `(tenant_id, employee_id, att_date)` plus a `revision` counter. |
 | Cases | `cases`, `detection_runs` | One case per `(tenant_id, employee_id, att_date)` (unique). Holds status, reply option/intent, follow-up and call clocks, close/needs-HR reasons, and `context` jsonb. |
-| Messaging | `conversations`, `messages`, `templates` | One conversation per employee and channel, tracking the 24h WhatsApp window and `active_case_id`. Messages are de-duplicated on `provider_message_id`. |
-| HRMS actions | `actions`, `approvals` | `actions` is unique on `(tenant_id, idempotency_key)`; approvals have a timeout and escalation. |
-| Voice | `calls` | `provider`, `purpose` (first_contact/follow_up), `status`, `outcome`, transcript jsonb. |
+| Messaging | `conversations`, `messages`, `templates` | One conversation per employee and channel, tracking the 24h WhatsApp window and `active_case_id`. Messages are de-duplicated on `provider_message_id`. `messages.pricing` (0020) keeps Meta's billing verdict from the delivery receipt; a message to a manager has no `case_id` and names its case in `payload.aboutCaseId`. |
+| Queries | `queries` | Something an employee asked of their own accord: one incoming call, or a WhatsApp chat until it goes quiet for 30 min. Holds the call transcript, recording, summaries, call feedback and the ticket fields. |
+| COE and tickets | `coe_people`, `coe_teams`, `coe_team_members`, `coe_member_clients`, `query_types`, `ticket_messages` | Platform-wide, not per tenant. Query types come from an uploaded sheet; a query that needs one gets a ticket, assigned to the least-loaded COE member for that client. `ticket_messages` logs the WhatsApp notices to them. |
+| Approvals | `actions`, `approvals`, `managers` | `actions` is unique on `(tenant_id, idempotency_key)`; `action_type` adds `apply_on_duty` and `apply_comp_off` (0018). `approvals.approver_manager_id` names the manager and `sent_at` when the request went. `managers` (0018) is one row per manager mobile per tenant, with `preferred_channel` (whatsapp/voice), `call_mode` and `operating_mode`. |
+| Voice | `calls` | `provider`, `purpose` (`first_contact`, `follow_up`, `manager_approval`, `approval_outcome`), `status`, `outcome`, transcript jsonb, `recording_uri`. |
 | Knowledge | `policy_documents`, `policy_passages` (migration 0009) | Uploaded guideline PDFs and their chunks, with `vector(1536)` embeddings. No vector index. Older `policy_packs`, `policy_sources` and `policy_chunks` are also defined. |
 | Ops | `jobs`, `ai_decisions`, `audit_log`, `usage_events`, `consent_events` | `jobs` is the queue (`dedupe_key` unique). `ai_decisions` logs model classifications. `usage_events` meters messages, calls and actions. |
+| Costs | `cost_lines` (migration 0020) | One line per thing a call, chat or query used: tokens, speech seconds/characters, phone line, LiveKit minutes. Links (`case_id`, `call_id`, `query_id`, `provider_message_id`) are loose, with no foreign keys, because lines are written from their own connection. `source_key` lets a call's own set replace itself. See Costs below. |
 | AI budgets | `ai_budgets`, `ai_budget_topups` (migration 0010) | Platform-wide, not per tenant. One row per budget (`whatsapp`, `call`) with `allowance_micros` and `spent_micros` (micro-dollars), seeded at $10 each. Top-ups are logged with `added_by`. |
 
 **Key enums** (`src/db/schema/enums.ts`)
@@ -79,7 +95,7 @@ Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0010` are in 
 
 **Notable `tenant_settings` defaults**
 - Scheduling: `operating_mode=manual`, `check_time=10:30`, `timezone=Asia/Kolkata`, `contact_lag_days=1`, quiet hours 20:00–09:00.
-- Sending and actions: `sending_enabled=false`, `actions_enabled=false`.
+- Sending and actions: `sending_enabled=false`, `actions_enabled=false`, `attendance_source=csv` (0018; `hrms` lets the agent apply leave and regularisation itself once the manager approves).
 - Calls: `call_mode=keypad`, `agent_voice=ritu`, `agent_voice_pace=0.95`.
 - Follow-up: `follow_up_after_days=2`, `call_after_days=3`, `approval_timeout_hours=24`.
 - Backlog: `max_outstanding_questions=0` (no cap), `send_backlog_summary=true`.
@@ -94,13 +110,16 @@ All live under `src/app/api/**/route.ts`. None of them use the portal session.
 | `/api/webhook` | GET, POST | Meta WhatsApp Cloud API | GET answers the `hub.verify_token` handshake (`WA_VERIFY_TOKEN`). POST checks `X-Hub-Signature-256` when `WA_APP_SECRET` is set, replies 200 straight away, then processes the payload asynchronously. It resolves the tenant by `tenant_channels.config->>'phoneNumberId'`, falling back to the only tenant when exactly one channel row exists. Then it applies delivery receipts and runs `handleInbound` for each message. |
 | `/api/voice/answer` | GET, POST | Plivo (answer URL of outbound calls) | Runs `openingTurn` for `?call=<id>` and returns Plivo XML that prompts for keypad or speech. |
 | `/api/voice/input` | POST, GET | Plivo | One employee answer (`Digits`/`Speech`) passed to `handleTurn`. Returns the next question or hangs up. A single call works through every pending date. |
-| `/api/voice/status` | POST, GET | Plivo hangup callback | Closes the call: an answered call with no outcome becomes `not_completed`; otherwise `no_answer`/`busy`. Missed calls are not retried. |
+| `/api/voice/status` | POST, GET | Plivo hangup callback | Closes the call: an answered call with no outcome becomes `not_completed`; otherwise `no_answer`/`busy`. Missed calls are not retried. Records the call's costs, taking Plivo's own `TotalCost`. A missed manager call sends the request on WhatsApp instead. |
+| `/api/voice/recorded` | POST, GET | Plivo record callback | Stores the recording. For a keypad call to us it also ends the query and records its costs. |
+| `/api/recordings/[kind]/[id]` | GET | Portal | Streams a call's or query's recording (`?download=1` to save it). |
+| `/api/coe/sheet-template` | GET | Portal | The sample query-type sheet to fill in. |
 | `/api/voice/clip/[id]` | GET | Plivo | Serves Sarvam TTS audio (wav) from an in-memory cache that keeps clips for 5 minutes. |
 | `/api/voice/inbound` | GET, POST | Plivo (via `/api/plivo/answer`) | Incoming call. Finds the caller by `From` number across active tenants and greets them in the tenant's voice. Unknown numbers are refused. |
 | `/api/voice/ask` | POST | Plivo | One spoken question on an incoming call. Answered by `answerQuestion` from the tenant's guidelines and the caller's own attendance, then loops. |
 | `/api/plivo/answer` | GET, POST | Plivo (number's answer URL) | Currently returns `inboundXml` (the inbound agent). `?to=` forwards the call instead. The branch that recorded WhatsApp number-verification calls is commented out. |
 | `/api/plivo/recording` | GET, POST | Plivo | Logs a verification-call recording URL, used with `npm run verify:code`. |
-| `/api/agent/turn` | POST | LiveKit worker (`agent/worker.py`) | Requires the `x-agent-token` header to equal `AGENT_API_TOKEN`; the route stays closed if that is unset. Modes: opening/answer turn (same `openingTurn`/`handleTurn` as keypad calls, returned as JSON), `brief` (voice, pace and language for the call), `ended` (closes the call), `ask` (inbound Q&A). |
+| `/api/agent/turn` | POST | LiveKit worker (`agent/worker.py`) | Requires the `x-agent-token` header to equal `AGENT_API_TOKEN`; the route stays closed if that is unset. Modes: opening/answer turn (same `openingTurn`/`handleTurn` as keypad calls, returned as JSON), `brief` (voice, pace and language for the call), `ended` (closes the call; with `durationSeconds` and `usage` from worker v14 it records the call's costs and queues the `plivo_charge` lookup), `ask` (inbound Q&A). |
 
 ## Background Jobs
 
@@ -129,6 +148,10 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 | `refresh_leave_balances` | Handler exists (fetches balances from the HRMS); not scheduled. |
 | `place_call` | Stub: returns "voice provider not configured". |
 | `import_file` | Stub: imports are handled by the upload server action. |
+| `query_feedback` | A minute after a call to us ends, asks for feedback on WhatsApp. |
+| `query_ticket` | Once a query is over, decides with the model whether it needs a ticket, and raises and assigns it. |
+| `ticket_notify`, `ticket_reminder`, `ticket_escalate` | WhatsApp notices to the COE member: assigned, a 36h reminder, and at 48h the move to the LT person. |
+| `plivo_charge` | 2, 10 and 30 minutes after a talking call (or a keypad call to us) ends, looks the call up in Plivo's records (SIP trunk CDRs, or the call record) and replaces the worked-out phone line with Plivo's own charge. |
 
 ## Routes & Pages
 
@@ -139,7 +162,11 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 | `/login` | `src/app/login/page.tsx` | Email and password sign-in through an inline server action. Already signed in → `/`. |
 | `/` | `(app)/page.tsx` | Dashboard. Stats, capability flags (dry run, sending, AI providers, mode, caller ID), and a date-range table of flagged employees with channel/mode/call-mode switches. Also "Contact selected", "send due follow-ups" and reset all cases. |
 | `/cases` | `(app)/cases/page.tsx` | Case list with date, status and search filters, and per-row contact and channel/mode switches. |
-| `/cases/[id]` | `(app)/cases/[id]/page.tsx` | Case detail: timeline of messages and calls, contact now, close, flag for HR, reset. In dry run it also offers a WhatsApp reply simulator and a call simulator. |
+| `/cases/[id]` | `(app)/cases/[id]/page.tsx` | Case detail: the WhatsApp chat as the employee saw it and each call as a transcript with its recording, the summary, contact now, close, flag for HR, reset, and a Costs card at the bottom. In dry run it also offers a WhatsApp reply simulator and a call simulator. |
+| `/queries`, `/queries/[id]` | `(app)/queries/` | What employees asked of their own accord, by call or WhatsApp: transcript, summaries, feedback, the ticket form, and a Costs card. |
+| `/employees` | `(app)/employees/` | Employees and their per-person switches. |
+| `/managers` | `(app)/managers/page.tsx` | Everybody the file names as a manager, with Contact by, Call style and Mode, and the approvals waiting (Send now for manual managers). |
+| `/coe` | `(app)/coe/page.tsx` | COE Teams: members, the clients each looks after, employee codes, and the query-type sheet. |
 | `/mapping` | `(app)/mapping/page.tsx` + `editor.tsx` | "Mapping & Import". Upload a file to analyse it into a draft mapping, edit fields, layout and codes, save as a new active version, import attendance, and resolve unmapped codes. |
 | `/knowledge` | `(app)/knowledge/page.tsx` + `refresh.tsx` | "Guidelines". Upload and delete policy PDFs (OCR, then embeddings, in the background; the page auto-refreshes while reading). A test box asks a question the way the agent would. |
 | `/settings` | `(app)/settings/page.tsx` | Per-tenant settings: check time, quiet hours, operating mode, sending/actions switches, cap, follow-up/call/approval timings, agent voice and pace. Read-only unless the user can manage settings. |
@@ -218,15 +245,29 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 
 | Integration | Code | Config | Notes |
 |---|---|---|---|
-| WhatsApp (Meta Cloud API, Graph `v23.0`) | `src/lib/channels/meta.ts`, `fake.ts`, `/api/webhook` | `WA_PHONE_NUMBER_ID`, `WA_ACCESS_TOKEN`, `WA_APP_SECRET`, `WA_VERIFY_TOKEN` (platform fallbacks); per-tenant `tenant_channels.config` | Real sends happen only when `DRY_RUN=false` and credentials exist; otherwise the in-memory `FakeChannel` is used. The template defaults to `attendance_absent_check` (4 buttons). Inside the 24h window it uses interactive lists and buttons. |
+| WhatsApp (Meta Cloud API, Graph `v23.0`) | `src/lib/channels/meta.ts`, `fake.ts`, `/api/webhook` | `WA_PHONE_NUMBER_ID`, `WA_ACCESS_TOKEN`, `WA_APP_SECRET`, `WA_VERIFY_TOKEN` (platform fallbacks); per-tenant `tenant_channels.config`; `WA_FIRST_TEMPLATE` | Real sends happen only when `DRY_RUN=false` and credentials exist; otherwise the in-memory `FakeChannel` is used. The first-question template is the tenant's, else `WA_FIRST_TEMPLATE`, else `attendance_absent_check`; `attendance_absent_v2` (the four new options) was in Meta review on 2026-10-27 and is switched on by setting `WA_FIRST_TEMPLATE`. Inside the 24h window it sends free interactive lists and buttons instead of a template. Templates, all created by `scripts/create-ticket-templates.ts <WABA id> [names]`: `attendance_absent_v2`, `manager_approval_request`, `approval_outcome`, `approval_noted`, `call_feedback`, `coe_ticket_assigned/reminder/escalated`. |
 | Plivo voice (keypad calls, inbound line) | `src/lib/voice/plivo.ts`, `xml.ts`, `/api/voice/*`, `/api/plivo/*` | `VOICE_PROVIDER=plivo`, `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`, `PLIVO_FROM_NUMBER`, `PLIVO_FORWARD_NUMBER`; `tenant_settings.caller_id` | Used when `DRY_RUN=false`; otherwise `FakeVoiceProvider`. `exotel` and `acs` are accepted values with no implementation. |
-| LiveKit (spoken "agent" calls) | `src/lib/voice/livekit.ts`, `agent/worker.py`, `/api/agent/turn` | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_SIP_TRUNK_ID`, `AGENT_API_TOKEN` | Creates a room `attendance-call-<callId>` and dials out over a SIP trunk. Used when the employee or tenant `call_mode='agent'`; otherwise falls back to keypad. The worker uses LiveKit agents with OpenAI, Sarvam and Silero plugins. |
+| LiveKit (spoken "agent" calls) | `src/lib/voice/livekit.ts`, `agent/worker.py`, `/api/agent/turn` | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_SIP_TRUNK_ID`, `AGENT_API_TOKEN`, `LIVEKIT_PLAN` (build/ship/scale, for costs) | Creates a room `attendance-call-<callId>` and dials out over a SIP trunk. Used when the employee or tenant `call_mode='agent'`; otherwise falls back to keypad. The worker uses LiveKit agents with OpenAI, Sarvam and Silero plugins. |
 | Model gateway | `src/lib/models/gateway.ts`, `providers.ts`, `budget.ts` | `OPENAI_API_KEY`, `OPENAI_BASE_URL` (Azure OpenAI `https://tc-attendance-aoai.openai.azure.com/openai/v1`; unset means OpenAI itself), `OPENAI_MODEL` (gpt-4.1-mini, an Azure deployment name), `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` (claude-haiku-4-5), `SARVAM_API_KEY` + chat/STT/TTS models | Order: OpenAI → Anthropic → Sarvam, with Sarvam first for Indian languages. A per-tenant `model_overrides` can change it, and a stub fallback answers "unclear". Used for reply classification. WhatsApp and call usage is costed from reported tokens at Azure list price and charged to the `whatsapp` / `call` budget. Once a budget is spent, that feature stops calling the model (no fallback provider) and replies go to HR until a platform admin tops it up. |
 | Policy Q&A / RAG | `src/lib/knowledge/index.ts`, `ocr.ts` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` | Calls the OpenAI client (Azure OpenAI when `OPENAI_BASE_URL` is set): `text-embedding-3-small` embeddings and `OPENAI_MODEL` answers. Also answers WhatsApp questions. pgvector cosine search is scoped to the tenant. Answers draw only on guideline passages and the caller's own attendance. PDFs are read by MuPDF + Tesseract OCR, not an LLM. |
 | Sarvam TTS | `src/lib/voice/say.ts`, `voices.ts` | `SARVAM_API_KEY` | Speaks Plivo call lines in the tenant's chosen voice (14 Indian voices, default `ritu`). Falls back to Plivo `<Speak>`. |
 | HRMS | `src/lib/hrms/types.ts`, `mock.ts` | `HRMS_CONNECTOR` (`mock` default, `file`, `rest`, `none`), `MOCK_HRMS_URL` | Only the in-memory `MockHrms` exists; `file` and `rest` fall back to it. The connector declares capabilities (apply leave or regularisation, approve, read status, balances). |
 | Azure | `scripts/deploy-azure.sh`, `scripts/azure-db-setup.ts` | `AZURE_RESOURCE_GROUP`, `AZURE_WEBAPP`; App Settings | App Service web app and a shared PostgreSQL Flexible Server. |
 | Dev tooling | `scripts/*` | | `retunnel.sh` (Cloudflare tunnel), `verify-preflight.ts`/`verification-code.ts` (Meta number verification), `voices.ts` (voice audition), `demo-flow.ts`/`demo-calls.ts`/`rehearse-call.ts`/`screenshot.ts` (Puppeteer and flow smoke tests). |
+
+## Conversation flow and approvals
+
+- **First question** (WhatsApp buttons, keypad digits, or asked by the talking agent): I didn't come / I was working / I was on leave / Weekly off-Comp off. Each opens the flow-sheet menus in `src/lib/conversation/sheet.ts`. Keypad calls walk the same menus through `src/lib/voice/keypad-sheet.ts`, so the two cannot drift apart. Taps on the old template's options (`case:` payloads) are still read as they meant then; new ones are `c2:`.
+- **Applying:** every outcome that needs leave, regularisation, On-Duty or comp-off asks where it stands (`src/lib/conversation/apply.ts`). With `attendance_source=csv`: not applied yet, or applied and waiting. With `hrms`: apply it for me (then the leave type), I'll do it, or already applied.
+- **The manager** (`src/lib/approvals.ts`) is found from the employee's manager mobile column, else the manager code's own mobile. They get the request on WhatsApp (`manager_approval_request`) or by call (`src/lib/voice/approval-calls.ts`: press 1 to approve, 2 to reject, or say it), as set on the Managers page. A missed or undecided call falls back to WhatsApp. No manager in the file sends the case to HR.
+- **The decision:** rejected closes the case; approved closes it, or, in HRMS mode, the agent applies it. The employee is always told on WhatsApp, never by call: free text inside the 24h window, the `approval_outcome` template outside it. The manager is then told the employee knows, also on WhatsApp: free text after a tap, `approval_noted` otherwise.
+
+## Costs
+
+Every case and query page ends with one cost box, split by service (`src/lib/costs/`, `src/components/cost-box.tsx`).
+- **Recording:** places where work starts open a cost scope (`withCostScope` in `record.ts`): the WhatsApp webhook per inbound message, `withCallContext` for keypad call steps, `/api/agent/turn`, the keypad question routes, summaries and the ticket check. Model use is noted in the gateway, the knowledge `openai()` helper and the streaming reply points; Sarvam clips in `say.ts`. A call's own lines are written when it ends (`calls.ts`). Nothing outside a scope is written. **A new model call site must call `noteModelCost`, and a new entry point must open a scope.**
+- **Priced from:** list prices in `src/lib/costs/prices.ts` (checked 2026-10-27). Azure OpenAI from tokens, Sarvam STT ₹30/hour and TTS ₹30 per 10K characters, Plivo ₹0.38/min in 30s pulses plus ₹1.70 per spoken keypad answer, LiveKit by `LIVEKIT_PLAN` (Build = ₹0). Plivo's own charge replaces the estimate where available: `TotalCost` on keypad hangups, and the `plivo_charge` job for SIP-trunk calls. WhatsApp fees are worked out when the page is read, from each message's kind and Meta's receipt (`messages.pricing`), at Meta's India rate card (₹0.115 utility and service, ₹0.8631 marketing). Dollars are shown at `USD_INR_RATE` (88).
+- Costs are only recorded from 2026-10-27 13:30 IST; older conversations show WhatsApp fees only.
 
 `capabilities()` in `env.ts` reports what is live. It is shown on the dashboard, `/admin` and `/api/health`.
 
@@ -268,3 +309,10 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 - **Unused schema:** `audit_log` (never written), `templates`, `policy_packs`/`policy_sources`/`policy_chunks`, `shifts`, `calendars`/`calendar_days`. Some enum values are also never set: case `cancelled`; action `draft`, `pre_check_failed`, `cancelled`.
 - **Per-process memory state:** TTS clips, fake channels and the mock HRMS live in memory, so they are not shared across instances.
 - **Unwired actions:** `runCheck` and `previewCheck` are not referenced by any page; the dashboard uses `contactSelected`.
+- **Summaries are rewritten on page view:** a case or query summary is written again whenever its page is opened after something new was said, which costs a model request each time.
+- **Plivo charge unconfirmed:** `TotalCost` on the keypad hangup callback, and the field names of the SIP trunk CDR API, were taken from Plivo's docs and have not yet been seen on a live call; without them the phone line stays an estimate.
+- **Tests:** two voice tests need an AI provider key and fail without one (`calls.test.ts` "understands the employee speaking…", `talking-call.test.ts` "…sweeps the backlog"). The job-runner test in `feedback.test.ts` failed once in a full run and passed on its own, so it may be flaky. The mapping tests use `tests/fixtures/timeoffice-register-august-2026.xlsx`, so editing the demo file does not break them.
+- **Legacy code:** the `approval_outcome` call purpose and the `/api/voice/inbound` keypad line for calls to us are still in the code, but production sends incoming calls to LiveKit and decisions only go on WhatsApp.
+- **Capacity (checked 2026-10-27):** the live setup handles about 2–3 calls at once (voice worker: 0.5 vCPU / 1 GiB, max 1 replica) and roughly 500 WhatsApp conversations an hour (gpt-4.1-mini quota: 200K tokens and 200 requests per minute).
+- **Model calls hold a DB connection:** WhatsApp replies (`api/webhook`) and call turns (`api/agent/turn`) call the model inside an open `withTenant` transaction. A web instance can therefore run only as many turns at once as its pool allows (20). The server allows 50 connections, shared with Client Hub, which caps how far the web app can scale out.
+- **Contacting is serial and runs inside the request:** `contactSelected` (`src/app/actions.ts`) and the daily check (`src/lib/detection/run.ts`) contact cases one at a time. A large batch from the dashboard outlives App Service's 230 s request timeout, at roughly 200 contacts per click.
