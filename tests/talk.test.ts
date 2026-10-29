@@ -240,6 +240,12 @@ describe('which language to answer in', () => {
     expect(spokenLanguage('haan ji', 'en-IN', 'en-IN')).toBe('en-IN');
     expect(spokenLanguage('okay okay', 'en-IN', 'hi-IN')).toBe('hi-IN');
   });
+
+  it('does not switch on one Devanagari word in an English sentence', () => {
+    expect(spokenLanguage('तो I would like to know my attendance for the month of September.', 'en-IN', 'en-IN')).toBe('en-IN');
+    // Half or more of it in Devanagari is Hindi, even with English words in it.
+    expect(spokenLanguage('मेरी leave approve हो गई क्या', 'en-IN', 'en-IN')).toBe('hi-IN');
+  });
 });
 
 /** A model that keeps what it was asked, and answers with this reply. */

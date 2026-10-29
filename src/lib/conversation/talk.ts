@@ -371,9 +371,13 @@ const HINGLISH = new Set(
  * that in Hindi turned an English call into Hindi on a sound.
  */
 export function spokenLanguage(said: string, preferred: VoiceLanguage, current: VoiceLanguage = preferred): VoiceLanguage {
-  if (said.trim().split(/\s+/).filter(Boolean).length < 3) return current;
+  const all = said.trim().split(/\s+/).filter(Boolean);
+  if (all.length < 3) return current;
   for (const [script, language] of SCRIPTS) {
-    if (!script.test(said)) continue;
+    // A script counts when it is most of what they said: one Devanagari word in
+    // an English sentence - "तो I would like to know..." - is a mishearing of
+    // "so", not Hindi, and the English words decide below.
+    if (all.filter((word) => script.test(word)).length * 2 < all.length) continue;
     if (language === 'hi-IN') return preferred === 'mr-IN' ? 'mr-IN' : 'hi-IN';
     return language === preferred ? language : current;
   }

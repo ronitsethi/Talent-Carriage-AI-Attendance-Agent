@@ -294,9 +294,14 @@ class TurnApi:
             if response.status not in (200, 404):
                 raise RuntimeError(f"{APP_BASE_URL} answered {response.status}; check APP_BASE_URL and AGENT_API_TOKEN")
 
-    async def ask(self, caller: str, question: str | None) -> dict:
-        """One turn of a call somebody made to us, rather than one we made."""
-        return await self._raw({"ask": {"from": caller, "question": question}})
+    async def ask(self, caller: str, question: str | None, room: str | None = None) -> dict:
+        """
+        One turn of a call somebody made to us, rather than one we made. The
+        greeting names the room, so a call LiveKit hands to a second process -
+        when the first dies - stays one query.
+        """
+        ask = {"from": caller, "question": question, **({"room": room} if room else {})}
+        return await self._raw({"ask": ask})
 
     def talk(self, case_id: str, speech: str, heard: str | None = None):
         """
@@ -560,6 +565,18 @@ CALLER_AUDIO = room_io.RoomOptions(
 def speaker(voice: str | None) -> str:
     """A v4 voice to speak in. A v3 name ("ritu") from before the switch is refused by Sarvam."""
     return voice if voice and "_" in voice else VOICE
+
+
+def voice_model(voice: str) -> str:
+    """
+    The Bulbul model that has this voice. v4 names carry a language and a style
+    ("simran_enhi_customer"), v3 names do not, and each model refuses the
+    other's - which ended a call before it was answered when AGENT_VOICE_MODEL
+    still said v3. So the voice decides, not the setting alone.
+    """
+    if "_" in voice:
+        return "bulbul:v4-flash"
+    return VOICE_MODEL if VOICE_MODEL != "bulbul:v4-flash" else "bulbul:v3"
 
 
 def heard_of(handle) -> str | None:  # noqa: ANN001
@@ -1196,7 +1213,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
         brief = {}
         try:
-            brief = await api_client.ask(caller, None)
+            brief = await api_client.ask(caller, None, ctx.room.name)
         except Exception:
             log.exception("could not open the incoming call")
         voice = speaker(brief.get("voice"))
@@ -1207,12 +1224,12 @@ async def entrypoint(ctx: JobContext) -> None:
         session = AgentSession(
             stt=make_stt(brief.get("language")),
             llm=openai.LLM(model=LLM_MODEL),
-            tts=sarvam.TTS(target_language_code="en-IN", model=VOICE_MODEL, speaker=voice, pace=pace),
+            tts=sarvam.TTS(target_language_code="en-IN", model=voice_model(voice), speaker=voice, pace=pace),
             vad=ctx.proc.userdata["vad"],
             turn_handling=TURN_HANDLING,
         )
         watch_timing(session)
-        count_usage(session, api_client, VOICE_MODEL)
+        count_usage(session, api_client, voice_model(voice))
         # Somebody who rang us is on the line already.
         api_client.answered_at = time.monotonic()
         agent = QuestionAgent(api_client, caller, brief)
@@ -1252,7 +1269,7 @@ async def entrypoint(ctx: JobContext) -> None:
         llm=openai.LLM(model=LLM_MODEL),
         tts=sarvam.TTS(
             target_language_code="en-IN",
-            model=VOICE_MODEL,
+            model=voice_model(voice),
             speaker=voice,
             pace=pace,
         ),
@@ -1260,7 +1277,7 @@ async def entrypoint(ctx: JobContext) -> None:
         turn_handling=TURN_HANDLING,
     )
     watch_timing(session)
-    count_usage(session, api_client, VOICE_MODEL)
+    count_usage(session, api_client, voice_model(voice))
     answered = asyncio.Event()
     asyncio.ensure_future(wait_until_answered(ctx.room, answered))
     agent = AttendanceAgent(api_client, answered, gender=brief.get("gender") or "female")
@@ -1278,4 +1295,9 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    # One process kept ready, not LiveKit's default of one per CPU it sees (4 on
+    # Azure's host, whatever the container is given). Each holds the VAD and the
+    # noise filter, and four of them filled most of the 1 GiB before a call
+    # began: the call's own process was then killed for memory, and LiveKit
+    # gave the call to another one twenty seconds later.
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm, num_idle_processes=1))

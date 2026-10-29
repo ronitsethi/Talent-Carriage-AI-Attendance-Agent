@@ -145,6 +145,20 @@ describe('a call somebody made to us', () => {
     expect(listed).toMatchObject({ id, channel: 'voice', callStyle: 'agent', hasRecording: true });
   });
 
+  it('stays one query when the same call greets again, as it does when LiveKit hands it to a second process', async () => {
+    scenario = await makeScenario();
+    await withTenant(scenario.tenantId, async (tx) => {
+      const args = { tenantId: scenario.tenantId, employeeId: scenario.employeeId, style: 'agent' as const, providerCallId: 'attendance-ask_+91_x' };
+      const first = await startCallQuery(tx, { ...args, greeting: 'Hello, how can I help?' });
+      const again = await startCallQuery(tx, { ...args, greeting: 'Hi, what would you like to know?' });
+      expect(again).toBe(first);
+      const rows = await tx.query.queries.findMany({ where: eq(queries.providerCallId, 'attendance-ask_+91_x') });
+      expect(rows).toHaveLength(1);
+      // The greeting they hear is the second one.
+      expect(rows[0]!.transcript?.map((l) => l.text)).toEqual(['Hi, what would you like to know?']);
+    });
+  });
+
   it("cannot be written to through another employee's number", async () => {
     scenario = await makeScenario();
     await withTenant(scenario.tenantId, async (tx) => {

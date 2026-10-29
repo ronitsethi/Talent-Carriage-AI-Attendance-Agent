@@ -59,6 +59,24 @@ export async function startCallQuery(
   args: { tenantId: string; employeeId: string; style: 'agent' | 'keypad'; providerCallId?: string | null; greeting?: string },
 ): Promise<string> {
   const at = new Date();
+  // The same call asking again: LiveKit hands a call to another process when
+  // the first one dies, and that one greets afresh. It is still one query, and
+  // the greeting is the one they are about to hear.
+  if (args.providerCallId) {
+    const existing = await tx.query.queries.findFirst({
+      where: and(eq(queries.tenantId, args.tenantId), eq(queries.providerCallId, args.providerCallId)),
+      columns: { id: true, transcript: true },
+    });
+    if (existing) {
+      if (args.greeting && (existing.transcript ?? []).every((line) => line.role === 'agent')) {
+        await tx
+          .update(queries)
+          .set({ transcript: [{ role: 'agent', text: args.greeting, at: at.toISOString() }], lastActivityAt: at })
+          .where(eq(queries.id, existing.id));
+      }
+      return existing.id;
+    }
+  }
   const [created] = await tx
     .insert(queries)
     .values({

@@ -54,7 +54,8 @@ type Body = {
    * caller's number says who they are and the question is answered from their
    * employer's guidelines and their own record.
    */
-  ask?: { from: string; question?: string };
+  /** `room`, on the greeting: the LiveKit room, so a call handed to a second process files under the same query. */
+  ask?: { from: string; question?: string; room?: string };
   /**
    * Send the answer as it is written, one JSON line per piece, so the worker
    * can start speaking before the model has finished. Only for a question.
@@ -269,7 +270,7 @@ async function turn(request: Request) {
   }
 
   if (body.ask) {
-    const { from, question } = body.ask;
+    const { from, question, room } = body.ask;
     if (body.stream && question) {
       const queryId = body.queryId;
       return streamTurn(
@@ -309,7 +310,7 @@ async function turn(request: Request) {
         warmModel();
         const greet = INBOUND_GREETINGS[Math.floor(Math.random() * INBOUND_GREETINGS.length)]!;
         const say = greet(employee.fullName.split(/\s+/)[0] ?? employee.fullName, company?.name ?? 'your employer');
-        const queryId = await startCallQuery(t, { tenantId, employeeId: employee.id, style: 'agent', greeting: say });
+        const queryId = await startCallQuery(t, { tenantId, employeeId: employee.id, style: 'agent', greeting: say, providerCallId: room });
         addToCostScope({ queryId });
         return {
           say,

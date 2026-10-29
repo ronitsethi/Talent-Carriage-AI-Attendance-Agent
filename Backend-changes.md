@@ -11,6 +11,12 @@ Format:
 - **Impact:** e.g. breaking API change, migration required, new env var
 ```
 
+## 2026-10-29 12:20
+- **Files:** agent/worker.py, src/app/api/agent/turn/route.ts, src/lib/conversation/queries.ts, src/lib/conversation/talk.ts
+- **Change:** Worker keeps 1 idle process (was 4) and chooses the Bulbul model from the voice name. The inbound greeting passes the LiveKit room, and `startCallQuery` reuses the query with the same `providerCallId`. The reply language needs at least half of the words in a script.
+- **Why:** Out-of-memory kills of the call process on the 1 GiB worker made LiveKit re-dispatch the call, opening a second query. A stale `AGENT_VOICE_MODEL` crashed calls before answer. One Devanagari word was switching English calls to Hindi.
+- **Impact:** New worker image v16 and app deploy. `/api/agent/turn` accepts an optional `ask.room`; older workers that don't send it behave as before. No migration or env change (`AGENT_VOICE`/`AGENT_VOICE_MODEL` on the worker were updated to `simran_enhi_customer`/`bulbul:v4-flash` by hand on 2026-10-29).
+
 ## 2026-10-29 11:10
 - **Files:** agent/worker.py, agent/requirements.txt, src/lib/voice/voices.ts, src/lib/voice/say.ts, src/app/api/agent/turn/route.ts, src/app/api/voice/inbound/route.ts, src/app/api/voice/ask/route.ts, src/lib/costs/prices.ts, src/lib/conversation/talk.ts, src/db/schema/tenants.ts, src/db/migrations/0022_v4_voices.sql
 - **Change:** Bulbul v4 Flash for all agent speech, with five Hinglish voices and old v3 names mapped to them. The worker filters caller audio with LiveKit BVCTelephony, interrupts on 3 words over 0.8 s (VAD mode), and skips filler-only turns. Turns under three words keep the reply language. TTS is priced at ₹10/10K characters for v4 Flash.
