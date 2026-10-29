@@ -95,9 +95,10 @@ export function noteCost(line: CostLine): void {
 export function modelCost(model: string, usage: ModelUsage | undefined): { amountMicros: number | null; currency: 'USD' | 'INR' } {
   const price = MODEL_PRICES.find((p) => model.startsWith(p.prefix));
   if (!price) return { amountMicros: null, currency: 'USD' };
-  // Per million tokens, times tokens, is millionths.
+  // Per million tokens, times tokens, is millionths. Cached input is part of the input, at its own price.
+  const cached = Math.min(usage?.cachedInputTokens ?? 0, usage?.inputTokens ?? 0);
   return {
-    amountMicros: Math.ceil((usage?.inputTokens ?? 0) * price.input + (usage?.outputTokens ?? 0) * price.output),
+    amountMicros: Math.ceil(((usage?.inputTokens ?? 0) - cached) * price.input + cached * price.cached + (usage?.outputTokens ?? 0) * price.output),
     currency: price.currency,
   };
 }
@@ -112,7 +113,7 @@ export function noteModelCost(provider: string, model: string, usage: ModelUsage
     quantity: tokens,
     unit: 'tokens',
     ...modelCost(model, usage),
-    detail: { model, inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 },
+    detail: { model, inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0, cachedInputTokens: usage.cachedInputTokens ?? 0 },
   });
 }
 

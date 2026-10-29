@@ -5,7 +5,8 @@ import { calls, cases, costLines, messages } from '@/db/schema';
 import { runDailyCheck } from '@/lib/detection/run';
 import { applyDeliveryUpdate } from '@/lib/conversation/engine';
 import { callCostLines, recordCallCosts } from '@/lib/costs/calls';
-import { flushCosts, noteModelCost, withCostScope } from '@/lib/costs/record';
+import { flushCosts, modelCost, noteModelCost, withCostScope } from '@/lib/costs/record';
+import { fromOpenAIUsage } from '@/lib/models/types';
 import { caseCostBox, whatsappFee } from '@/lib/costs/summary';
 import { applyPlivoCharge } from '@/lib/costs/plivo';
 import { env } from '@/lib/env';
@@ -64,8 +65,29 @@ describe('a call\'s own costs', () => {
     expect(rupees(by['Text to speech (bulbul:v3-beta)']!.amountMicros)).toBeCloseTo(4.5, 6);
   });
 
+  it('prices Bulbul v4 Flash speech at a third of v3', () => {
+    const lines = callCostLines({
+      provider: 'livekit',
+      durationSeconds: 125,
+      worker: { sttSeconds: 40, sttModel: 'Sarvam streaming', ttsCharacters: 1500, ttsModel: 'bulbul:v4-flash' },
+    });
+    const speech = lines.find((l) => l.item === 'Text to speech (bulbul:v4-flash)');
+    expect(rupees(speech!.amountMicros)).toBeCloseTo(1.5, 6);
+  });
+
   it('costs nothing when nobody picked up', () => {
     expect(callCostLines({ provider: 'plivo', durationSeconds: 0 })).toEqual([]);
+  });
+});
+
+describe('the AI\'s tokens', () => {
+  it('prices input Azure took from its prompt cache at a quarter of the rate', () => {
+    // A call turn: 5,300 tokens in, 4,096 of them the rules reused from the cache, 60 out.
+    const usage = fromOpenAIUsage({ prompt_tokens: 5_300, completion_tokens: 60, prompt_tokens_details: { cached_tokens: 4_096 } });
+    expect(usage).toEqual({ inputTokens: 5_300, outputTokens: 60, cachedInputTokens: 4_096 });
+    expect(modelCost('gpt-4.1-mini', usage)).toEqual({ amountMicros: Math.ceil(1_204 * 0.4 + 4_096 * 0.1 + 60 * 1.6), currency: 'USD' });
+    // Without the cache it is the full price.
+    expect(modelCost('gpt-4.1-mini', fromOpenAIUsage({ prompt_tokens: 5_300, completion_tokens: 60 })).amountMicros).toBe(Math.ceil(5_300 * 0.4 + 60 * 1.6));
   });
 });
 

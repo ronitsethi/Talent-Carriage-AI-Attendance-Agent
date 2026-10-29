@@ -33,7 +33,27 @@ export type ModelRequest = {
   budget?: AiBudget;
 };
 
-export type ModelUsage = { inputTokens?: number; outputTokens?: number };
+export type ModelUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Of the input, how much Azure took from its prompt cache - billed at a quarter of the price. */
+  cachedInputTokens?: number;
+};
+
+/** Token usage as the OpenAI-compatible APIs report it. */
+export type OpenAIUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
+};
+
+export function fromOpenAIUsage(usage: OpenAIUsage | null | undefined): ModelUsage {
+  return {
+    inputTokens: usage?.prompt_tokens,
+    outputTokens: usage?.completion_tokens,
+    cachedInputTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0,
+  };
+}
 
 export type ProviderResult<T> = { data: T; model: string; usage?: ModelUsage };
 

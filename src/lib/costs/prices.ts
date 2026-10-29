@@ -8,16 +8,20 @@
  * lines already written keep the price they were written with.
  */
 
-/** Azure OpenAI, Global Standard, in dollars per million tokens. */
-export const MODEL_PRICES: { prefix: string; input: number; output: number; currency: 'USD' | 'INR' }[] = [
-  { prefix: 'gpt-4.1-mini', input: 0.4, output: 1.6, currency: 'USD' },
-  { prefix: 'gpt-4.1-nano', input: 0.1, output: 0.4, currency: 'USD' },
-  { prefix: 'gpt-4.1', input: 2, output: 8, currency: 'USD' },
-  { prefix: 'gpt-4o-mini', input: 0.15, output: 0.6, currency: 'USD' },
-  { prefix: 'text-embedding-3-small', input: 0.02, output: 0, currency: 'USD' },
-  { prefix: 'text-embedding-3-large', input: 0.13, output: 0, currency: 'USD' },
+/**
+ * Azure OpenAI, Global Standard, in dollars per million tokens. `cached` is the
+ * price of input Azure takes from its prompt cache: the same opening of a prompt
+ * (1,024 tokens or more) sent again within minutes.
+ */
+export const MODEL_PRICES: { prefix: string; input: number; cached: number; output: number; currency: 'USD' | 'INR' }[] = [
+  { prefix: 'gpt-4.1-mini', input: 0.4, cached: 0.1, output: 1.6, currency: 'USD' },
+  { prefix: 'gpt-4.1-nano', input: 0.1, cached: 0.025, output: 0.4, currency: 'USD' },
+  { prefix: 'gpt-4.1', input: 2, cached: 0.5, output: 8, currency: 'USD' },
+  { prefix: 'gpt-4o-mini', input: 0.15, cached: 0.075, output: 0.6, currency: 'USD' },
+  { prefix: 'text-embedding-3-small', input: 0.02, cached: 0.02, output: 0, currency: 'USD' },
+  { prefix: 'text-embedding-3-large', input: 0.13, cached: 0.13, output: 0, currency: 'USD' },
   // Anthropic, the fallback when Azure is unwell.
-  { prefix: 'claude-haiku-4-5', input: 1, output: 5, currency: 'USD' },
+  { prefix: 'claude-haiku-4-5', input: 1, cached: 0.1, output: 5, currency: 'USD' },
 ];
 
 /** OpenAI transcription, in dollars per minute - only if the worker is switched to it. */
@@ -27,8 +31,8 @@ export const OPENAI_STT_PER_MINUTE = (model: string) => (model.includes('mini') 
 export const SARVAM = {
   /** Speech to text, per hour of audio, billed by the second. */
   sttPerHour: 30,
-  /** Text to speech, per 10,000 characters: Bulbul v3 (beta pricing) and v2. */
-  ttsPer10kChars: (model: string) => (model.startsWith('bulbul:v2') ? 15 : 30),
+  /** Text to speech, per 10,000 characters: Bulbul v4 Flash, v2, and v3 (beta pricing). */
+  ttsPer10kChars: (model: string) => (model.startsWith('bulbul:v4-flash') ? 10 : model.startsWith('bulbul:v2') ? 15 : 30),
 };
 
 /** Plivo India (plivo.com/voice/pricing/in, /sip-trunking/pricing/in), in rupees. */

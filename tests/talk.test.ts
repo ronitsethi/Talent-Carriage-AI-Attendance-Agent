@@ -233,6 +233,13 @@ describe('which language to answer in', () => {
     // "the" is English, not the Hindi "the" of "ho gaye the".
     expect(spokenLanguage('on the 14th', 'en-IN', 'en-IN')).toBe('en-IN');
   });
+
+  it('does not switch on one or two words, which is what a murmur or the room comes through as', () => {
+    expect(spokenLanguage('हम्म', 'en-IN', 'en-IN')).toBe('en-IN');
+    expect(spokenLanguage('बहुत ज्यादा', 'en-IN', 'en-IN')).toBe('en-IN');
+    expect(spokenLanguage('haan ji', 'en-IN', 'en-IN')).toBe('en-IN');
+    expect(spokenLanguage('okay okay', 'en-IN', 'hi-IN')).toBe('hi-IN');
+  });
 });
 
 /** A model that keeps what it was asked, and answers with this reply. */

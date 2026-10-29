@@ -27,9 +27,9 @@ const DEFAULT_ALLOWANCE_MICROS = 10_000_000;
  * Azure retail price list (October 2026). Dollars per million tokens times
  * tokens is micro-dollars, which is what is stored.
  */
-const PRICES: { prefix: string; input: number; output: number }[] = [
-  { prefix: 'gpt-4.1-mini', input: 0.4, output: 1.6 },
-  { prefix: 'text-embedding-3-small', input: 0.02, output: 0 },
+const PRICES: { prefix: string; input: number; cached: number; output: number }[] = [
+  { prefix: 'gpt-4.1-mini', input: 0.4, cached: 0.1, output: 1.6 },
+  { prefix: 'text-embedding-3-small', input: 0.02, cached: 0.02, output: 0 },
 ];
 
 /** What a response cost. A model not in the list is charged as gpt-4.1-mini, and said so. */
@@ -39,7 +39,9 @@ export function costMicros(model: string, usage: ModelUsage | undefined): number
     console.warn(`[budget] no price for ${model}; charging it as gpt-4.1-mini`);
     price = PRICES[0]!;
   }
-  return Math.ceil((usage?.inputTokens ?? 0) * price.input + (usage?.outputTokens ?? 0) * price.output);
+  // Input Azure took from its prompt cache is billed at its own, lower price.
+  const cached = Math.min(usage?.cachedInputTokens ?? 0, usage?.inputTokens ?? 0);
+  return Math.ceil(((usage?.inputTokens ?? 0) - cached) * price.input + cached * price.cached + (usage?.outputTokens ?? 0) * price.output);
 }
 
 export class BudgetExhausted extends ModelError {

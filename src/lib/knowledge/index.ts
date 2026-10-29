@@ -1,4 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import { fromOpenAIUsage, type OpenAIUsage } from '@/lib/models/types';
 import { RAISE_TICKET } from '@/lib/conversation/flow';
 import type { Db } from '@/db';
 import { attendanceDays, employees, policyPassages, policyDocuments } from '@/db/schema';
@@ -55,11 +56,11 @@ export async function openai(
     return { response, json: (await response.json()) as Record<string, unknown> };
   });
   if (!response.ok) throw new Error(JSON.stringify((json as { error?: unknown }).error ?? json).slice(0, 300));
-  const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
-  noteModelCost('openai', body.model, { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }, purpose);
+  const usage = json.usage as OpenAIUsage | undefined;
+  noteModelCost('openai', body.model, fromOpenAIUsage(usage), purpose);
   if (budget) {
     // Recorded without waiting: on a call the answer is what matters next.
-    void chargeBudget(budget, body.model, { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }).catch(
+    void chargeBudget(budget, body.model, fromOpenAIUsage(usage)).catch(
       (error) => console.error('[budget] could not record the cost:', (error as Error).message),
     );
   }
@@ -474,7 +475,7 @@ export class ReplyExtractor {
 export async function streamChat(
   request: { model: string; [key: string]: unknown },
   onDelta: (delta: string) => void,
-): Promise<{ raw: string; usage?: { prompt_tokens?: number; completion_tokens?: number } }> {
+): Promise<{ raw: string; usage?: OpenAIUsage }> {
   return timed('answer_model', async () => {
     const response = await fetch(`${OPENAI}/chat/completions`, {
       method: 'POST',
@@ -490,7 +491,7 @@ export async function streamChat(
     const decoder = new TextDecoder();
     let raw = '';
     let pending = '';
-    let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    let usage: OpenAIUsage | undefined;
 
     // Server-sent events: one `data: {...}` line per piece, `data: [DONE]` at the end.
     for (;;) {
@@ -504,7 +505,7 @@ export async function streamChat(
         if (!data || data === '[DONE]') continue;
         const event = JSON.parse(data) as {
           choices?: { delta?: { content?: string } }[];
-          usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+          usage?: OpenAIUsage | null;
         };
         if (event.usage) usage = event.usage;
         const delta = event.choices?.[0]?.delta?.content;
@@ -547,12 +548,9 @@ export async function streamAnswer(
     }
   });
 
-  noteModelCost('openai', prepared.request.model, { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }, 'Guideline answer');
+  noteModelCost('openai', prepared.request.model, fromOpenAIUsage(usage), 'Guideline answer');
   if (opts.budget) {
-    void chargeBudget(opts.budget, prepared.request.model, {
-      inputTokens: usage?.prompt_tokens,
-      outputTokens: usage?.completion_tokens,
-    }).catch((error) => console.error('[budget] could not record the cost:', (error as Error).message));
+    void chargeBudget(opts.budget, prepared.request.model, fromOpenAIUsage(usage)).catch((error) => console.error('[budget] could not record the cost:', (error as Error).message));
   }
 
   const answer = readReply(raw, prepared.fallback);

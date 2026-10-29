@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { env } from '@/lib/env';
-import { isIndic, ModelError, type ModelProvider, type ModelRequest, type ProviderResult } from './types';
+import { isIndic, ModelError, type ModelProvider, type ModelRequest, type ProviderResult, fromOpenAIUsage, type OpenAIUsage } from './types';
 
 const TIMEOUT_MS = 20_000;
 
@@ -42,10 +42,7 @@ export class OpenAIProvider implements ModelProvider {
       return {
         data: JSON.parse(content) as T,
         model: response.model,
-        usage: {
-          inputTokens: response.usage?.prompt_tokens,
-          outputTokens: response.usage?.completion_tokens,
-        },
+        usage: fromOpenAIUsage(response.usage),
       };
     } catch (cause) {
       if (cause instanceof ModelError) throw cause;
@@ -177,7 +174,7 @@ export class SarvamProvider implements ModelProvider {
     const json = (await response.json().catch(() => ({}))) as {
       choices?: { message?: { content?: string } }[];
       model?: string;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      usage?: OpenAIUsage;
       error?: { message?: string } | string;
     };
     if (!response.ok) {
@@ -190,7 +187,7 @@ export class SarvamProvider implements ModelProvider {
     return {
       data: parseLooseJson<T>(content, this.name),
       model: json.model ?? env.SARVAM_CHAT_MODEL,
-      usage: { inputTokens: json.usage?.prompt_tokens, outputTokens: json.usage?.completion_tokens },
+      usage: fromOpenAIUsage(json.usage),
     };
   }
 }

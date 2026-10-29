@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { env } from '@/lib/env';
 import { noteCost } from '@/lib/costs/record';
 import { SARVAM } from '@/lib/costs/prices';
+import { AGENT_VOICE_MODEL } from '@/lib/voice/voices';
 
 /**
  * Speaking on a Plivo-driven call in the customer's own voice.
@@ -53,7 +54,7 @@ export async function synthesise(text: string, voice: Voice): Promise<Buffer | n
         text,
         target_language_code: 'en-IN',
         speaker: voice.speaker,
-        model: voice.model ?? 'bulbul:v3-beta',
+        model: voice.model ?? AGENT_VOICE_MODEL,
         pace: voice.pace,
       }),
       signal: AbortSignal.timeout(20_000),
@@ -62,7 +63,7 @@ export async function synthesise(text: string, voice: Voice): Promise<Buffer | n
     const body = (await response.json()) as { audios?: string[] };
     const first = body.audios?.[0];
     if (!response.ok || !first) return null;
-    const model = voice.model ?? 'bulbul:v3-beta';
+    const model = voice.model ?? AGENT_VOICE_MODEL;
     const per10k = SARVAM.ttsPer10kChars(model);
     noteCost({
       provider: 'Sarvam',

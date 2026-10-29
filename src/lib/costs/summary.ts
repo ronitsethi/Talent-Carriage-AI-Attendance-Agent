@@ -39,7 +39,7 @@ const dollarsLabel = (micros: number) => (micros < 100 ? '<$0.0001' : `$${(micro
 
 /** Lines for the same thing added up, so twelve turns of a call read as one row. */
 function rowsOf(lines: Line[]): CostRow[] {
-  const merged = new Map<string, { line: Line; quantity: number; micros: number | null; times: number }>();
+  const merged = new Map<string, { line: Line; quantity: number; micros: number | null; times: number; cached: number }>();
   for (const line of lines) {
     const key = `${line.provider}|${line.item}|${line.unit}|${line.currency}`;
     const seen = merged.get(key);
@@ -47,19 +47,27 @@ function rowsOf(lines: Line[]): CostRow[] {
       seen.quantity += line.quantity;
       seen.micros = seen.micros === null || line.amountMicros === null ? null : seen.micros + line.amountMicros;
       seen.times += 1;
+      seen.cached += Number(line.detail?.cachedInputTokens ?? 0);
       seen.line = { ...seen.line, estimated: seen.line.estimated || line.estimated };
     } else {
-      merged.set(key, { line, quantity: line.quantity, micros: line.amountMicros, times: 1 });
+      merged.set(key, { line, quantity: line.quantity, micros: line.amountMicros, times: 1, cached: Number(line.detail?.cachedInputTokens ?? 0) });
     }
   }
-  return [...merged.values()].map(({ line, quantity, micros, times }) => ({
+  return [...merged.values()].map(({ line, quantity, micros, times, cached }) => ({
     provider: line.provider,
     item: line.item,
     quantity: `${count(quantity)} ${line.unit}${times > 1 && line.unit === 'tokens' ? ` · ${times} requests` : ''}`,
     inr: toInr(micros, line.currency),
     original: line.currency === 'USD' && micros !== null ? dollarsLabel(micros) : undefined,
     estimated: line.estimated,
-    note: typeof line.detail?.rate === 'string' ? line.detail.rate : typeof line.detail?.source === 'string' ? line.detail.source : undefined,
+    note:
+      typeof line.detail?.rate === 'string'
+        ? line.detail.rate
+        : typeof line.detail?.source === 'string'
+          ? line.detail.source
+          : cached
+            ? `${count(cached)} of the input tokens reused from Azure's cache, at a quarter of the price`
+            : undefined,
   }));
 }
 

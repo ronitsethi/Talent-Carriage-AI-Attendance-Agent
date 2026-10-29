@@ -5,6 +5,7 @@ import { answerQuestion, employeeByNumber } from '@/lib/knowledge';
 import { questionXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
 import { voiceLines } from '@/lib/voice/say';
+import { agentVoice } from '@/lib/voice/voices';
 import { addCallTurn } from '@/lib/conversation/queries';
 import { withCostScope } from '@/lib/costs/record';
 
@@ -52,7 +53,7 @@ export async function POST(request: Request) {
         return {
           tenantId: tenant.id,
           text: answer.text,
-          voice: { speaker: settings?.agentVoice ?? 'ritu', pace: Number(settings?.agentVoicePace ?? 0.95) },
+          voice: { speaker: agentVoice(settings?.agentVoice), pace: Number(settings?.agentVoicePace ?? 0.95) },
         };
       });
       if (found) return found;
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
 
   const text = result?.text ?? 'Sorry, something went wrong at our end. Please contact your H R team.';
   const more = 'Is there anything else?';
-  const voice = result?.voice ?? { speaker: 'ritu', pace: 0.95 };
+  const voice = result?.voice ?? { speaker: agentVoice(null), pace: 0.95 };
 
   const audio = await withCostScope({ tenantId: result?.tenantId, queryId }, () =>
     voiceLines(

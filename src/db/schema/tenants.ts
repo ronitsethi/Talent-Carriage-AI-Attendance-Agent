@@ -61,7 +61,7 @@ export const tenantSettings = pgTable('tenant_settings', {
    * which voice sounds right is a matter of taste and of who is being called -
    * a factory floor and a head office do not want the same thing.
    */
-  agentVoice: text('agent_voice').notNull().default('ritu'),
+  agentVoice: text('agent_voice').notNull().default('simran_enhi_customer'),
   agentVoicePace: numeric('agent_voice_pace', { precision: 3, scale: 2 }).notNull().default('0.95'),
   /** Master switch: false means cases are created but nothing is ever delivered. */
   sendingEnabled: boolean('sending_enabled').notNull().default(false),

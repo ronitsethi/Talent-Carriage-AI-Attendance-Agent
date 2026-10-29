@@ -8,7 +8,7 @@ import { answerQuestion, employeeByNumber, warmModel } from '@/lib/knowledge';
 import { env } from '@/lib/env';
 import { collectTimings, mark, timed } from '@/lib/timing';
 import { buildContext } from '@/lib/runtime';
-import { agentGender } from '@/lib/voice/voices';
+import { agentGender, agentVoice } from '@/lib/voice/voices';
 import { addCallTurn, endCallQuery, startCallQuery } from '@/lib/conversation/queries';
 import { addToCostScope, withCostScope } from '@/lib/costs/record';
 import { recordCallCosts, type WorkerUsage } from '@/lib/costs/calls';
@@ -316,7 +316,7 @@ async function turn(request: Request) {
           queryId,
           language: voiceLanguage(employee.language ?? settings?.defaultLanguage),
           known: true,
-          voice: settings?.agentVoice ?? 'ritu',
+          voice: agentVoice(settings?.agentVoice),
           gender: agentGender(settings?.agentVoice),
           pace: Number(settings?.agentVoicePace ?? 0.95),
           done: false,
@@ -337,7 +337,7 @@ async function turn(request: Request) {
       return {
         say: reply.text,
         known: true,
-        voice: settings?.agentVoice ?? 'ritu',
+        voice: agentVoice(settings?.agentVoice),
         pace: Number(settings?.agentVoicePace ?? 0.95),
         // The model decides whether they were saying goodbye; it judged the
         // words, which no list of phrases can.
@@ -358,7 +358,7 @@ async function turn(request: Request) {
         ? await ctx.tx.query.employees.findFirst({ where: eq(employees.id, call.employeeId) })
         : null;
       return {
-        voice: ctx.settings.agentVoice,
+        voice: agentVoice(ctx.settings.agentVoice),
         gender: agentGender(ctx.settings.agentVoice),
         pace: Number(ctx.settings.agentVoicePace),
         language: employee?.language ?? ctx.settings.defaultLanguage,

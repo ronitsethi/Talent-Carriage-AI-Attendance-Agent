@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { fromOpenAIUsage, type OpenAIUsage } from '@/lib/models/types';
 import type { Db } from '@/db';
 import { calls, cases, employees, messages } from '@/db/schema';
 import { env } from '@/lib/env';
@@ -364,8 +365,13 @@ const HINGLISH = new Set(
  * The voice listens in Hindi, so a sentence written in another Indian script is
  * a mishearing - it once turned "haan, sir" into Telugu and the agent answered
  * in Telugu - unless that language is the employee's own.
+ *
+ * Fewer than three words never switch it. A murmur or a voice in the room comes
+ * through as one or two words - "हम्म", "बहुत" - and in Devanagari, and answering
+ * that in Hindi turned an English call into Hindi on a sound.
  */
 export function spokenLanguage(said: string, preferred: VoiceLanguage, current: VoiceLanguage = preferred): VoiceLanguage {
+  if (said.trim().split(/\s+/).filter(Boolean).length < 3) return current;
   for (const [script, language] of SCRIPTS) {
     if (!script.test(said)) continue;
     if (language === 'hi-IN') return preferred === 'mr-IN' ? 'mr-IN' : 'hi-IN';
@@ -507,13 +513,16 @@ function describe(ctx: TalkContext, s: Situation): string {
     );
   }
 
+  lines.push('', 'CONVERSATION SO FAR');
+  lines.push(...(s.history.length ? s.history.slice(-14).map(historyLine) : ['(nothing yet)']));
+
+  // What was looked up for this turn comes after the conversation, not before
+  // it: it changes every turn, and everything above it is then the same as the
+  // last turn's prompt, which Azure reuses from its cache at a quarter of the price.
   if (s.grounding?.passages.length) {
     lines.push('', `POLICY EXTRACTS\n${s.grounding.passages.map((p) => `[${p.title}] ${p.text}`).join('\n\n')}`);
   }
   if (s.grounding?.attendance) lines.push('', `ATTENDANCE\n${s.grounding.attendance}`);
-
-  lines.push('', 'CONVERSATION SO FAR');
-  lines.push(...(s.history.length ? s.history.slice(-14).map(historyLine) : ['(nothing yet)']));
   const reply = spokenLanguage(s.said ?? '', preferred, languageSoFar(s.history, preferred));
   if (chat) {
     lines.push('', `THEY JUST WROTE: "${s.said ?? ''}"\nREPLY IN: ${reply} (the language of what they just wrote)`, beforeYouAnswer(s.history));
@@ -649,11 +658,8 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
       }
     });
     raw = result.raw;
-    noteModelCost('openai', request.model, { inputTokens: result.usage?.prompt_tokens, outputTokens: result.usage?.completion_tokens }, 'Conversation reply');
-    void chargeBudget(budgetOf(mode), request.model, {
-      inputTokens: result.usage?.prompt_tokens,
-      outputTokens: result.usage?.completion_tokens,
-    }).catch((error) => console.error('[budget] could not record the cost:', (error as Error).message));
+    noteModelCost('openai', request.model, fromOpenAIUsage(result.usage), 'Conversation reply');
+    void chargeBudget(budgetOf(mode), request.model, fromOpenAIUsage(result.usage)).catch((error) => console.error('[budget] could not record the cost:', (error as Error).message));
   } catch (error) {
     console.error('[talk] the model failed:', (error as Error).message);
     if (spoke) return { done: false, nextCaseId: caseRow?.id ?? null, language: language ?? fallbackLanguage };
@@ -755,11 +761,8 @@ export async function chatTurn(
 
   try {
     const result = await (args.model ?? streamChat)(request, () => {});
-    noteModelCost('openai', request.model, { inputTokens: result.usage?.prompt_tokens, outputTokens: result.usage?.completion_tokens }, 'Chat reply');
-    void chargeBudget('whatsapp', request.model, {
-      inputTokens: result.usage?.prompt_tokens,
-      outputTokens: result.usage?.completion_tokens,
-    }).catch((error) => console.error('[budget] could not record the cost:', (error as Error).message));
+    noteModelCost('openai', request.model, fromOpenAIUsage(result.usage), 'Chat reply');
+    void chargeBudget('whatsapp', request.model, fromOpenAIUsage(result.usage)).catch((error) => console.error('[budget] could not record the cost:', (error as Error).message));
     const verdict = JSON.parse(result.raw) as Verdict;
     if (!verdict.reply?.trim()) return null;
     const outcome = verdict.outcome !== 'none' && OUTCOMES[verdict.outcome] ? verdict.outcome : null;

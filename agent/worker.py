@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import random
+import re
 import tempfile
 import time
 from dataclasses import dataclass
@@ -27,9 +28,9 @@ from pathlib import Path
 import aiohttp
 from dotenv import load_dotenv
 from livekit import agents, api
-from livekit.agents import Agent, AgentSession, JobContext, JobProcess, StopResponse, WorkerOptions, cli
+from livekit.agents import Agent, AgentSession, JobContext, JobProcess, StopResponse, WorkerOptions, cli, room_io
 from livekit.agents.voice.recorder_io import RecorderIO
-from livekit.plugins import openai, sarvam, silero
+from livekit.plugins import noise_cancellation, openai, sarvam, silero
 
 load_dotenv()
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -43,8 +44,10 @@ AGENT_API_TOKEN = os.environ.get("AGENT_API_TOKEN", "")
 
 # The voice belongs to the customer being called and is read from their
 # settings; these are only the fallbacks for when the platform cannot be asked.
-VOICE = os.environ.get("AGENT_VOICE", "ritu")
-VOICE_MODEL = os.environ.get("AGENT_VOICE_MODEL", "bulbul:v3-beta")
+# Bulbul v4 Flash, a third of v3's price; its voices are named for a person, a
+# language and a style, and the Hinglish ("enhi") ones carry both languages.
+VOICE = os.environ.get("AGENT_VOICE", "simran_enhi_customer")
+VOICE_MODEL = os.environ.get("AGENT_VOICE_MODEL", "bulbul:v4-flash")
 VOICE_PACE = float(os.environ.get("AGENT_VOICE_PACE", "0.95"))
 STT_VENDOR = os.environ.get("AGENT_STT", "sarvam")
 # Azure OpenAI deployment names. The base URL comes from OPENAI_BASE_URL, which
@@ -87,11 +90,16 @@ STT_SILENCE_MS = int(os.environ.get("AGENT_STT_SILENCE_MS", "800"))
 TURN_HANDLING = {
     "endpointing": {"min_delay": END_OF_TURN_MIN_S, "max_delay": END_OF_TURN_MAX_S},
     "interruption": {
-        # One word - "hello?", "haan" - is somebody saying they are there, not
-        # somebody cutting in, and stopping mid-sentence for it left the caller
-        # in two seconds of silence. Two words stop the agent at once: the
-        # realtime recogniser hands over words while they are still talking.
-        "min_words": 2,
+        # Plain voice activity, not LiveKit's "adaptive" detector: that one
+        # asks LiveKit's hosted inference on every overlap, which is a round
+        # trip and a bill for what the two limits below already do.
+        "mode": "vad",
+        # One or two words - "hello?", "haan", "hmm haan", a voice in the room -
+        # are somebody saying they are there, or not the caller at all, and
+        # stopping mid-sentence for them left the caller in silence. Three
+        # words, said over most of a second, are somebody cutting in.
+        "min_words": 3,
+        "min_duration": 0.8,
         # Once they have talked over a reply, it is not picked up again where it
         # stopped: resuming it after they finished meant the agent answered the
         # first half of what they said and then the second, one after the other.
@@ -100,6 +108,10 @@ TURN_HANDLING = {
         "resume_false_interruption": False,
         "false_interruption_timeout": 0.6,
     },
+    # LiveKit starts its own model reply while the caller is still finishing,
+    # on by default. Every reply here comes from the platform, so that early
+    # one was always thrown away - and still paid for.
+    "preemptive_generation": {"enabled": False},
 }
 
 # If no part of a reply has arrived by then, the caller hears a filler instead
@@ -521,6 +533,35 @@ class CallRecorder:
             self._path.unlink(missing_ok=True)
 
 
+# Sounds, not words: somebody thinking, or listening. Answered, each became a
+# reply nobody asked for, in Hindi when it came through in Devanagari. Short
+# real answers - "haan", "ok", "no", "ji" - are not here. "हम" ("we") is a word.
+FILLER_SOUND = re.compile(
+    r"(h+m+|m+|u+m+|u+h+|a+h+|a+|e+r+m*|ह+म्+म*|उ+म्*म*|उ+ह|आ+ह?|अ+)",
+    re.IGNORECASE,
+)
+
+
+def is_filler(said: str) -> bool:
+    """Whether everything in a turn was a sound - "hmm", "हम्म", "uh", "आ" - and nothing an answer."""
+    words = re.findall(r"[\w\u0900-\u0963\u0966-\u097F]+", said)  # not the danda (।, ॥)
+    return bool(words) and all(FILLER_SOUND.fullmatch(word) for word in words)
+
+
+# LiveKit's filter for phone audio, on what the caller says before it is
+# transcribed: it keeps the voice closest to the phone and drops the room. The
+# stray words were real sound - murmurs and somebody else talking nearby -
+# heard as speech, sometimes in Hindi.
+CALLER_AUDIO = room_io.RoomOptions(
+    audio_input=room_io.AudioInputOptions(noise_cancellation=noise_cancellation.BVCTelephony()),
+)
+
+
+def speaker(voice: str | None) -> str:
+    """A v4 voice to speak in. A v3 name ("ritu") from before the switch is refused by Sarvam."""
+    return voice if voice and "_" in voice else VOICE
+
+
 def heard_of(handle) -> str | None:  # noqa: ANN001
     """
     How much of a reply the caller heard: None if all of it, the words played
@@ -745,9 +786,12 @@ class TalkingAgent(Agent):
         return self._greeting and len(said.split()) <= GREETING_WORDS
 
     def _skip(self, said: str, message) -> bool:  # noqa: ANN001
-        """Turns not to answer: nothing said, the call over, their hello, or a stale "haan"."""
+        """Turns not to answer: nothing said, the call over, their hello, a stale "haan", or only "hmm"."""
         if self._stale(said, message):
             log.info("not answering %r: said while the last reply was under way", said)
+            return True
+        if is_filler(said):
+            log.info("not answering %r: a sound, not an answer", said)
             return True
         return self._finished or not said or self._is_greeting(said)
 
@@ -1155,7 +1199,7 @@ async def entrypoint(ctx: JobContext) -> None:
             brief = await api_client.ask(caller, None)
         except Exception:
             log.exception("could not open the incoming call")
-        voice = brief.get("voice") or VOICE
+        voice = speaker(brief.get("voice"))
         pace = float(brief.get("pace") or VOICE_PACE)
         api_client.caller = caller
         api_client.query_id = brief.get("queryId")
@@ -1175,7 +1219,7 @@ async def entrypoint(ctx: JobContext) -> None:
         agent.forget_heard = search_early(session, lambda said: api_client.prepare(said, caller))
         # `record=False` keeps LiveKit's paid cloud recording off, whatever the
         # project is set to; the call is recorded here instead.
-        await session.start(agent=agent, room=ctx.room, record=False)
+        await session.start(agent=agent, room=ctx.room, room_options=CALLER_AUDIO, record=False)
         # Somebody who rings us is on the line already, so from now.
         if api_client.query_id:
             recorder = CallRecorder(session, ctx.job.id)
@@ -1188,7 +1232,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # call in the wrong voice beats a call that never happens.
     try:
         brief = await api_client.brief()
-        voice, pace = brief.get("voice") or VOICE, float(brief.get("pace") or VOICE_PACE)
+        voice, pace = speaker(brief.get("voice")), float(brief.get("pace") or VOICE_PACE)
         log.info("call %s speaks as %s at pace %s", call_id, voice, pace)
     except Exception:
         log.exception("could not read the voice for call %s; using the default", call_id)
@@ -1221,7 +1265,7 @@ async def entrypoint(ctx: JobContext) -> None:
     asyncio.ensure_future(wait_until_answered(ctx.room, answered))
     agent = AttendanceAgent(api_client, answered, gender=brief.get("gender") or "female")
     agent.forget_heard = search_early(session, api_client.prepare)
-    await session.start(agent=agent, room=ctx.room, record=False)
+    await session.start(agent=agent, room=ctx.room, room_options=CALLER_AUDIO, record=False)
     recorder = CallRecorder(session, ctx.job.id)
     recorder.attach()
 

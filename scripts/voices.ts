@@ -1,8 +1,8 @@
 /**
  * Auditions the agent's voice.
  *
- *   npm run voices              # a handful worth considering
- *   npm run voices ritu amit    # just these
+ *   npm run voices              # every voice Settings offers
+ *   npm run voices simran_enhi_customer   # just this one
  *
  * The right voice is a judgement made by ear, not from a list of names, so this
  * speaks the actual opening line in each one and saves them to `voices/`.
@@ -11,9 +11,10 @@ import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import 'dotenv/config';
+import { AGENT_VOICE_MODEL, AGENT_VOICES } from '@/lib/voice/voices';
 
-/** Sarvam's customer-care voices: warm, unhurried, Indian. */
-const SHORTLIST = ['ritu', 'pooja', 'priya', 'kavya', 'rahul', 'amit', 'dev', 'rohan'];
+/** The voices Settings offers. */
+const SHORTLIST = AGENT_VOICES.map((voice) => voice.id);
 
 const LINE =
   'Hello Aryan. This is the attendance assistant from Demo Industries. ' +
@@ -25,7 +26,7 @@ async function main() {
   if (!key) throw new Error('SARVAM_API_KEY must be set in .env');
 
   const voices = process.argv.slice(2).length ? process.argv.slice(2) : SHORTLIST;
-  const model = process.env.AGENT_VOICE_MODEL ?? 'bulbul:v3-beta';
+  const model = process.env.AGENT_VOICE_MODEL ?? AGENT_VOICE_MODEL;
   const directory = path.resolve('voices');
   await mkdir(directory, { recursive: true });
 

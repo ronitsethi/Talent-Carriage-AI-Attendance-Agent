@@ -5,6 +5,7 @@ import { employeeByNumber } from '@/lib/knowledge';
 import { questionXml, speakAndHangupXml, xmlResponse } from '@/lib/voice/xml';
 import { env } from '@/lib/env';
 import { voiceLines } from '@/lib/voice/say';
+import { agentVoice } from '@/lib/voice/voices';
 import { withCostScope } from '@/lib/costs/record';
 import { recordingsConfigured } from '@/lib/recordings';
 import { startCallQuery } from '@/lib/conversation/queries';
@@ -35,7 +36,7 @@ export async function inboundXml(request: Request): Promise<Response> {
           tenantId: tenant.id,
           employeeId: employee.id,
           name: employee.fullName,
-          voice: { speaker: settings?.agentVoice ?? 'ritu', pace: Number(settings?.agentVoicePace ?? 0.95) },
+          voice: { speaker: agentVoice(settings?.agentVoice), pace: Number(settings?.agentVoicePace ?? 0.95) },
         };
       }
     }

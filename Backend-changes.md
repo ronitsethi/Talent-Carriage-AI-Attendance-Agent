@@ -11,6 +11,24 @@ Format:
 - **Impact:** e.g. breaking API change, migration required, new env var
 ```
 
+## 2026-10-29 11:10
+- **Files:** agent/worker.py, agent/requirements.txt, src/lib/voice/voices.ts, src/lib/voice/say.ts, src/app/api/agent/turn/route.ts, src/app/api/voice/inbound/route.ts, src/app/api/voice/ask/route.ts, src/lib/costs/prices.ts, src/lib/conversation/talk.ts, src/db/schema/tenants.ts, src/db/migrations/0022_v4_voices.sql
+- **Change:** Bulbul v4 Flash for all agent speech, with five Hinglish voices and old v3 names mapped to them. The worker filters caller audio with LiveKit BVCTelephony, interrupts on 3 words over 0.8 s (VAD mode), and skips filler-only turns. Turns under three words keep the reply language. TTS is priced at ₹10/10K characters for v4 Flash.
+- **Why:** A third of the speech cost, and stray transcribed sounds were interrupting the agent, getting replies and switching languages.
+- **Impact:** Migration 0022 required (column default plus rewrite of `tenant_settings.agent_voice`). New worker image v15 (livekit-agents 1.8.8 and new noise-cancellation dependency) needs a container app update. The filter adds CPU on the 0.5 vCPU worker; watch it on the first calls. No API or env change.
+
+## 2026-10-29 10:00
+- **Files:** agent/worker.py
+- **Change:** Turned off LiveKit preemptive generation in TURN_HANDLING.
+- **Why:** Its speculative LLM replies were always discarded (replies come from the platform) but still paid for.
+- **Impact:** Needs a new worker image (v15) and container app update; no API, schema or env change.
+
+## 2026-10-28 13:58
+- **Files:** src/lib/conversation/talk.ts, src/lib/models/types.ts, src/lib/models/providers.ts, src/lib/knowledge/index.ts, src/lib/models/budget.ts, src/lib/costs/prices.ts, src/lib/costs/record.ts, src/lib/costs/summary.ts
+- **Change:** The per-turn prompt puts the conversation history before that turn's look-ups, for Azure's prompt cache. Model usage carries `cachedInputTokens`, priced at the cached rate in cost lines and the AI budgets.
+- **Why:** Lower and correctly counted AI cost per call.
+- **Impact:** No migration, no new env var. AI budgets are now charged less for the same requests (correctly).
+
 ## 2026-10-28 13:36
 - **Files:** src/lib/costs/calls.ts, src/lib/costs/plivo.ts, src/app/api/voice/status/route.ts, src/db/migrations/0021_plivo_rupees.sql, src/db/migrations/meta/_journal.json
 - **Change:** Plivo phone lines are priced as the seconds Plivo billed × ₹0.38/min on a rupee account, instead of Plivo's API amount (which is in US dollars) stored as rupees. Migration 0021 corrects the lines already saved.

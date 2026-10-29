@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession, canManageSettings } from '@/lib/auth';
 import { tenantSummary } from '@/lib/queries';
 import { updateSettings } from '@/app/actions';
-import { AGENT_VOICES } from '@/lib/voice/voices';
+import { AGENT_VOICES, agentVoice } from '@/lib/voice/voices';
 import { capabilities, env } from '@/lib/env';
 
 /** Where attendance comes from decides who applies leave and regularisation: the employee, or the agent. */
@@ -124,7 +124,7 @@ export default async function SettingsPage() {
               <div className="row">
                 <div className="field" style={{ width: 240 }}>
                   <label htmlFor="agentVoice">Voice</label>
-                  <select className="input" id="agentVoice" name="agentVoice" defaultValue={settings.agentVoice}>
+                  <select className="input" id="agentVoice" name="agentVoice" defaultValue={agentVoice(settings.agentVoice)}>
                     <optgroup label="Female">
                       {AGENT_VOICES.filter((v) => v.gender === 'female').map((voice) => (
                         <option key={voice.id} value={voice.id}>
