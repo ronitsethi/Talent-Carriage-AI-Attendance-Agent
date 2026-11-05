@@ -11,6 +11,12 @@ Format:
 - **Impact:** e.g. breaking API change, migration required, new env var
 ```
 
+## 2026-11-05 22:45
+- **Files:** src/lib/company.ts (new), src/lib/mapping/import.ts, src/app/actions.ts, src/app/(app)/mapping/page.tsx, tests/company.test.ts (new), CURRENT_STATE.md
+- **Change:** Attendance and payroll uploads only go into the customer being viewed. The file's company column is found by its heading (Company, Company name, Employer, Organisation, Legal entity, Entity; no mapping), and every name in it must match the viewing customer's name, ignoring case, punctuation and legal-form words (Private Limited, Pvt Ltd, LLP...), with either name allowed to be the shorter form of the other. Otherwise the upload is refused: "<file> is attendance/payroll for <company>, not <customer>. Switch to that customer under Viewing customer, or upload this customer's own file." Attendance: `importAttendanceFile` throws, recorded as a failed import (the notice now says "was not imported" instead of "could not be read"). Payroll: `uploadPayroll` returns the problem. A file with no company column is not checked.
+- **Why:** Stop one company's attendance or payroll being uploaded into another customer.
+- **Impact:** No migration. A customer whose portal name shares no words with the legal name in its files will have its uploads refused until the name is changed.
+
 ## 2026-11-05 21:50
 - **Files:** none changed (production database, deploy, git), CURRENT_STATE.md
 - **Change:** Applied migration 0031 to production (32 migrations; `payroll_profiles`, `payroll_uploads`, `payroll_rows` present under tenant RLS), through a temporary firewall rule for 122.161.39.143, removed after. Deployed to `tc-attendance-99772` (healthy), then committed and pushed to both repos.

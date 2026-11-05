@@ -2,6 +2,11 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-05 22:45
+- **Files:** src/lib/company.ts (new), src/lib/mapping/import.ts, src/app/actions.ts, src/app/(app)/mapping/page.tsx, tests/company.test.ts (new), CURRENT_STATE.md
+- **Change:** Attendance and payroll uploads only go into the customer being viewed. The file's company column is found by its heading (Company, Company name, Employer, Organisation, Legal entity, Entity; no mapping), and every name in it must match the viewing customer's name, ignoring case, punctuation and legal-form words (Private Limited, Pvt Ltd, LLP...), with either name allowed to be the shorter form of the other. Otherwise the upload is refused: "<file> is attendance/payroll for <company>, not <customer>. Switch to that customer under Viewing customer, or upload this customer's own file." Attendance: `importAttendanceFile` throws, recorded as a failed import (the notice now says "was not imported" instead of "could not be read"). Payroll: `uploadPayroll` returns the problem. A file with no company column is not checked.
+- **Why:** Stop one company's attendance or payroll being uploaded into another customer.
+
 ## 2026-11-05 22:15
 - **Files:** none changed (git history)
 - **Change:** Rewrote the two commits holding a real employee's bank account number and IFSC (old `764707b`, `30c20af`; now `a25d673`, `01408d7`, same files at the end) and force-pushed `main` to both repos. Local backup refs removed and garbage-collected. GitHub still serves the old commit `764707b` by its full id until GitHub Support purges it; `ronitsethi/Talent-Carriage-AI-Attendance-Agent` is public.

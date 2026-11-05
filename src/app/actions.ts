@@ -9,6 +9,7 @@ import type { FollowUpContact, PayrollFieldMap } from '@/db/schema';
 import {
   actions,
   approvals,
+  tenants,
   payrollProfiles,
   payrollUploads,
   attendanceDays,
@@ -53,6 +54,7 @@ import { CodeTaken, PersonClash, readTeamInput, removeTeam, saveTeam, validateTe
 import { createCustomer, deleteCustomer, setCustomerActive, CustomerRefused } from '@/lib/customers';
 import { startUnlockSend, startUploadSend } from '@/lib/upload-send';
 import { isMonth, lockMonth, LOCKED_REASON, monthLabel, unlockMonths } from '@/lib/locks';
+import { companyRefusal } from '@/lib/company';
 import {
   PAYROLL_FIELDS,
   defaultExcluded,
@@ -848,6 +850,10 @@ export async function uploadPayroll(formData: FormData) {
     } catch (error) {
       return { problem: `${file.name} could not be read: ${(error as Error).message}` };
     }
+    // Only this customer's own payroll: every company the file names must be the customer being viewed.
+    const customer = await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId), columns: { name: true } });
+    const wrongCompany = customer ? companyRefusal(table, customer.name, file.name, 'payroll') : null;
+    if (wrongCompany) return { problem: wrongCompany };
     const fits = resolveMap(profile.fieldMap, table.columns);
     if ('missing' in fits) {
       return { problem: `${file.name} does not match the payroll mapping. It has no column ${fits.missing.join(', ')}. Fix the mapping on Mapping & import, or check the file.` };

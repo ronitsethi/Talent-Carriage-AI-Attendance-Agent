@@ -350,7 +350,7 @@ function ImportOutcome({
   if (row.status === 'failed') {
     return (
       <Notice tone="err">
-        <strong>{row.filename} could not be read.</strong> {row.error}
+        <strong>{row.filename} was not imported.</strong> {row.error}
       </Notice>
     );
   }
