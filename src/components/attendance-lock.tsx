@@ -66,10 +66,13 @@ export function UnlockMonths({ months, action }: { months: Month[]; action: (for
 export function UnlockChoice({
   months,
   action,
+  back,
   children,
 }: {
   months: string;
   action: (formData: FormData) => void | Promise<void>;
+  /** The page it was asked on, which closing returns to without the question. */
+  back: string;
   children: ReactNode;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -82,7 +85,7 @@ export function UnlockChoice({
 
   const justUnlock = () => {
     dialog.current?.close();
-    router.replace('/mapping', { scroll: false });
+    router.replace(back, { scroll: false });
   };
 
   return (

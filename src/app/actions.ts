@@ -777,12 +777,12 @@ export async function lockAttendance(formData: FormData) {
   const { session, tenantId } = await requireTenant();
   if (!canManageSettings(session)) throw new Error('Only an admin can lock attendance');
   const month = String(formData.get('month') ?? '');
-  if (!isMonth(month)) redirect('/mapping?problem=' + encodeURIComponent('Choose a month to lock.'));
+  if (!isMonth(month)) redirect('/settings?problem=' + encodeURIComponent('Choose a month to lock.'));
   const { cases: moved } = await withTenant(tenantId, (tx) => lockMonth(tx, tenantId, month, session.userId));
   revalidatePath('/');
   revalidatePath('/cases');
-  revalidatePath('/mapping');
-  redirect(`/mapping?locked=${month}&moved=${moved}`);
+  revalidatePath('/settings');
+  redirect(`/settings?locked=${month}&moved=${moved}#attendance-lock`);
 }
 
 /**
@@ -793,12 +793,12 @@ export async function unlockAttendance(formData: FormData) {
   const { session, tenantId } = await requireTenant();
   if (!canManageSettings(session)) throw new Error('Only an admin can unlock attendance');
   const months = formData.getAll('month').map(String).filter(isMonth);
-  if (!months.length) redirect('/mapping?problem=' + encodeURIComponent('Choose at least one month to unlock.'));
+  if (!months.length) redirect('/settings?problem=' + encodeURIComponent('Choose at least one month to unlock.'));
   const result = await withTenant(tenantId, (tx) => unlockMonths(tx, tenantId, months));
   revalidatePath('/');
   revalidatePath('/cases');
-  revalidatePath('/mapping');
-  redirect(`/mapping?unlocked=${result.months.join(',')}&restored=${result.cases}`);
+  revalidatePath('/settings');
+  redirect(`/settings?unlocked=${result.months.join(',')}&restored=${result.cases}#attendance-lock`);
 }
 
 /** HR chose Send after unlocking: what is due goes out, as after an upload. */
@@ -809,7 +809,7 @@ export async function sendAfterUnlock(formData: FormData) {
   const { people, delayMinutes } = await startUnlockSend(tenantId, months);
   revalidatePath('/');
   revalidatePath('/cases');
-  redirect(`/mapping?scheduled=${people}&after=${delayMinutes}`);
+  redirect(`/settings?scheduled=${people}&after=${delayMinutes}#attendance-lock`);
 }
 
 /**

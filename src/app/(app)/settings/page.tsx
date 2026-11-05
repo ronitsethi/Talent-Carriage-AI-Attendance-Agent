@@ -5,6 +5,8 @@ import { updateSettings } from '@/app/actions';
 import { FollowUpContacts } from '@/components/follow-up-contacts';
 import { AGENT_VOICES, agentVoice } from '@/lib/voice/voices';
 import { capabilities, env } from '@/lib/env';
+import { AttendanceLockCard, type LockParams } from '@/components/attendance-lock-card';
+import { Notice } from '@/components/notice';
 
 /** Where attendance comes from decides who applies leave and regularisation: the employee, or the agent. */
 const SOURCES = [
@@ -25,7 +27,7 @@ const MODES = [
   { value: 'automatic', title: 'Automatic', copy: 'Each upload offers to send what is due' },
 ] as const;
 
-export default async function SettingsPage() {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<LockParams & { problem?: string }> }) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
@@ -35,6 +37,7 @@ export default async function SettingsPage() {
   const caps = capabilities();
   if (!settings) return <p style={{ paddingTop: 40 }}>This customer has no settings row.</p>;
   const readOnly = !canManageSettings(session);
+  const params = await searchParams;
 
   return (
     <>
@@ -43,6 +46,12 @@ export default async function SettingsPage() {
         <h1>{tenant?.name}</h1>
         <p>How the agent behaves for this customer. Everything here is per customer, not global.</p>
       </section>
+
+      {params.problem ? (
+        <Notice tone="err" clear={['problem']}>
+          {params.problem}
+        </Notice>
+      ) : null}
 
       {/*
         Keyed on when the settings last changed.
@@ -252,6 +261,11 @@ export default async function SettingsPage() {
           </section>
         </div>
       </form>
+
+      {/* Its own forms, so it sits outside the settings form: forms cannot nest. */}
+      <div className="gap-above">
+        <AttendanceLockCard tenantId={tenantId} admin={!readOnly} params={params} />
+      </div>
     </>
   );
 }

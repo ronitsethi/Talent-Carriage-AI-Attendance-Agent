@@ -235,7 +235,7 @@ export default async function CaseDetailPage({
             {locked ? (
               <p className="hint card-rule">
                 Attendance for {monthLabel(caseRow.attDate.slice(0, 7))} is locked, so this case is frozen where it was. Nobody is
-                contacted about it, and it cannot be closed, flagged or reset until the month is unlocked on Mapping &amp; import.
+                contacted about it, and it cannot be closed, flagged or reset until the month is unlocked in Settings.
               </p>
             ) : gone ? (
               <p className="hint card-rule">

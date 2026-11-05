@@ -2,6 +2,11 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-05 19:20
+- **Files:** src/components/attendance-lock-card.tsx (new), src/components/attendance-lock.tsx, src/app/(app)/settings/page.tsx, src/app/(app)/mapping/page.tsx, src/app/(app)/cases/[id]/page.tsx, src/app/actions.ts, src/app/globals.css, CURRENT_STATE.md
+- **Change:** The Lock attendance card moved from Mapping & import to Settings, below the settings form (its own forms, outside that one). Lock, unlock and Send-after-unlock now return to `/settings#attendance-lock`, where the toasts and the Send / Just unlock dialog appear; Settings shows a `problem` notice. The locked case page now says the month is unlocked in Settings. Mapping & import keeps only the import report's "days skipped: attendance is locked" line.
+- **Why:** The user wants the lock controls in Settings.
+
 ## 2026-11-05 19:00
 - **Files:** none changed (production database, deploy, git), CURRENT_STATE.md
 - **Change:** Applied migration 0030 to production (31 migrations; `call_lines` and `attendance_locks` present, the lock table under tenant RLS), through a temporary firewall rule for 122.161.39.143, removed after. Deployed to `tc-attendance-99772` (healthy), then committed and pushed to both repos.
