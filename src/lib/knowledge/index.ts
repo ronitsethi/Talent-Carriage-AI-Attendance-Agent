@@ -1,4 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import { PAYROLL_RULES, payrollSummary } from '@/lib/payroll';
 import { fromOpenAIUsage, type OpenAIUsage } from '@/lib/models/types';
 import { RAISE_TICKET } from '@/lib/conversation/flow';
 import type { Db } from '@/db';
@@ -276,7 +277,9 @@ make the reply a short goodbye. Somebody who thanks you and then asks something 
 finished.
 
 Set answered to false only when you had to send them to HR because nothing given to you
-covers it.`;
+covers it.
+
+${PAYROLL_RULES}`;
 
 /** The same rules, for a WhatsApp chat instead of a phone call. */
 const CHAT_RULES = ANSWER_RULES.replace('on a phone call', 'on WhatsApp')
@@ -345,9 +348,10 @@ async function prepareAnswer(tx: Db, tenantId: string, question: string, opts: A
   }
 
   // Neither lookup needs the other, and on a call both are silence.
-  const [passages, attendance] = await Promise.all([
+  const [passages, attendance, payroll] = await Promise.all([
     findPassages(tx, tenantId, question, 10, opts.budget),
     opts.employeeId ? timed('attendance_db', () => attendanceSummary(tx, tenantId, opts.employeeId!)) : '',
+    opts.employeeId ? timed('attendance_db', () => payrollSummary(tx, tenantId, opts.employeeId!)) : '',
   ]);
   const relevant = passages.filter((p) => p.score >= RELEVANCE_FLOOR);
   if (!relevant.length && !attendance) {
@@ -364,6 +368,7 @@ async function prepareAnswer(tx: Db, tenantId: string, question: string, opts: A
   const context = [
     relevant.length ? `POLICY EXTRACTS\n${relevant.map((p) => `[${p.title}] ${p.text}`).join('\n\n')}` : '',
     attendance ? `THIS EMPLOYEE'S OWN ATTENDANCE${opts.employeeName ? ` (${opts.employeeName})` : ''}\n${attendance}` : '',
+    payroll ? `PAYROLL\n${payroll}` : '',
   ]
     .filter(Boolean)
     .join('\n\n');

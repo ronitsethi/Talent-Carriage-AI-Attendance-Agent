@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  CalendarCheck,
   ArrowLeftRight,
   BookOpen,
   ClipboardCheck,
@@ -31,6 +32,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/employees', label: 'Employees', icon: ContactRound },
   { href: '/managers', label: 'Managers', icon: UserCheck },
   { href: '/mapping', label: 'Mapping & import', icon: ArrowLeftRight },
+  { href: '/month-end', label: 'Month end', icon: CalendarCheck },
   { href: '/knowledge', label: 'Guidelines', icon: BookOpen },
   { href: '/settings', label: 'Settings', icon: SlidersHorizontal },
 ];

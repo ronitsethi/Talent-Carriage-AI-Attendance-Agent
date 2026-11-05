@@ -5,10 +5,12 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
-import type { FollowUpContact } from '@/db/schema';
+import type { FollowUpContact, PayrollFieldMap } from '@/db/schema';
 import {
   actions,
   approvals,
+  payrollProfiles,
+  payrollUploads,
   attendanceDays,
   calls,
   cases,
@@ -50,7 +52,20 @@ import { summariseCase, summariseQuery } from '@/lib/conversation/summary';
 import { CodeTaken, PersonClash, readTeamInput, removeTeam, saveTeam, validateTeam } from '@/lib/coe';
 import { createCustomer, deleteCustomer, setCustomerActive, CustomerRefused } from '@/lib/customers';
 import { startUnlockSend, startUploadSend } from '@/lib/upload-send';
-import { isMonth, lockMonth, LOCKED_REASON, unlockMonths } from '@/lib/locks';
+import { isMonth, lockMonth, LOCKED_REASON, monthLabel, unlockMonths } from '@/lib/locks';
+import {
+  PAYROLL_FIELDS,
+  defaultExcluded,
+  detectFields,
+  importPayroll,
+  missingRequired,
+  monthInFile,
+  payrollProfile,
+  payrollRefusal,
+  payrollTable,
+  resolveExcluded,
+  resolveMap,
+} from '@/lib/payroll';
 import { listQueryTypes, parseQueryTypeSheet, replaceQueryTypes } from '@/lib/query-types';
 import { PRIORITIES, closeTicket, queueAssignmentWork, type Priority } from '@/lib/tickets';
 import { sendApprovalRequest } from '@/lib/approvals';
@@ -777,12 +792,12 @@ export async function lockAttendance(formData: FormData) {
   const { session, tenantId } = await requireTenant();
   if (!canManageSettings(session)) throw new Error('Only an admin can lock attendance');
   const month = String(formData.get('month') ?? '');
-  if (!isMonth(month)) redirect('/settings?problem=' + encodeURIComponent('Choose a month to lock.'));
+  if (!isMonth(month)) redirect('/month-end?problem=' + encodeURIComponent('Choose a month to lock.'));
   const { cases: moved } = await withTenant(tenantId, (tx) => lockMonth(tx, tenantId, month, session.userId));
   revalidatePath('/');
   revalidatePath('/cases');
-  revalidatePath('/settings');
-  redirect(`/settings?locked=${month}&moved=${moved}#attendance-lock`);
+  revalidatePath('/month-end');
+  redirect(`/month-end?locked=${month}&moved=${moved}#attendance-lock`);
 }
 
 /**
@@ -793,12 +808,131 @@ export async function unlockAttendance(formData: FormData) {
   const { session, tenantId } = await requireTenant();
   if (!canManageSettings(session)) throw new Error('Only an admin can unlock attendance');
   const months = formData.getAll('month').map(String).filter(isMonth);
-  if (!months.length) redirect('/settings?problem=' + encodeURIComponent('Choose at least one month to unlock.'));
+  if (!months.length) redirect('/month-end?problem=' + encodeURIComponent('Choose at least one month to unlock.'));
   const result = await withTenant(tenantId, (tx) => unlockMonths(tx, tenantId, months));
   revalidatePath('/');
   revalidatePath('/cases');
-  revalidatePath('/settings');
-  redirect(`/settings?unlocked=${result.months.join(',')}&restored=${result.cases}#attendance-lock`);
+  revalidatePath('/month-end');
+  redirect(`/month-end?unlocked=${result.months.join(',')}&restored=${result.cases}#attendance-lock`);
+}
+
+/* ------------------------------------------------------------------ *
+ * Payroll (admins): once a month, after the month's attendance is locked
+ * ------------------------------------------------------------------ */
+
+const back = (params: Record<string, string>) => `/month-end?${new URLSearchParams(params).toString()}#payroll`;
+const toMapping = (params: Record<string, string>) => `/mapping?${new URLSearchParams(params).toString()}#payroll-mapping`;
+
+/**
+ * A month's payroll file, read with this customer's saved payroll mapping. A
+ * file that does not fit the mapping is refused with what is missing, and the
+ * mapping is fixed on Mapping & import.
+ */
+export async function uploadPayroll(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can upload payroll');
+  const month = String(formData.get('month') ?? '');
+  const file = formData.get('file');
+  if (!isMonth(month)) redirect(back({ problem: 'Choose the month this payroll is for.' }));
+  if (!(file instanceof File) || file.size === 0) redirect(back({ problem: 'Choose the payroll file.' }));
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  const outcome = await withTenant(tenantId, async (tx) => {
+    const profile = await payrollProfile(tx, tenantId);
+    if (!profile?.fieldMap) return { problem: 'Set up the payroll mapping on Mapping & import first.' };
+    const refused = await payrollRefusal(tx, tenantId, month);
+    if (refused) return { problem: refused };
+    let table;
+    try {
+      table = payrollTable(buffer);
+    } catch (error) {
+      return { problem: `${file.name} could not be read: ${(error as Error).message}` };
+    }
+    const fits = resolveMap(profile.fieldMap, table.columns);
+    if ('missing' in fits) {
+      return { problem: `${file.name} does not match the payroll mapping. It has no column ${fits.missing.join(', ')}. Fix the mapping on Mapping & import, or check the file.` };
+    }
+    const fileMonth = monthInFile(table);
+    if (fileMonth && fileMonth !== month) return { problem: `${file.name} is the payroll for ${monthLabel(fileMonth)}, not ${monthLabel(month)}.` };
+
+    const [upload] = await tx
+      .insert(payrollUploads)
+      .values({ tenantId, month, filename: file.name, columns: table.columns, uploadedBy: session.userId })
+      .returning();
+    const report = await importPayroll(tx, tenantId, upload!.id, month, table, fits.map, resolveExcluded(profile.excluded, table.columns));
+    await tx.update(payrollUploads).set({ report }).where(eq(payrollUploads.id, upload!.id));
+    return { imported: month };
+  });
+
+  revalidatePath('/month-end');
+  if ('problem' in outcome && outcome.problem) redirect(back({ problem: outcome.problem }));
+  redirect(back({ payroll: (outcome as { imported: string }).imported }));
+}
+
+/**
+ * "Fill the form from a file" for the payroll mapping: a sample is read, the
+ * form is filled with what its headings say, and nothing is saved until HR
+ * checks it and presses Save. The file itself is not kept.
+ */
+export async function analysePayrollFile(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can set up the payroll mapping');
+  const file = formData.get('file');
+  if (!(file instanceof File) || file.size === 0) redirect(toMapping({ problem: 'Choose a payroll file.' }));
+  let table;
+  try {
+    table = payrollTable(Buffer.from(await file.arrayBuffer()));
+  } catch (error) {
+    redirect(toMapping({ problem: `${file.name} could not be read: ${(error as Error).message}` }));
+  }
+  const draft = { fieldMap: detectFields(table.columns), columns: table.columns, excluded: defaultExcluded(table.columns), filename: file.name };
+  await withTenant(tenantId, (tx) =>
+    tx.insert(payrollProfiles).values({ tenantId, draft }).onConflictDoUpdate({ target: payrollProfiles.tenantId, set: { draft } }),
+  );
+  revalidatePath('/mapping');
+  redirect(toMapping({ payrollFilled: '1' }));
+}
+
+/** Saves the payroll mapping. Every upload from then on is read with it. */
+export async function savePayrollMapping(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can set up the payroll mapping');
+  const map = Object.fromEntries(
+    PAYROLL_FIELDS.map((field) => [field.key, String(formData.get(`field_${field.key}`) ?? '').replace(/\s+/g, ' ').trim() || null]),
+  ) as unknown as PayrollFieldMap;
+  const missing = missingRequired(map);
+  if (missing.length) redirect(toMapping({ problem: `Fill in the payroll column for: ${missing.join(', ')}.` }));
+  const chosen = Object.values(map).filter((heading): heading is string => Boolean(heading)).map((heading) => heading.toLowerCase());
+  if (new Set(chosen).size !== chosen.length) redirect(toMapping({ problem: 'Each payroll column can only be used for one thing.' }));
+
+  await withTenant(tenantId, async (tx) => {
+    const current = await payrollProfile(tx, tenantId);
+    const columns = current?.draft?.columns ?? current?.columns ?? [];
+    // With the sample's headings known, the tick boxes say what is kept; otherwise a list, one heading per line.
+    const excluded = columns.length
+      ? (() => {
+          const keep = new Set(formData.getAll('keep').map(String));
+          return columns.filter((column) => !keep.has(column) && !chosen.includes(column.toLowerCase()));
+        })()
+      : String(formData.get('excludedList') ?? '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean);
+    const values = { fieldMap: map, excluded, columns, draft: null, savedAt: new Date(), savedBy: session.userId };
+    await tx.insert(payrollProfiles).values({ tenantId, ...values }).onConflictDoUpdate({ target: payrollProfiles.tenantId, set: values });
+  });
+  revalidatePath('/mapping');
+  revalidatePath('/month-end');
+  redirect(toMapping({ payrollSaved: '1' }));
+}
+
+/** Throws away a payroll mapping filled from a file and not saved. */
+export async function discardPayrollDraft() {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can set up the payroll mapping');
+  await withTenant(tenantId, (tx) => tx.update(payrollProfiles).set({ draft: null }).where(eq(payrollProfiles.tenantId, tenantId)));
+  revalidatePath('/mapping');
+  redirect('/mapping#payroll-mapping');
 }
 
 /** HR chose Send after unlocking: what is due goes out, as after an upload. */
@@ -809,7 +943,7 @@ export async function sendAfterUnlock(formData: FormData) {
   const { people, delayMinutes } = await startUnlockSend(tenantId, months);
   revalidatePath('/');
   revalidatePath('/cases');
-  redirect(`/settings?scheduled=${people}&after=${delayMinutes}#attendance-lock`);
+  redirect(`/month-end?scheduled=${people}&after=${delayMinutes}#attendance-lock`);
 }
 
 /**

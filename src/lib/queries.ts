@@ -4,6 +4,8 @@ import { withPlatformScope, withTenant, type Db } from '@/db';
 import { chasedMeanings } from '@/lib/detection/run';
 import {
   attendanceLocks,
+  payrollProfiles,
+  payrollUploads,
   users,
   coePeople,
   actions,
@@ -732,6 +734,38 @@ export async function attendanceLockOverview(tenantId: string) {
     const lockable = (await monthsWithAttendance(tx, tenantId)).filter((month) => !taken.has(month));
     return { locks, lockable };
   });
+}
+
+/**
+ * The Month end page: every month with attendance, a lock or a payroll, newest
+ * first - whether it is locked, and its payroll if uploaded - and whether this
+ * customer has a payroll mapping to upload with.
+ */
+export async function monthEndOverview(tenantId: string) {
+  return withTenant(tenantId, async (tx) => {
+    const locks = await tx
+      .select({ month: attendanceLocks.month, lockedAt: attendanceLocks.lockedAt })
+      .from(attendanceLocks)
+      .where(eq(attendanceLocks.tenantId, tenantId));
+    const uploads = await tx.select().from(payrollUploads).where(eq(payrollUploads.tenantId, tenantId));
+    const months = [...new Set([...(await monthsWithAttendance(tx, tenantId)), ...locks.map((l) => l.month), ...uploads.map((u) => u.month)])]
+      .sort()
+      .reverse();
+    const profile = (await tx.query.payrollProfiles.findFirst({ where: eq(payrollProfiles.tenantId, tenantId) })) ?? null;
+    return {
+      months: months.map((month) => ({
+        month,
+        lock: locks.find((l) => l.month === month) ?? null,
+        payroll: uploads.find((u) => u.month === month) ?? null,
+      })),
+      mapped: Boolean(profile?.fieldMap),
+    };
+  });
+}
+
+/** The payroll mapping for Mapping & import: saved, and a sample read in and not saved, if any. */
+export async function payrollMappingOverview(tenantId: string) {
+  return withTenant(tenantId, async (tx) => (await tx.query.payrollProfiles.findFirst({ where: eq(payrollProfiles.tenantId, tenantId) })) ?? null);
 }
 
 /** The months whose attendance is locked, for the pages that disable their rows. */

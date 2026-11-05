@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { getActiveTenantId, getSession } from '@/lib/auth';
+import { canManageSettings, getActiveTenantId, getSession } from '@/lib/auth';
+import { PayrollMapping } from '@/components/payroll-mapping';
 import { mappingOverview } from '@/lib/queries';
 import { meaningLabel, formatTime } from '@/lib/display';
 import { analyseMappingFile, importAttendance, saveMapping, sendAfterUpload, setCodeMeaning } from '@/app/actions';
@@ -36,6 +37,8 @@ export default async function MappingPage({
     removed?: string;
     scheduled?: string;
     after?: string;
+    payrollFilled?: string;
+    payrollSaved?: string;
   }>;
 }) {
   const session = await getSession();
@@ -43,7 +46,7 @@ export default async function MappingPage({
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) redirect('/');
 
-  const [{ profile, draft, codes, unmapped, recentImports }, { problem, saved, uploaded, resolved, removed, scheduled, after }] =
+  const [{ profile, draft, codes, unmapped, recentImports }, { problem, saved, uploaded, resolved, removed, scheduled, after, payrollFilled, payrollSaved }] =
     await Promise.all([mappingOverview(tenantId), searchParams]);
   const choice = uploaded ? await previewUploadSend(tenantId, uploaded) : null;
   const settled = settledByUpload(Number(resolved ?? 0), Number(removed ?? 0));
@@ -258,6 +261,10 @@ export default async function MappingPage({
       ) : (
         imports
       )}
+
+      <div className="gap-above">
+        <PayrollMapping tenantId={tenantId} admin={canManageSettings(session)} filled={payrollFilled} saved={payrollSaved} />
+      </div>
     </>
   );
 }

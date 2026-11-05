@@ -10,3 +10,4 @@ export * from './ops';
 export * from './knowledge';
 export * from './coe';
 export * from './locks';
+export * from './payroll';

@@ -218,6 +218,13 @@
       "when": 1791260799269,
       "tag": "0030_attendance_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791347199269,
+      "tag": "0031_payroll",
+      "breakpoints": true
     }
   ]
 }

@@ -46,7 +46,7 @@ export async function AttendanceLockCard({ tenantId, admin, params }: { tenantId
         </Toast>
       ) : null}
       {unlockedMonths.length && choice?.people ? (
-        <UnlockChoice months={unlockedMonths.join(',')} action={sendAfterUnlock} back="/settings">
+        <UnlockChoice months={unlockedMonths.join(',')} action={sendAfterUnlock} back="/month-end">
           <p>
             Attendance unlocked for {unlockedNames}. Do you want to send the{' '}
             <strong>

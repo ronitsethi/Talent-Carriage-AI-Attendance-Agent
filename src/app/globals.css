@@ -860,7 +860,7 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 .ticket-activity li.failed .ticket-activity-when { color: var(--err-ink); font-weight: 600; }
 .ticket-activity-error { flex-basis: 100%; color: var(--err-ink); }
 
-/* Lock attendance (Settings) */
+/* Month end: lock attendance, payroll */
 .gap-above { margin-top: 18px; }
 .lock-row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 4px 0 14px; }
 .lock-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
@@ -868,3 +868,12 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 .lock-list li { font-size: var(--fs-small); }
 .month-picks { display: grid; gap: 8px; margin: 10px 0 12px; }
 .month-pick { display: flex; align-items: center; gap: 10px; font-size: var(--fs-small); }
+
+.lock-card { margin-bottom: 0; }
+.payroll-upload { align-items: flex-end; }
+.payroll-subhead { margin: 18px 0 6px; font-size: var(--fs-small); font-weight: 600; color: var(--ink-900); }
+.payroll-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px 16px; margin-top: 12px; }
+.payroll-keep { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 16px; margin-bottom: 16px; }
+.month-pick.muted { color: var(--ink-500); }
+.payroll-warnings { margin-top: 8px; }
+.payroll-warnings ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
