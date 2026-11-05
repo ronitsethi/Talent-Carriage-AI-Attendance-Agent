@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { withTenant } from '@/db';
 import { attendanceDays, codeMappings, employees, imports, mappingProfiles } from '@/db/schema';
 import { importAttendanceFile } from '@/lib/mapping/import';
+import { lockMonth } from '@/lib/locks';
 import { presetByKey } from '@/lib/mapping/presets';
 import { buildRowPerDayWorkbook, generatePeople } from '@/db/seed/generate';
 import { makeScenario, type Scenario } from './helpers/scenario';
@@ -76,5 +77,23 @@ describe("an upload that includes today's attendance", () => {
     );
     expect(result.report).toMatchObject({ employeesSeen: 1, daysImported: 0, daysHeldBack: 3 });
     expect(result.dateFrom).toBeUndefined();
+  });
+});
+
+describe('an upload that includes a locked month', () => {
+  it('is not rejected, and writes none of that month', async () => {
+    scenario = await makeScenario();
+    const { tenantId } = scenario;
+    await profileFor(tenantId);
+    const [person] = generatePeople(1, 13, 'TL-');
+    const file = buildRowPerDayWorkbook([person!], '2026-09', 5, 13);
+    await withTenant(tenantId, (tx) => lockMonth(tx, tenantId, '2026-09', null));
+
+    const result = await withTenant(tenantId, (tx) =>
+      importAttendanceFile(tx, tenantId, file, { source: 'upload', filename: 'september.xlsx', today: '2026-10-10' }),
+    );
+    expect(result.report).toMatchObject({ employeesSeen: 1, daysImported: 0, daysLocked: 5, lockedMonths: ['2026-09'] });
+    const [row] = await withTenant(tenantId, (tx) => tx.select().from(imports).where(eq(imports.id, result.importId!)));
+    expect(row!.status).not.toBe('failed');
   });
 });

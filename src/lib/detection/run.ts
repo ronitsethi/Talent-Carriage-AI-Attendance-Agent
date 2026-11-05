@@ -5,6 +5,7 @@ import { CHASED_BY_DEFAULT, OPTIONALLY_CHASED } from '@/db/schema/enums';
 import { explainsAbsence, shouldChase, type Meaning } from '@/lib/mapping/meanings';
 import { capAllows, outstandingCount, type EngineContext, type TenantSettings } from '@/lib/conversation/engine';
 import { contactCase, contactCaseById } from '@/lib/contact';
+import { isLocked } from '@/lib/locks';
 import { buildContext, type FullContext } from '@/lib/runtime';
 
 export type Gap = {
@@ -224,6 +225,8 @@ export async function runDailyCheck(ctx: FullContext, opts: DailyCheckOptions): 
   };
 
   if (opts.dryRun) return result;
+  // A locked month's absences stay as they are: no case is opened for them.
+  if (await isLocked(ctx.tx, ctx.tenantId, opts.date)) return result;
 
   const [run] = await ctx.tx
     .insert(detectionRuns)
@@ -311,6 +314,8 @@ export async function ensureCase(tx: Db, tenantId: string, employeeId: string, d
     where: and(eq(cases.tenantId, tenantId), eq(cases.employeeId, employeeId), eq(cases.attDate, date)),
   });
   if (existing) return existing;
+  // Nothing new is opened in a locked month, from the dashboard or anywhere else.
+  if (await isLocked(tx, tenantId, date)) return null;
 
   const day = await tx.query.attendanceDays.findFirst({
     where: and(

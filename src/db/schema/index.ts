@@ -9,3 +9,4 @@ export * from './actions';
 export * from './ops';
 export * from './knowledge';
 export * from './coe';
+export * from './locks';

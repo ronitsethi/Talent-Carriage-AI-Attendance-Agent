@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { monthLabel } from '@/lib/locks';
 import { notFound, redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
 import { caseDetail, tenantSummary } from '@/lib/queries';
@@ -22,7 +23,7 @@ export default async function CaseDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ blocked?: string }>;
+  searchParams: Promise<{ blocked?: string; waiting?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -30,7 +31,7 @@ export default async function CaseDetailPage({
   if (!tenantId) redirect('/');
 
   const { id } = await params;
-  const { blocked } = await searchParams;
+  const { blocked, waiting } = await searchParams;
   const [detail, { settings }] = await Promise.all([caseDetail(tenantId, id), tenantSummary(tenantId)]);
   if (!detail) notFound();
 
@@ -139,9 +140,16 @@ export default async function CaseDetailPage({
   // that is all: every button that would act on it is gone from here, and the
   // server actions behind them refuse it too.
   const gone = Boolean(employee.deletedAt);
+  // Its month's attendance is locked: readable, and nothing can be done to it until it is unlocked.
+  const locked = caseRow.status === 'unresolved';
 
   return (
     <>
+      {waiting ? (
+        <Notice tone="info" clear={['waiting']}>
+          Every call line is busy (at most 3 calls run at once). The call starts as soon as one is free.
+        </Notice>
+      ) : null}
       {blocked ? (
         <Notice tone="err" clear={['blocked']}>
           Nothing was sent: {blocked}.
@@ -224,7 +232,12 @@ export default async function CaseDetailPage({
               </div>
             ) : null}
 
-            {gone ? (
+            {locked ? (
+              <p className="hint card-rule">
+                Attendance for {monthLabel(caseRow.attDate.slice(0, 7))} is locked, so this case is frozen where it was. Nobody is
+                contacted about it, and it cannot be closed, flagged or reset until the month is unlocked on Mapping &amp; import.
+              </p>
+            ) : gone ? (
               <p className="hint card-rule">
                 Kept as a record. {employee.fullName} is deleted, so this case cannot be contacted, closed, flagged or
                 reset until an attendance import brings them back.

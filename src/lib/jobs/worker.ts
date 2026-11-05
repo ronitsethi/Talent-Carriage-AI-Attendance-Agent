@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { closeDb } from '@/db';
 import { handlers } from './handlers';
-import { claim, complete, fail, requeueStalled } from './queue';
+import { Postpone, claim, complete, fail, postpone, requeueStalled } from './queue';
 import { scheduleDueWork } from './scheduler';
 
 /**
@@ -30,6 +30,10 @@ export async function tick(): Promise<{ processed: number }> {
       await complete(job.id);
       console.log(`[worker] ${job.kind} ${job.tenantId ?? 'platform'}:`, JSON.stringify(result));
     } catch (error) {
+      if (error instanceof Postpone) {
+        await postpone(job, error.seconds);
+        continue;
+      }
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[worker] ${job.kind} failed: ${message}`);
       await fail(job, message);

@@ -2,6 +2,31 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-05 19:00
+- **Files:** none changed (production database, deploy, git), CURRENT_STATE.md
+- **Change:** Applied migration 0030 to production (31 migrations; `call_lines` and `attendance_locks` present, the lock table under tenant RLS), through a temporary firewall rule for 122.161.39.143, removed after. Deployed to `tc-attendance-99772` (healthy), then committed and pushed to both repos.
+- **Why:** Put attendance locks and the 3-call limit live.
+
+## 2026-11-05 18:35
+- **Files:** CURRENT_STATE.md
+- **Change:** Listed the lock actions and the Lock attendance card under Routes & Pages.
+- **Why:** Keep the state file complete for the attendance-lock work.
+
+## 2026-11-05 18:30
+- **Files:** src/lib/voice/lines.ts (new), src/lib/voice/waiting.ts (new), src/lib/voice/session.ts, src/lib/voice/approval-calls.ts, src/lib/contact.ts, src/lib/conversation/followup.ts, src/lib/approvals.ts, src/lib/conversation/queries.ts, src/app/api/agent/turn/route.ts, src/app/api/voice/inbound/route.ts, src/lib/jobs/queue.ts, src/lib/jobs/worker.ts, src/lib/jobs/handlers.ts, src/lib/upload-send.ts, src/app/actions.ts, src/app/(app)/page.tsx, src/app/(app)/cases/page.tsx, src/app/(app)/cases/[id]/page.tsx, tests/setup.ts, tests/calls.test.ts, tests/talking-call.test.ts, tests/upload-send.test.ts, tests/locks.test.ts
+- **Change:** No more than 3 calls at once across the whole platform, every kind: first questions, follow-ups, final notices, manager approval calls, and calls employees make to us. A call takes one of the shared lines in `call_lines` (`takeCallLine`, in its own transaction) before it is placed; a line frees itself when its call ends (status completed/failed/simulated or an end time), when an incoming call's query ends, after 2 minutes if the call row never appeared, or after 45 minutes. One number is never rung twice at once. A call that finds every line busy becomes a `waiting_call` job, retried every 15 seconds without spending attempts (`Postpone`), in priority order follow-ups and final notices, then manager calls, then first questions. Sends after an upload or unlock now queue follow-ups and first questions at the same moment, follow-ups first by priority (the old 10-minute gap is gone). An incoming call with every line busy hears "All our lines are busy right now. Please try again in a few minutes." and the call ends (LiveKit greeting returns `done`; the keypad line hangs up). The dashboard, Cases and case page say when calls are waiting for a line. `CALL_LINES` (default 3, max 20) sets the number; the older call tests raise it because they ring one person about every date in one step.
+- **Why:** The single LiveKit voice worker carries only ~3 talking calls; extra dialled calls were answered by silence. The user asked for a 3-call limit covering everything, follow-ups first.
+
+## 2026-11-05 18:30
+- **Files:** src/db/migrations/0030_attendance_locks.sql, src/db/migrations/meta/_journal.json, src/db/schema/enums.ts, src/db/schema/cases.ts, src/db/schema/locks.ts (new), src/db/schema/index.ts, src/db/schema/mapping.ts, src/db/rls.sql, src/lib/locks.ts (new), src/lib/mapping/import.ts, src/lib/detection/run.ts, src/lib/contact.ts, src/lib/approvals.ts, src/lib/conversation/engine.ts, src/lib/jobs/handlers.ts, src/lib/upload-send.ts, src/lib/queries.ts, src/lib/display.ts, src/app/actions.ts, src/app/(app)/page.tsx, src/app/(app)/cases/page.tsx, src/app/(app)/cases/[id]/page.tsx, src/app/(app)/mapping/page.tsx, src/components/attendance-lock.tsx (new), src/app/globals.css, tests/locks.test.ts (new), tests/import-today.test.ts
+- **Change:** Attendance locks. An admin (platform or HR admin) locks a month on Mapping & import (`lockAttendance`); `attendance_locks` holds one row per customer and month. While locked: uploads skip the month's days (report `daysLocked`/`lockedMonths`, notice says so; the file is not rejected); no case is opened in it (`ensureCase`, `runDailyCheck`); nobody is contacted about it (`contactCase` refuses; sends after uploads skip its dates); every case of it still open becomes the new status `unresolved` with where it stood kept in `cases.lock_state` (status, each pending approval's remaining time), shown on a new Unresolved tab with "Attendance locked"; its controls are disabled on the dashboard, Cases and the case page (close/flag/reset refuse it); a never-contacted locked absence stays on the dashboard as Not contacted, disabled. A manager request waiting on a locked case does not time out to HR. A reply after the lock changes nothing: the employee (tapped button, quoted message, or a typed non-question right after a locked question) gets once "Hi X, your attendance for October has been locked, so this can no longer be changed here. Please speak to your manager about it."; a manager deciding a locked request gets once "October's attendance for X (code) has been locked, so no action is needed on this request." Unlocking (`unlockAttendance`, one or more months from a dialog) puts each case back to its status and gives each manager request the time it had left. For a customer on automatic, a dialog then offers "Send" / "Just unlock" with the unopened and follow-up counts (`previewUnlockSend` / `startUnlockSend`, the same planning as after an upload).
+- **Why:** Customers need to make a month's attendance final, stop all chasing for it, and be able to undo that.
+
+## 2026-11-05 16:40
+- **Files:** CURRENT_STATE.md
+- **Change:** Open Issues notes the decided call limit: 3 calls at once platform-wide, to become per customer when LiveKit is upgraded.
+- **Why:** The user asked for the per-customer limit to be filed for the LiveKit upgrade.
+
 ## 2026-11-05 16:10
 - **Files:** none changed (WhatsApp Business account, production database, deploy, git), CURRENT_STATE.md
 - **Change:** Created `employee_ticket_raised` (id 39632356449742304) and `employee_ticket_resolved` (id 30291397737113744) on WABA 1185067337113062, both PENDING Meta review. Applied migration 0029 to production (30 migrations; through a temporary firewall rule for 122.161.39.143, removed after). Deployed to `tc-attendance-99772` (healthy), then committed and pushed to both repos.

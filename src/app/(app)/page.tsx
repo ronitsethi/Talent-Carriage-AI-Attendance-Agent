@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
-import { dashboardStats, flaggedInRange, tenantSummary } from '@/lib/queries';
+import { dashboardStats, flaggedInRange, lockedMonthsFor, tenantSummary } from '@/lib/queries';
 import { capabilities, env } from '@/lib/env';
 import { caseDateLabel, meaningLabel } from '@/lib/display';
 import { defaultRange } from '@/lib/dates';
@@ -22,18 +22,21 @@ import { ContactSelected, RowCheckbox, RowSwitch, SelectAll, SelectionProvider }
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; q?: string; sent?: string; blocked?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; q?: string; sent?: string; blocked?: string; waiting?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) return <p style={{ paddingTop: 40 }}>No customer has been set up yet.</p>;
 
-  const [{ tenant, settings }, stats, { from, to, q, sent, blocked }] = await Promise.all([
+  const [{ tenant, settings }, stats, { from, to, q, sent, blocked, waiting }, locked] = await Promise.all([
     tenantSummary(tenantId),
     dashboardStats(tenantId),
     searchParams,
+    lockedMonthsFor(tenantId),
   ]);
+  // A date in a month whose attendance is locked shows as it is, with nothing on it to press.
+  const isLockedRow = (row: { attDate: string }) => locked.has(row.attDate.slice(0, 7));
 
   // Today and the week behind it: what is worth chasing now.
   const fallback = defaultRange(settings?.timezone);
@@ -46,7 +49,9 @@ export default async function DashboardPage({
   // exists but has never gone out, as happens when sending is switched off.
   // Judging by the case id alone left such rows unticked, so pressing Contact
   // silently skipped exactly the dates that most needed contacting.
-  const awaitingContact = (row: (typeof flagged)[number]) => !row.caseId || row.caseStatus === 'queued';
+  // A case locked before anyone was asked still counts as not contacted: it stays here, disabled.
+  const awaitingContact = (row: (typeof flagged)[number]) =>
+    !row.caseId || row.caseStatus === 'queued' || (row.caseStatus === 'unresolved' && row.caseLockedFrom === 'queued');
   // Only the work that has not started yet. A date somebody has already been
   // asked about is a case, and a case is followed up in Follow-up cases - two
   // places showing the same row is two places to act on it twice.
@@ -56,7 +61,7 @@ export default async function DashboardPage({
   // arrives with every row ticked makes Contact one slip away from messaging
   // the lot. The header tick box takes all of them when that is what is wanted.
   // The signature changes whenever the table does, which resets the selection.
-  const selectionRows = notYetContacted.map((row) => ({
+  const selectionRows = notYetContacted.filter((row) => !isLockedRow(row)).map((row) => ({
     value: `${row.employeeId}|${row.attDate}`,
     selected: false,
   }));
@@ -77,6 +82,12 @@ export default async function DashboardPage({
         </div>
       ) : null}
 
+      {waiting ? (
+        <Toast clear={['waiting']}>
+          {Number(waiting) === 1 ? '1 call is' : `${waiting} calls are`} waiting for a free line (at most 3 calls run at once) and will
+          start as soon as one is free.
+        </Toast>
+      ) : null}
       {blocked ? (
         <Notice tone="err" clear={['sent', 'blocked']}>
           {sent ? `Contacted ${sent} ${Number(sent) === 1 ? 'person' : 'people'}. ` : ''}
@@ -206,12 +217,13 @@ export default async function DashboardPage({
                   {notYetContacted.length ? (
                     notYetContacted.map((row) => {
                       const key = `${row.employeeId}|${row.attDate}`;
+                      const rowLocked = isLockedRow(row);
                       return (
                         <tr key={key}>
                           <td>
                             {/* Nothing is ticked to begin with - tick the rows you
                                 mean, or use the box in the header for all of them. */}
-                            <RowCheckbox value={key} />
+                            {rowLocked ? null : <RowCheckbox value={key} />}
                           </td>
                           <td>
                             <div className="employee">{row.employeeName}</div>
@@ -228,15 +240,18 @@ export default async function DashboardPage({
                             <div className="sub">{meaningLabel(row.meaning)}</div>
                           </td>
                           <td>
-                            {row.caseStatus ? <StatusPill status={row.caseStatus} /> : <span className="sub">Not contacted</span>}
+                            {row.caseStatus && row.caseStatus !== 'unresolved' ? <StatusPill status={row.caseStatus} /> : <span className="sub">Not contacted</span>}
+                            {rowLocked ? <div className="sub">Attendance locked</div> : null}
                           </td>
                           <td className="nowrap">
-                            <div className="switch-group" role="group" aria-label={`Contact ${row.employeeName} by`}>
+                            <div className={`switch-group ${rowLocked ? 'muted' : ''}`} role="group" aria-label={`Contact ${row.employeeName} by`}>
                               {(['whatsapp', 'voice'] as const).map((option) => (
                                 <RowSwitch
                                   key={option}
                                   action={setChannelFromRow.bind(null, row.employeeId, option)}
                                   on={row.preferredChannel === option}
+                                  disabled={rowLocked}
+                                  title={rowLocked ? 'Attendance for this month is locked' : undefined}
                                 >
                                   {option === 'voice' ? 'Call' : 'WhatsApp'}
                                 </RowSwitch>
@@ -252,7 +267,7 @@ export default async function DashboardPage({
                               const onCall = row.preferredChannel === 'voice';
                               return (
                                 <div
-                                  className={`switch-group ${onCall ? '' : 'muted'}`}
+                                  className={`switch-group ${onCall && !rowLocked ? '' : 'muted'}`}
                                   role="group"
                                   aria-label="Call style"
                                   aria-disabled={!onCall}
@@ -264,7 +279,7 @@ export default async function DashboardPage({
                                         key={option}
                                         action={setCallModeFromRow.bind(null, row.employeeId, option)}
                                         on={on}
-                                        disabled={!onCall}
+                                        disabled={!onCall || rowLocked}
                                         title={
                                           !onCall
                                             ? `${row.employeeName} is contacted on WhatsApp — switch them to Call to choose a call style`
@@ -282,7 +297,7 @@ export default async function DashboardPage({
                             })()}
                           </td>
                           <td className="nowrap">
-                            <div className="switch-group" role="group" aria-label="Mode">
+                            <div className={`switch-group ${rowLocked ? 'muted' : ''}`} role="group" aria-label="Mode">
                               {(['manual', 'automatic'] as const).map((option) => {
                                 // An employee with no setting of their own follows
                                 // the customer's, so that is what must be shown as
@@ -294,6 +309,7 @@ export default async function DashboardPage({
                                     key={option}
                                     action={setModeFromRow.bind(null, row.employeeId, option)}
                                     on={on}
+                                    disabled={rowLocked}
                                     title={
                                       row.operatingMode
                                         ? `Set for this person, whatever the customer default is`

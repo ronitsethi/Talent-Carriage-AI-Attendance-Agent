@@ -9,7 +9,9 @@ import { env } from '@/lib/env';
 import { collectTimings, mark, timed } from '@/lib/timing';
 import { buildContext } from '@/lib/runtime';
 import { agentGender, agentVoice } from '@/lib/voice/voices';
-import { addCallTurn, endCallQuery, startCallQuery } from '@/lib/conversation/queries';
+import { addCallTurn, endCallQuery, startCallQuery, takeLineForIncoming } from '@/lib/conversation/queries';
+import { LINES_BUSY } from '@/lib/voice/lines';
+import { randomUUID } from 'node:crypto';
 import { addToCostScope, withCostScope } from '@/lib/costs/record';
 import { recordCallCosts, type WorkerUsage } from '@/lib/costs/calls';
 import { queueChargeLookup } from '@/lib/costs/plivo';
@@ -310,7 +312,17 @@ async function turn(request: Request) {
         warmModel();
         const greet = INBOUND_GREETINGS[Math.floor(Math.random() * INBOUND_GREETINGS.length)]!;
         const say = greet(employee.fullName.split(/\s+/)[0] ?? employee.fullName, company?.name ?? 'your employer');
-        const queryId = await startCallQuery(t, { tenantId, employeeId: employee.id, style: 'agent', greeting: say, providerCallId: room });
+        const voiceFields = {
+          language: voiceLanguage(employee.language ?? settings?.defaultLanguage),
+          known: true,
+          voice: agentVoice(settings?.agentVoice),
+          gender: agentGender(settings?.agentVoice),
+          pace: Number(settings?.agentVoicePace ?? 0.95),
+        };
+        // Every line busy: they are told so, and the call ends.
+        const id = randomUUID();
+        if (!(await takeLineForIncoming(t, tenantId, id, room))) return { say: LINES_BUSY, ...voiceFields, done: true };
+        const queryId = await startCallQuery(t, { tenantId, employeeId: employee.id, style: 'agent', greeting: say, providerCallId: room, id });
         addToCostScope({ queryId });
         return {
           say,

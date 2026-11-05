@@ -1,4 +1,6 @@
 import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
+import { claimLockReply, LOCKED_REASON, managerLockReply, monthOf } from '@/lib/locks';
+import { waitForLine } from '@/lib/voice/waiting';
 import type { Db } from '@/db';
 import { actions, approvals, cases, employees, managers, messages } from '@/db/schema';
 import type { Meaning } from '@/lib/mapping/meanings';
@@ -237,7 +239,12 @@ function requestPhrase(stage: ApplicationStage, what: string, leaveType: string 
  * 24-hour window. A call that cannot be placed, or `via` WhatsApp (what a call
  * the manager did not decide falls back to), goes on WhatsApp.
  */
-export async function sendApprovalRequest(ctx: Ctx, approvalId: string, via?: 'whatsapp'): Promise<{ sent: boolean; error?: string }> {
+export async function sendApprovalRequest(
+  ctx: Ctx,
+  approvalId: string,
+  via?: 'whatsapp',
+  queueIfBusy = true,
+): Promise<{ sent: boolean; error?: string; waiting?: boolean; busy?: boolean }> {
   const approval = await ctx.tx.query.approvals.findFirst({ where: eq(approvals.id, approvalId) });
   if (!approval?.approverManagerId || approval.decision !== 'pending') return { sent: false, error: 'not waiting' };
   const action = await ctx.tx.query.actions.findFirst({ where: eq(actions.id, approval.actionId) });
@@ -245,6 +252,7 @@ export async function sendApprovalRequest(ctx: Ctx, approvalId: string, via?: 'w
   const employee = action ? await ctx.tx.query.employees.findFirst({ where: eq(employees.id, action.employeeId) }) : null;
   const caseRow = action?.caseId ? await ctx.tx.query.cases.findFirst({ where: eq(cases.id, action.caseId) }) : null;
   if (!action || !manager || !employee || !caseRow) return { sent: false, error: 'missing records' };
+  if (caseRow.status === 'unresolved') return { sent: false, error: LOCKED_REASON };
 
   if (manager.preferredChannel === 'voice' && via !== 'whatsapp' && canCall(ctx)) {
     const talk = (manager.callMode ?? ctx.settings.callMode) === 'agent';
@@ -252,6 +260,12 @@ export async function sendApprovalRequest(ctx: Ctx, approvalId: string, via?: 'w
     if (placed.placed) {
       await ctx.tx.update(approvals).set({ channel: 'voice', sentAt: new Date() }).where(eq(approvals.id, approval.id));
       return { sent: true };
+    }
+    // Every line busy: the manager is rung as soon as one is free, not sent it on WhatsApp instead.
+    if (placed.busy) {
+      if (!queueIfBusy) return { sent: false, busy: true, error: 'Every call line is busy' };
+      await waitForLine(ctx.tx, ctx.tenantId, { action: 'approval', approvalId: approval.id });
+      return { sent: true, waiting: true };
     }
   }
 
@@ -370,6 +384,14 @@ export async function decideApproval(
   const caseRow = action?.caseId ? await ctx.tx.query.cases.findFirst({ where: eq(cases.id, action.caseId) }) : null;
   const employee = action ? await ctx.tx.query.employees.findFirst({ where: eq(employees.id, action.employeeId) }) : null;
   if (!action || !caseRow || !employee) return { handled: false, reason: 'missing_case' };
+
+  // Its month's attendance is locked: nothing changes, and the manager is told so once.
+  if (caseRow.status === 'unresolved') {
+    if (via === 'whatsapp' && (await claimLockReply(ctx.tx, caseRow.id, 'manager'))) {
+      await tellManager(ctx, manager, managerLockReply(monthOf(caseRow.attDate), employee), caseRow.id, true);
+    }
+    return { handled: true, reason: 'locked' };
+  }
 
   const inputs = action.inputs as { what: string; stage: ApplicationStage; leaveType?: string };
   const date = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);

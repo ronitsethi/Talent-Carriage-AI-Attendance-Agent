@@ -49,7 +49,8 @@ import { datesInRange } from '@/lib/dates';
 import { summariseCase, summariseQuery } from '@/lib/conversation/summary';
 import { CodeTaken, PersonClash, readTeamInput, removeTeam, saveTeam, validateTeam } from '@/lib/coe';
 import { createCustomer, deleteCustomer, setCustomerActive, CustomerRefused } from '@/lib/customers';
-import { startUploadSend } from '@/lib/upload-send';
+import { startUnlockSend, startUploadSend } from '@/lib/upload-send';
+import { isMonth, lockMonth, LOCKED_REASON, unlockMonths } from '@/lib/locks';
 import { listQueryTypes, parseQueryTypeSheet, replaceQueryTypes } from '@/lib/query-types';
 import { PRIORITIES, closeTicket, queueAssignmentWork, type Priority } from '@/lib/tickets';
 import { sendApprovalRequest } from '@/lib/approvals';
@@ -191,11 +192,13 @@ export async function runFollowUps() {
  */
 async function assertCaseIsLive(tx: Db, tenantId: string, caseId: string) {
   const [row] = await tx
-    .select({ deletedAt: employees.deletedAt })
+    .select({ deletedAt: employees.deletedAt, status: cases.status })
     .from(cases)
     .innerJoin(employees, eq(employees.id, cases.employeeId))
     .where(and(eq(cases.tenantId, tenantId), eq(cases.id, caseId)));
   if (row?.deletedAt) throw new Error('This employee has been deleted; the case is kept as a record only');
+  // Its month's attendance is locked: nothing is done to it until it is unlocked.
+  if (row?.status === 'unresolved') throw new Error(LOCKED_REASON);
 }
 
 export async function closeCase(formData: FormData) {
@@ -608,11 +611,13 @@ export async function writeQuerySummary(queryId: string): Promise<boolean> {
  * master sending switch was off. Whatever the reason, it gets said.
  */
 function noticeFor(outcomes: ContactResult[]): string {
-  const sent = outcomes.filter((o) => o.contacted).length;
+  const sent = outcomes.filter((o) => o.contacted && !o.waiting).length;
+  const waiting = outcomes.filter((o) => o.contacted && o.waiting).length;
   const blocked = outcomes.filter((o) => !o.contacted) as Extract<ContactResult, { contacted: false }>[];
   const params = new URLSearchParams();
 
   if (sent) params.set('sent', String(sent));
+  if (waiting) params.set('waiting', String(waiting));
   if (blocked.length) {
     // The same reason usually applies to everyone, so say it once.
     params.set('blocked', [...new Set(blocked.map((o) => o.reason))].join('; '));
@@ -760,6 +765,51 @@ export async function contactNow(formData: FormData) {
 
   // Say why nothing happened. Silence here reads as a broken button.
   if (result && !result.contacted) redirect(`/cases/${caseId}?blocked=${encodeURIComponent(result.reason)}`);
+  if (result?.waiting) redirect(`/cases/${caseId}?waiting=1`);
+}
+
+/* ------------------------------------------------------------------ *
+ * Attendance locks (admins)
+ * ------------------------------------------------------------------ */
+
+/** Locks one month's attendance: final, and nobody is contacted about it. */
+export async function lockAttendance(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can lock attendance');
+  const month = String(formData.get('month') ?? '');
+  if (!isMonth(month)) redirect('/mapping?problem=' + encodeURIComponent('Choose a month to lock.'));
+  const { cases: moved } = await withTenant(tenantId, (tx) => lockMonth(tx, tenantId, month, session.userId));
+  revalidatePath('/');
+  revalidatePath('/cases');
+  revalidatePath('/mapping');
+  redirect(`/mapping?locked=${month}&moved=${moved}`);
+}
+
+/**
+ * Unlocks the months ticked: each case goes back where it was. A customer on
+ * automatic is then asked whether to send what is due, as after an upload.
+ */
+export async function unlockAttendance(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can unlock attendance');
+  const months = formData.getAll('month').map(String).filter(isMonth);
+  if (!months.length) redirect('/mapping?problem=' + encodeURIComponent('Choose at least one month to unlock.'));
+  const result = await withTenant(tenantId, (tx) => unlockMonths(tx, tenantId, months));
+  revalidatePath('/');
+  revalidatePath('/cases');
+  revalidatePath('/mapping');
+  redirect(`/mapping?unlocked=${result.months.join(',')}&restored=${result.cases}`);
+}
+
+/** HR chose Send after unlocking: what is due goes out, as after an upload. */
+export async function sendAfterUnlock(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can unlock attendance');
+  const months = String(formData.get('months') ?? '').split(',').filter(isMonth);
+  const { people, delayMinutes } = await startUnlockSend(tenantId, months);
+  revalidatePath('/');
+  revalidatePath('/cases');
+  redirect(`/mapping?scheduled=${people}&after=${delayMinutes}`);
 }
 
 /**

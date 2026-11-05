@@ -7,6 +7,10 @@ import { handleTurn, openingTurn, placeCaseCall } from '@/lib/voice/session';
 import { datePrompt, followUpPrompt } from '@/lib/conversation/voice-script';
 import { giveAttendance, makeScenario, type Scenario } from './helpers/scenario';
 
+// These ring one person about every date in a single step - more calls than the three
+// shared lines (`voice/lines.ts`), whose limit has tests of its own. Lines are not the subject here.
+process.env.CALL_LINES = '20';
+
 /**
  * The talking call.
  *

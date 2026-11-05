@@ -1,4 +1,5 @@
 import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { takeCallLine } from '@/lib/voice/lines';
 import type { Db } from '@/db';
 import { messages, queries } from '@/db/schema';
 import { enqueue } from '@/lib/jobs/queue';
@@ -53,10 +54,26 @@ export async function addMessagesToQuery(tx: Db, queryId: string, messageIds: st
   await tx.update(queries).set({ lastActivityAt: new Date() }).where(eq(queries.id, queryId));
 }
 
+/**
+ * Opens the line an incoming call needs: false when every line is busy, and the
+ * caller is to be told so. The same call greeting again - LiveKit handing it to
+ * a second process - already holds its line. `id` is the query the call will be.
+ */
+export async function takeLineForIncoming(tx: Db, tenantId: string, id: string, providerCallId?: string | null): Promise<boolean> {
+  if (providerCallId) {
+    const again = await tx.query.queries.findFirst({
+      where: and(eq(queries.tenantId, tenantId), eq(queries.providerCallId, providerCallId)),
+      columns: { id: true },
+    });
+    if (again) return true;
+  }
+  return takeCallLine({ kind: 'query', id });
+}
+
 /** A call somebody made to us, opened with whatever the agent greeted them with. */
 export async function startCallQuery(
   tx: Db,
-  args: { tenantId: string; employeeId: string; style: 'agent' | 'keypad'; providerCallId?: string | null; greeting?: string },
+  args: { tenantId: string; employeeId: string; style: 'agent' | 'keypad'; providerCallId?: string | null; greeting?: string; id?: string },
 ): Promise<string> {
   const at = new Date();
   // The same call asking again: LiveKit hands a call to another process when
@@ -80,6 +97,7 @@ export async function startCallQuery(
   const [created] = await tx
     .insert(queries)
     .values({
+      ...(args.id ? { id: args.id } : {}),
       tenantId: args.tenantId,
       employeeId: args.employeeId,
       channel: 'voice',

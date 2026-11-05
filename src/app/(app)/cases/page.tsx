@@ -14,14 +14,14 @@ import { ContactSelected, RowCheckbox, RowSwitch, SelectAll, SelectionProvider }
 export default async function CasesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; from?: string; to?: string; status?: string; q?: string; sent?: string; blocked?: string }>;
+  searchParams: Promise<{ date?: string; from?: string; to?: string; status?: string; q?: string; sent?: string; blocked?: string; waiting?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) return <p style={{ paddingTop: 40 }}>No customer selected.</p>;
 
-  const { date, from, to, status, q, sent, blocked } = await searchParams;
+  const { date, from, to, status, q, sent, blocked, waiting } = await searchParams;
   // One unknown value in the URL should not empty the table.
   const current = CASE_FILTERS.some((f) => f.key === status) || followUpLevelOf(status) ? status! : DEFAULT_CASE_FILTER;
   const [rows, counts, { settings }] = await Promise.all([
@@ -54,7 +54,7 @@ export default async function CasesPage({
   // record only, so it cannot be ticked at all. The value carries the employee
   // first, which is how the confirmation counts people rather than dates.
   const selectionRows = rows
-    .filter((row) => !row.employeeDeletedAt)
+    .filter((row) => !row.employeeDeletedAt && row.status !== 'unresolved')
     .map((row) => ({ value: `${row.employeeId}|${row.id}`, selected: false }));
   const selectionKey = selectionRows.map((row) => row.value).join(',');
 
@@ -71,6 +71,12 @@ export default async function CasesPage({
         </Toast>
       ) : null}
 
+      {waiting ? (
+        <Toast clear={['waiting']}>
+          {Number(waiting) === 1 ? '1 call is' : `${waiting} calls are`} waiting for a free line (at most 3 calls run at once) and will
+          start as soon as one is free.
+        </Toast>
+      ) : null}
       <section className="page-head">
         <div className="eyebrow">Follow-up cases</div>
         <h1>Cases</h1>
@@ -159,10 +165,12 @@ export default async function CasesPage({
                       // else. Every control that would act on it is gone, and the
                       // server actions refuse it as well.
                       const gone = Boolean(row.employeeDeletedAt);
+                      // Its month's attendance is locked: shown, and nothing on it can be pressed.
+                      const locked = row.status === 'unresolved';
                       const onCall = row.preferredChannel === 'voice';
                       return (
                         <RowLink key={row.id} href={`/cases/${row.id}`}>
-                          <td className="row-control">{gone ? null : <RowCheckbox value={`${row.employeeId}|${row.id}`} />}</td>
+                          <td className="row-control">{gone || locked ? null : <RowCheckbox value={`${row.employeeId}|${row.id}`} />}</td>
                           <td>
                             <Link className="employee row-title" href={`/cases/${row.id}`}>
                               {row.employeeName}
@@ -215,6 +223,7 @@ export default async function CasesPage({
                             <StatusPill status={caseStatus(row)} />
                             {row.status === 'resolved' && row.closedByRevision ? <div className="sub">Action taken</div> : null}
                             {row.needsHrReason ? <div className="sub">{row.needsHrReason}</div> : null}
+                            {locked ? <div className="sub">Attendance locked</div> : null}
                           </td>
                           <td>
                             {reply ? (
@@ -233,13 +242,14 @@ export default async function CasesPage({
                             {gone ? (
                               <span className="sub">{row.channel === 'voice' ? 'Call' : 'WhatsApp'}</span>
                             ) : (
-                              <div className="switch-group" role="group" aria-label={`Contact ${row.employeeName} by`}>
+                              <div className={`switch-group ${locked ? 'muted' : ''}`} role="group" aria-label={`Contact ${row.employeeName} by`}>
                                 {(['whatsapp', 'voice'] as const).map((option) => (
                                   <RowSwitch
                                     key={option}
                                     action={setChannelFromRow.bind(null, row.employeeId, option)}
                                     on={row.preferredChannel === option}
-                                    title={`Contact ${row.employeeName} by ${option === 'voice' ? 'call' : 'WhatsApp'}`}
+                                    disabled={locked}
+                                    title={locked ? 'Attendance for this month is locked' : `Contact ${row.employeeName} by ${option === 'voice' ? 'call' : 'WhatsApp'}`}
                                   >
                                     {option === 'voice' ? 'Call' : 'WhatsApp'}
                                   </RowSwitch>
@@ -254,7 +264,7 @@ export default async function CasesPage({
                               // Only meaningful for someone on Call: on WhatsApp it is
                               // greyed out and cannot be pressed, as on the dashboard.
                               <div
-                                className={`switch-group ${onCall ? '' : 'muted'}`}
+                                className={`switch-group ${onCall && !locked ? '' : 'muted'}`}
                                 role="group"
                                 aria-label="Call style"
                                 aria-disabled={!onCall}
@@ -264,7 +274,7 @@ export default async function CasesPage({
                                     key={option}
                                     action={setCallModeFromRow.bind(null, row.employeeId, option)}
                                     on={(row.callMode ?? settings?.callMode ?? 'keypad') === option}
-                                    disabled={!onCall}
+                                    disabled={!onCall || locked}
                                     title={
                                       !onCall
                                         ? `${row.employeeName} is contacted on WhatsApp — switch them to Call to choose a call style`
@@ -281,12 +291,13 @@ export default async function CasesPage({
                           </td>
                           <td className="nowrap">
                             {gone ? null : (
-                              <div className="switch-group" role="group" aria-label="Mode">
+                              <div className={`switch-group ${locked ? 'muted' : ''}`} role="group" aria-label="Mode">
                                 {(['manual', 'automatic'] as const).map((option) => (
                                   <RowSwitch
                                     key={option}
                                     action={setModeFromRow.bind(null, row.employeeId, option)}
                                     on={(row.operatingMode ?? settings?.operatingMode ?? 'manual') === option}
+                                    disabled={locked}
                                     title={
                                       row.operatingMode
                                         ? 'Set for this person, whatever the customer default is'

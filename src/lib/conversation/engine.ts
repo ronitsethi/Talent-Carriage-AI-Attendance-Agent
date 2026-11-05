@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { claimLockReply, employeeLockReply, monthOf } from '@/lib/locks';
 import type { Db } from '@/db';
 import {
   cases,
@@ -470,6 +471,11 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     .set({ lastInboundAt: inbound.receivedAt, windowExpiresAt: expires, updatedAt: now(ctx) })
     .where(eq(conversations.id, conversation.id));
 
+  // About a date whose month's attendance is locked - a tapped button or a quoted
+  // message names it: nothing changes, and they are told so once.
+  const locked = await lockedCaseNamed(ctx, employee.id, inbound);
+  if (locked) return replyLocked(ctx, locked, employee, inboundRow.id);
+
   // A manager approving, or an employee answering an offer: both name their own
   // record in the payload, so they are routed before any case matching happens.
   const approval = parseApprovalSelectionId(inbound.selectionId);
@@ -586,6 +592,19 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
   if (target.caseRow && !explicit && !recent && inbound.text?.trim()) {
     early = await classify();
     if (early.intent === 'question') target = { caseRow: null, option: null };
+  }
+
+  // Typed, with nothing open to be about, right after we asked about a date that
+  // is now locked: a reply to that, unless it is a question of their own.
+  if (!target.caseRow && !explicit && inbound.text?.trim()) {
+    const lockedId = recent?.caseId ?? conversation.activeCaseId;
+    const lockedRow = lockedId
+      ? await ctx.tx.query.cases.findFirst({ where: and(eq(cases.id, lockedId), eq(cases.employeeId, employee.id), eq(cases.status, 'unresolved')) })
+      : null;
+    if (lockedRow) {
+      early = early ?? (await classify());
+      if (early.intent !== 'question') return replyLocked(ctx, lockedRow, employee, inboundRow.id);
+    }
   }
 
   if (target.caseRow) {
@@ -785,6 +804,36 @@ async function answerOption(
  * Typed text falls back to the date the agent asked about most recently, and
  * then to the oldest unanswered one.
  */
+/** The locked case a tap or a quoted message names, if any. */
+async function lockedCaseNamed(ctx: EngineContext, employeeId: string, inbound: InboundMessage): Promise<CaseRow | null> {
+  const id = inbound.selectionId
+    ? (parseSelectionId(inbound.selectionId) ??
+        parseFollowUpSelectionId(inbound.selectionId) ??
+        parseOfferSelectionId(inbound.selectionId) ??
+        parseLeaveTypeSelectionId(inbound.selectionId) ??
+        parseSheetSelectionId(inbound.selectionId))?.caseId
+    : null;
+  const quoted =
+    !id && inbound.replyToProviderId
+      ? (await ctx.tx.query.messages.findFirst({ where: eq(messages.providerMessageId, inbound.replyToProviderId), columns: { caseId: true } }))?.caseId
+      : null;
+  const caseId = id ?? quoted;
+  if (!caseId) return null;
+  return (
+    (await ctx.tx.query.cases.findFirst({ where: and(eq(cases.id, caseId), eq(cases.employeeId, employeeId), eq(cases.status, 'unresolved')) })) ?? null
+  );
+}
+
+/** Files the message under the locked case and, the first time only, says it is locked. */
+async function replyLocked(ctx: EngineContext, caseRow: CaseRow, employee: EmployeeRow, inboundId: string): Promise<InboundOutcome> {
+  await ctx.tx.update(messages).set({ caseId: caseRow.id }).where(eq(messages.id, inboundId));
+  if (await claimLockReply(ctx.tx, caseRow.id, 'employee')) {
+    const first = employee.fullName.split(/\s+/)[0] ?? employee.fullName;
+    await sendPlainText(ctx, employee, employeeLockReply(first, monthOf(caseRow.attDate)), caseRow.id);
+  }
+  return { handled: true, caseId: caseRow.id, classification: { intent: 'other', option: null, confidence: 1, source: 'rules' }, action: 'logged' };
+}
+
 async function resolveCase(
   ctx: EngineContext,
   employeeId: string,

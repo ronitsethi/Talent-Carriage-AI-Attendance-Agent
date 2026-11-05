@@ -87,6 +87,8 @@ export const tenantStatus = pgEnum('tenant_status', ['onboarding', 'active', 'su
  * awaiting_action / awaiting_approval -> an action is being carried out
  * resolved -> the day is explained and any action completed
  * needs_hr -> a human must look at it
+ * unresolved -> its month's attendance was locked while it was still open; it
+ *               waits, untouched, until the month is unlocked
  */
 export const caseStatus = pgEnum('case_status', [
   'queued',
@@ -100,6 +102,7 @@ export const caseStatus = pgEnum('case_status', [
   'needs_hr',
   'failed',
   'cancelled',
+  'unresolved',
 ]);
 
 /** The four options from the flowchart, plus what the agent inferred from free text. */

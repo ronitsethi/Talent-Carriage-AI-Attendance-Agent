@@ -16,6 +16,7 @@ export type JobKind =
   | 'ticket_escalate'
   | 'query_inform'
   | 'ticket_employee'
+  | 'waiting_call'
   | 'plivo_charge';
 
 export type Job = typeof jobs.$inferSelect;
@@ -110,6 +111,26 @@ export async function fail(job: Job, error: string): Promise<void> {
         runAt: exhausted ? job.runAt : new Date(Date.now() + backoffMinutes * 60_000),
         finishedAt: exhausted ? new Date() : null,
       })
+      .where(eq(jobs.id, job.id)),
+  );
+}
+
+/**
+ * Thrown by a handler that cannot run yet - a call with every line busy - to be
+ * tried again shortly. Not a failure: the attempt is not counted.
+ */
+export class Postpone extends Error {
+  constructor(public readonly seconds = 15) {
+    super(`postponed ${seconds}s`);
+  }
+}
+
+/** Puts a claimed job back for later, without spending one of its attempts. */
+export async function postpone(job: Job, seconds: number): Promise<void> {
+  await withPlatformScope((tx) =>
+    tx
+      .update(jobs)
+      .set({ status: 'pending', runAt: new Date(Date.now() + seconds * 1000), attempts: Math.max(0, job.attempts - 1), claimedBy: null, claimedAt: null })
       .where(eq(jobs.id, job.id)),
   );
 }

@@ -211,6 +211,13 @@
       "when": 1791174399269,
       "tag": "0029_ticket_follow_up",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791260799269,
+      "tag": "0030_attendance_locks",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { and, asc, eq, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
+import { waitForLine } from '@/lib/voice/waiting';
 import { cases, employees } from '@/db/schema';
 import type { Meaning } from '@/lib/mapping/meanings';
 import {
@@ -166,7 +167,7 @@ export async function sendFollowUp(
   caseRow: CaseRow,
   employee: EmployeeRow,
   at = new Date(),
-): Promise<{ reached: true; simulated?: boolean } | { reached: false; reason: string }> {
+): Promise<{ reached: true; simulated?: boolean } | { reached: false; reason: string; busy?: boolean }> {
   const { number, final } = nextFollowUp(caseRow, ctx.settings);
   let simulated: boolean | undefined;
 
@@ -174,7 +175,7 @@ export async function sendFollowUp(
     if (!ctx.voice || !ctx.baseUrl) return { reached: false, reason: 'No voice provider configured' };
     const callMode = ctx.settings.followUpContacts[number - 1]?.callMode;
     const result = await placeCaseCall(ctx as VoiceContext, caseRow, employee, final ? 'final_notice' : 'follow_up', callMode);
-    if (!result.placed) return { reached: false, reason: result.reason };
+    if (!result.placed) return { reached: false, reason: result.reason, busy: 'busy' in result && result.busy };
     simulated = result.simulated;
   } else {
     const block = canSend(ctx, employee);
@@ -201,12 +202,17 @@ export const followUpDueOnUpload = (timezone: string, at: Date) =>
   );
 
 /** The follow-ups HR sends from the dashboard: those whose day to act has passed. */
-export const sendDueFollowUps = (ctx: FollowUpContext, at = new Date()) =>
-  sendFollowUps(ctx, and(eq(cases.status, 'answered'), lte(cases.followUpDueAt, at)), at);
+export const sendDueFollowUps = (ctx: FollowUpContext, at = new Date(), employeeId?: string, queueIfBusy = true) =>
+  sendFollowUps(
+    ctx,
+    and(eq(cases.status, 'answered'), lte(cases.followUpDueAt, at), employeeId ? eq(cases.employeeId, employeeId) : undefined),
+    at,
+    { mode: 'due', queueIfBusy },
+  );
 
 /** One person's follow-ups at their turn after an upload. */
-export const sendFollowUpsAfterUpload = (ctx: FollowUpContext, employeeId: string, at = new Date()) =>
-  sendFollowUps(ctx, and(followUpDueOnUpload(ctx.settings.timezone, at), eq(cases.employeeId, employeeId)), at);
+export const sendFollowUpsAfterUpload = (ctx: FollowUpContext, employeeId: string, at = new Date(), queueIfBusy = true) =>
+  sendFollowUps(ctx, and(followUpDueOnUpload(ctx.settings.timezone, at), eq(cases.employeeId, employeeId)), at, { mode: 'upload', queueIfBusy });
 
 /**
  * Nothing sweeps these on a clock: HR sends them, or an upload does.
@@ -221,7 +227,7 @@ export const sendFollowUpsAfterUpload = (ctx: FollowUpContext, employeeId: strin
  * nobody should be rung five times in a morning. The dates that call covers
  * each count as followed up, picked up or not, as an ignored message would.
  */
-async function sendFollowUps(ctx: FollowUpContext, which: SQL | undefined, at: Date) {
+async function sendFollowUps(ctx: FollowUpContext, which: SQL | undefined, at: Date, opts: { mode: 'due' | 'upload'; queueIfBusy: boolean }) {
   const due = await ctx.tx
     .select()
     .from(cases)
@@ -235,9 +241,13 @@ async function sendFollowUps(ctx: FollowUpContext, which: SQL | undefined, at: D
 
   let sent = 0;
   let called = 0;
+  let waiting = 0;
+  let busy = false;
   const skipped: string[] = [];
   // A reminder and a final notice are different calls, so one person may get one of each.
   const rungAlready = new Set<string>();
+  // Whoever found every line busy waits for one; their other dates wait with them, for that one call.
+  const waitingFor = new Set<string>();
 
   for (const caseRow of due) {
     const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, caseRow.employeeId) });
@@ -253,6 +263,7 @@ async function sendFollowUps(ctx: FollowUpContext, which: SQL | undefined, at: D
     const next = nextFollowUp(caseRow, ctx.settings);
     const onCall = followUpChannel(employee, ctx.settings, next.number) === 'voice';
     const callKey = `${employee.id}:${next.final}`;
+    if (onCall && waitingFor.has(employee.id)) continue;
     if (onCall && rungAlready.has(callKey)) {
       await recordFollowUpSent(ctx, caseRow, employee, at);
       continue;
@@ -260,7 +271,14 @@ async function sendFollowUps(ctx: FollowUpContext, which: SQL | undefined, at: D
 
     try {
       const result = await sendFollowUp(ctx, caseRow, employee, at);
-      if (!result.reached) {
+      if (!result.reached && result.busy) {
+        waitingFor.add(employee.id);
+        busy = true;
+        if (opts.queueIfBusy) {
+          await waitForLine(ctx.tx, ctx.tenantId, { action: 'follow_ups', employeeId: employee.id, mode: opts.mode });
+          waiting++;
+        }
+      } else if (!result.reached) {
         skipped.push(result.reason);
       } else if (onCall) {
         rungAlready.add(callKey);
@@ -277,7 +295,7 @@ async function sendFollowUps(ctx: FollowUpContext, which: SQL | undefined, at: D
     }
   }
 
-  return { due: due.length, sent, called, skipped };
+  return { due: due.length, sent, called, waiting, busy, skipped };
 }
 
 /** What the employee said to the reminder decides whether the next follow-up still goes. */

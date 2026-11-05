@@ -1,4 +1,7 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { takeCallLine } from './lines';
+import { WAITING_FOR_LINE } from './waiting';
 import { actions, approvals, calls, cases, employees, managers, usageEvents } from '@/db/schema';
 import type { Meaning } from '@/lib/mapping/meanings';
 import { halfOfDay } from '@/lib/mapping/meanings';
@@ -40,12 +43,16 @@ export async function placeApprovalCall(
   employee: EmployeeRow,
   to: string,
   agent: boolean,
-): Promise<{ placed: true; callId: string } | { placed: false; reason: string }> {
+): Promise<{ placed: true; callId: string } | { placed: false; reason: string; busy?: true }> {
   if (!ctx.settings.sendingEnabled) return { placed: false, reason: 'Sending is switched off for this customer' };
   const provider = agent && ctx.voiceAgent ? ctx.voiceAgent : ctx.voice;
+  // A manager's call takes one of the shared lines like any other.
+  const callId = randomUUID();
+  if (!(await takeCallLine({ kind: 'call', id: callId }, to))) return { placed: false, busy: true, reason: WAITING_FOR_LINE };
   const [call] = await ctx.tx
     .insert(calls)
     .values({
+      id: callId,
       tenantId: ctx.tenantId,
       caseId: caseRow.id,
       employeeId: employee.id,

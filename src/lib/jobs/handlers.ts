@@ -8,7 +8,11 @@ import { sendQueryFeedback } from '@/lib/conversation/feedback';
 import { queueTicketCheck, raiseTicket } from '@/lib/tickets';
 import { escalateToLt, informCoe, notifyAssignee, remindAssignee } from '@/lib/ticket-whatsapp';
 import { tellEmployeeAboutTicket, type TicketEvent } from '@/lib/conversation/ticket-notices';
-import type { Job, JobKind } from './queue';
+import { Postpone, type Job, type JobKind } from './queue';
+import { contactCaseById } from '@/lib/contact';
+import { sendDueFollowUps, sendFollowUpsAfterUpload } from '@/lib/conversation/followup';
+import { sendApprovalRequest } from '@/lib/approvals';
+import type { WaitingCall } from '@/lib/voice/waiting';
 import { applyPlivoCharge, type ChargeLookup } from '@/lib/costs/plivo';
 
 export type JobHandler = (job: Job) => Promise<Record<string, unknown>>;
@@ -31,7 +35,13 @@ const approvalTimeout: JobHandler = async (job) => {
       .select()
       .from(approvals)
       .where(
-        and(eq(approvals.tenantId, tenantId), eq(approvals.decision, 'pending'), lte(approvals.timeoutAt, new Date())),
+        and(
+          eq(approvals.tenantId, tenantId),
+          eq(approvals.decision, 'pending'),
+          lte(approvals.timeoutAt, new Date()),
+          // A locked month's request waits with its case; unlocking gives it back the time it had left.
+          sql`not exists (select 1 from actions a join cases c on c.id = a.case_id where a.id = ${approvals.actionId} and c.status = 'unresolved')`,
+        ),
       )
       .limit(100);
 
@@ -160,6 +170,33 @@ const ticketEmployee: JobHandler = async (job) => {
   return withTenant(tenantId, async (tx) => tellEmployeeAboutTicket(await buildContext(tx, tenantId), queryId, event));
 };
 
+/**
+ * A call that found every line busy. Tried again, without queueing a second
+ * wait, and put back for 15 seconds while every line is still busy.
+ */
+const waitingCall: JobHandler = async (job) => {
+  const tenantId = job.tenantId!;
+  const call = job.payload as unknown as WaitingCall;
+  const outcome = await withTenant(tenantId, async (tx) => {
+    const ctx = await buildContext(tx, tenantId);
+    if (call.action === 'contact_case') {
+      const result = await contactCaseById(ctx, call.caseId, { queueIfBusy: false });
+      return { busy: Boolean(result && !result.contacted && result.busy), result };
+    }
+    if (call.action === 'follow_ups') {
+      const result =
+        call.mode === 'upload'
+          ? await sendFollowUpsAfterUpload(ctx, call.employeeId, new Date(), false)
+          : await sendDueFollowUps(ctx, new Date(), call.employeeId, false);
+      return { busy: result.busy, result };
+    }
+    const result = await sendApprovalRequest(ctx, call.approvalId, undefined, false);
+    return { busy: Boolean(result.busy), result };
+  });
+  if (outcome.busy) throw new Postpone(15);
+  return outcome as unknown as Record<string, unknown>;
+};
+
 /** Placed here so the queue is complete; the voice provider arrives in its phase. */
 const placeCall: JobHandler = async (job) => {
   return { skipped: 'voice provider not configured', caseId: job.payload.caseId };
@@ -179,6 +216,7 @@ export const handlers: Record<JobKind, JobHandler> = {
   ticket_escalate: ticketEscalate,
   query_inform: queryInform,
   ticket_employee: ticketEmployee,
+  waiting_call: waitingCall,
   // Plivo's own charge for a talking call, or a keypad call to us, once its record is in.
   plivo_charge: async (job) => applyPlivoCharge(job.payload as unknown as ChargeLookup),
 };

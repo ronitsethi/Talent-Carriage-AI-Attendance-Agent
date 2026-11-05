@@ -859,3 +859,11 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 .ticket-activity-when { color: var(--ink-500); }
 .ticket-activity li.failed .ticket-activity-when { color: var(--err-ink); font-weight: 600; }
 .ticket-activity-error { flex-basis: 100%; color: var(--err-ink); }
+
+/* Lock attendance (Mapping & import) */
+.lock-row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 4px 0 14px; }
+.lock-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.lock-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.lock-list li { font-size: var(--fs-small); }
+.month-picks { display: grid; gap: 8px; margin: 10px 0 12px; }
+.month-pick { display: flex; align-items: center; gap: 10px; font-size: var(--fs-small); }

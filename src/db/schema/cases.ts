@@ -5,6 +5,20 @@ import { imports } from './mapping';
 import { tenants } from './tenants';
 
 /**
+ * A locked case's own record of where it stood, so unlocking puts it back: its
+ * status, how long its manager had left, and whether the one "attendance is
+ * locked" reply has gone to the employee and to the manager.
+ */
+export type LockState = {
+  status: string;
+  lockedAt: string;
+  /** Pending approvals and the milliseconds each had left before going to HR. */
+  approvals?: Record<string, number>;
+  employeeToldAt?: string;
+  managerToldAt?: string;
+};
+
+/**
  * A case is one employee and one dated gap, followed until it is explained.
  *
  * Chaining rule: an employee may have many cases open at once. Each is asked on
@@ -67,6 +81,8 @@ export const cases = pgTable(
     detectedByImportId: uuid('detected_by_import_id').references(() => imports.id, { onDelete: 'set null' }),
     /** Anything the conversation needs to remember for this case. */
     context: jsonb('context').$type<Record<string, unknown>>().notNull().default({}),
+    /** Where the case stood when its month was locked; null while unlocked. See `locks.ts`. */
+    lockState: jsonb('lock_state').$type<LockState>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

@@ -1,4 +1,7 @@
 import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { takeCallLine } from './lines';
+import { WAITING_FOR_LINE } from './waiting';
 import type { Db } from '@/db';
 import { calls, cases, employees, messages, usageEvents } from '@/db/schema';
 import { classifyReply } from '@/lib/conversation/classify';
@@ -154,9 +157,16 @@ export async function placeCaseCall(
   const wantsAgent = (callMode ?? employee.callMode ?? ctx.settings.callMode) === 'agent';
   const provider = wantsAgent && ctx.voiceAgent ? ctx.voiceAgent : ctx.voice;
 
+  // No more than three calls at once, across every customer, and never two to one person.
+  const callId = randomUUID();
+  if (!(await takeCallLine({ kind: 'call', id: callId }, employee.mobileE164))) {
+    return { placed: false as const, busy: true as const, reason: WAITING_FOR_LINE };
+  }
+
   const [call] = await ctx.tx
     .insert(calls)
     .values({
+      id: callId,
       tenantId: ctx.tenantId,
       caseId: caseRow.id,
       employeeId: employee.id,

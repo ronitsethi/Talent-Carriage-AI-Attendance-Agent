@@ -1,13 +1,26 @@
 import { redirect } from 'next/navigation';
-import { getActiveTenantId, getSession } from '@/lib/auth';
+import { canManageSettings, getActiveTenantId, getSession } from '@/lib/auth';
 import { mappingOverview } from '@/lib/queries';
 import { meaningLabel, formatTime } from '@/lib/display';
-import { analyseMappingFile, importAttendance, saveMapping, sendAfterUpload, setCodeMeaning } from '@/app/actions';
+import {
+  analyseMappingFile,
+  importAttendance,
+  lockAttendance,
+  saveMapping,
+  sendAfterUnlock,
+  sendAfterUpload,
+  setCodeMeaning,
+  unlockAttendance,
+} from '@/app/actions';
+import { ConfirmSubmit } from '@/components/confirm';
+import { UnlockChoice, UnlockMonths } from '@/components/attendance-lock';
+import { attendanceLockOverview } from '@/lib/queries';
+import { monthLabel } from '@/lib/locks';
 import { FileDrop } from '@/components/file-drop';
 import { Notice } from '@/components/notice';
 import { Toast } from '@/components/toast';
 import { UploadChoice } from '@/components/upload-choice';
-import { previewUploadSend } from '@/lib/upload-send';
+import { previewUnlockSend, previewUploadSend } from '@/lib/upload-send';
 import { MappingForm, type CodeRow, type MappingDraft } from './editor';
 import { ALL_MEANINGS } from '@/lib/mapping/meanings';
 import type { Analysis } from '@/lib/mapping/analyse';
@@ -35,6 +48,10 @@ export default async function MappingPage({
     removed?: string;
     scheduled?: string;
     after?: string;
+    locked?: string;
+    moved?: string;
+    unlocked?: string;
+    restored?: string;
   }>;
 }) {
   const session = await getSession();
@@ -42,9 +59,16 @@ export default async function MappingPage({
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) redirect('/');
 
-  const [{ profile, draft, codes, unmapped, recentImports }, { problem, saved, uploaded, resolved, removed, scheduled, after }] =
-    await Promise.all([mappingOverview(tenantId), searchParams]);
+  const [
+    { profile, draft, codes, unmapped, recentImports },
+    { problem, saved, uploaded, resolved, removed, scheduled, after, locked, moved, unlocked, restored },
+    locks,
+  ] = await Promise.all([mappingOverview(tenantId), searchParams, attendanceLockOverview(tenantId)]);
   const choice = uploaded ? await previewUploadSend(tenantId, uploaded) : null;
+  const unlockedMonths = (unlocked ?? '').split(',').filter(Boolean);
+  const unlockChoice = unlockedMonths.length ? await previewUnlockSend(tenantId, unlockedMonths) : null;
+  const unlockedNames = unlockedMonths.map((month) => monthLabel(month)).join(', ');
+  const admin = canManageSettings(session);
   const settled = settledByUpload(Number(resolved ?? 0), Number(removed ?? 0));
   const latest = recentImports[0];
   const openUnmapped = unmapped.filter((u) => !u.resolvedAt);
@@ -148,6 +172,35 @@ export default async function MappingPage({
         </UploadChoice>
       ) : null}
 
+      {locked ? (
+        <Toast clear={['locked', 'moved']}>
+          {monthLabel(locked)}&apos;s attendance is locked.{' '}
+          {Number(moved) ? `${moved} open ${Number(moved) === 1 ? 'case' : 'cases'} moved to Unresolved.` : 'No case was open.'}
+        </Toast>
+      ) : null}
+      {unlockedMonths.length && !unlockChoice?.people ? (
+        <Toast clear={['unlocked', 'restored']}>
+          Attendance unlocked for {unlockedNames}. {Number(restored) ? `${restored} ${Number(restored) === 1 ? 'case is' : 'cases are'} back where they were.` : ''}
+        </Toast>
+      ) : null}
+      {unlockedMonths.length && unlockChoice?.people ? (
+        <UnlockChoice months={unlockedMonths.join(',')} action={sendAfterUnlock}>
+          <p>
+            Attendance unlocked for {unlockedNames}. Do you want to send the{' '}
+            <strong>
+              {unlockChoice.firstContact} unopened absence calls/messages and {unlockChoice.followUps}{' '}
+              {unlockChoice.followUps === 1 ? 'follow-up' : 'follow-ups'}
+            </strong>
+            ? They start {startsIn(unlockChoice.delayMinutes)}.
+          </p>
+          {unlockChoice.sendingEnabled ? null : (
+            <p>
+              <strong>Sending is switched off in Settings, so nothing would reach anyone.</strong>
+            </p>
+          )}
+        </UnlockChoice>
+      ) : null}
+
       {latest ? <ImportOutcome row={latest} /> : null}
 
       <div className="tiles narrow gap-below">
@@ -185,6 +238,65 @@ export default async function MappingPage({
           </form>
         </section>
       </div>
+
+      <section className="card pad gap-below">
+        <div className="section-head">
+          <h2>Lock attendance</h2>
+        </div>
+        <p className="card-desc">
+          A locked month is final: uploads skip its days, nobody is contacted about it, and its open cases move to
+          Unresolved. Unlocking puts every case back where it was.{admin ? '' : ' Only an admin can lock or unlock.'}
+        </p>
+        {admin ? (
+          <div className="lock-row">
+            <form action={lockAttendance} className="lock-form">
+              <div className="field" style={{ minWidth: 200 }}>
+                <label htmlFor="lock-month">Month</label>
+                <select className="input" id="lock-month" name="month" defaultValue={locks.lockable[0] ?? ''} disabled={!locks.lockable.length}>
+                  {locks.lockable.map((month) => (
+                    <option key={month} value={month}>
+                      {monthLabel(month)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <ConfirmSubmit
+                label="Lock attendance"
+                className="btn primary"
+                disabled={!locks.lockable.length}
+                title="Lock this month's attendance?"
+                message={
+                  <>
+                    <p>
+                      The month becomes final. Uploads skip its days, nobody is contacted about it, and every case of it
+                      still open moves to Unresolved, including follow-ups and requests waiting on a manager.
+                    </p>
+                    <p>Anyone who replies about it is told once that it is locked and to speak to their manager.</p>
+                  </>
+                }
+                confirmLabel="Lock it"
+              />
+            </form>
+            <UnlockMonths months={locks.locks.map((lock) => ({ value: lock.month, label: monthLabel(lock.month) }))} action={unlockAttendance} />
+          </div>
+        ) : null}
+        {locks.locks.length ? (
+          <ul className="lock-list">
+            {locks.locks.map((lock) => (
+              <li key={lock.month}>
+                <strong>{monthLabel(lock.month)}</strong>
+                <span className="sub">
+                  {' '}
+                  · locked {formatTime(lock.lockedAt)}
+                  {lock.lockedByName ? ` by ${lock.lockedByName}` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="hint">No month is locked.</p>
+        )}
+      </section>
 
       {openUnmapped.length ? (
         <section className="card flush danger gap-below">
@@ -350,6 +462,16 @@ function ImportOutcome({
   const report = row.report;
   if (!report) return null;
 
+  // A file of nothing but locked months: read fine, but that attendance is final.
+  if (report.employeesSeen && !report.daysImported && report.daysLocked && !report.daysHeldBack) {
+    return (
+      <Notice tone="info">
+        <strong>Nothing was imported from {row.filename}.</strong> All of its days are in{' '}
+        {(report.lockedMonths ?? []).map((month) => monthLabel(month)).join(', ')}, whose attendance is locked.
+      </Notice>
+    );
+  }
+
   // A file of nothing but today: read fine, but today is not over, so nothing went in.
   if (report.employeesSeen && !report.daysImported && report.daysHeldBack) {
     return (
@@ -378,6 +500,9 @@ function ImportOutcome({
       {report.employeesSeen === 1 ? 'employee' : 'employees'} from {row.filename}.
       {report.rejected.length ? ` ${report.rejected.length} rows skipped.` : ''}
       {report.daysHeldBack ? ` Today’s attendance was left out (${report.daysHeldBack} days), as the day is not over yet.` : ''}
+      {report.daysLocked
+        ? ` ${report.daysLocked} days in ${(report.lockedMonths ?? []).map((month) => monthLabel(month)).join(', ') || 'a locked month'} were skipped: that attendance is locked.`
+        : ''}
       {report.employeesRestored
         ? ` ${report.employeesRestored} deleted ${report.employeesRestored === 1 ? 'employee is' : 'employees are'} back, with any cases that were kept when they were deleted.`
         : ''}

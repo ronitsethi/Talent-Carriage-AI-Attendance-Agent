@@ -9,6 +9,7 @@ import { MAX_RANGE_DAYS, datesInRange } from '@/lib/dates';
 import { contactDateFor, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { enqueue } from '@/lib/jobs/queue';
 import { buildContext, type FullContext } from '@/lib/runtime';
+import { lockedMonths, monthOf } from '@/lib/locks';
 
 /**
  * Sending after an attendance upload: the only way anything goes out on its own.
@@ -24,8 +25,12 @@ import { buildContext, type FullContext } from '@/lib/runtime';
 
 export type SendStage = 'first_contact' | 'follow_up';
 
-/** Someone due both is asked first, and is not rung for the follow-up while still on that call. */
-const FOLLOW_UPS_AFTER_MS = 10 * 60_000;
+/**
+ * Follow-ups go before first questions: both are due at once, and the queue takes
+ * the follow-ups' jobs first. Calls then take the shared lines in that order, and
+ * someone due both is never rung twice at once (`voice/lines.ts`).
+ */
+const PRIORITY: Record<SendStage, number> = { follow_up: 3, first_contact: 5 };
 
 type ModeSettings = Pick<TenantSettings, 'operatingMode' | 'attendanceSource'>;
 
@@ -58,13 +63,14 @@ async function latestUpload(ctx: FullContext, importId: string) {
   return latest?.id === importId ? latest : null;
 }
 
-/** Who a send would reach. Changes nothing. */
-async function planSend(ctx: FullContext, upload: { dateFrom: string | null; dateTo: string | null }, at: Date) {
+/** Who a send would reach. Changes nothing. `dates` overrides the upload's own: an unlock's months. */
+async function planSend(ctx: FullContext, upload: { dateFrom: string | null; dateTo: string | null }, at: Date, dates?: string[]) {
   const firstContact = new Set<string>();
   const followUps = new Set<string>();
   const newDates: string[] = [];
+  const locked = await lockedMonths(ctx.tx, ctx.tenantId);
 
-  for (const date of datesToChase(upload, ctx.settings, at)) {
+  for (const date of (dates ?? datesToChase(upload, ctx.settings, at)).filter((d) => !locked.has(monthOf(d)))) {
     const { gaps } = await findGaps(ctx.tx, ctx.tenantId, date, ctx.settings, { automaticOnly: true });
     const fresh = gaps.filter((gap) => !gap.existingCaseId);
     if (fresh.length) newDates.push(date);
@@ -127,24 +133,71 @@ export async function startUploadSend(tenantId: string, importId: string, at = n
       await runDailyCheck(ctx, { date, trigger: 'import', createOnly: true, importId });
     }
 
-    const startAt = at.getTime() + ctx.settings.sendDelayMinutes * 60_000;
-    const stages: { employeeId: string; stage: SendStage; runAt: number }[] = [
-      ...firstContact.map((employeeId) => ({ employeeId, stage: 'first_contact' as const, runAt: startAt })),
-      ...followUps.map((employeeId) => ({ employeeId, stage: 'follow_up' as const, runAt: startAt + FOLLOW_UPS_AFTER_MS })),
-    ];
-    for (const { employeeId, stage, runAt } of stages) {
-      await enqueue(
-        'upload_contact',
-        { employeeId, stage },
-        {
-          tenantId,
-          runAt: new Date(runAt),
-          dedupeKey: `upload_contact:${importId}:${stage}:${employeeId}`,
-        },
-        tx,
-      );
-    }
-    return { people: new Set(stages.map((s) => s.employeeId)).size, delayMinutes: ctx.settings.sendDelayMinutes };
+    const people = await queueSends(ctx, { firstContact, followUps }, at, importId);
+    return { people, delayMinutes: ctx.settings.sendDelayMinutes };
+  });
+}
+
+/** Each person's turn, queued for when the customer's time period ends. Returns how many people. */
+async function queueSends(ctx: FullContext, plan: { firstContact: string[]; followUps: string[] }, at: Date, key: string) {
+  const runAt = new Date(at.getTime() + ctx.settings.sendDelayMinutes * 60_000);
+  const stages: { employeeId: string; stage: SendStage }[] = [
+    ...plan.followUps.map((employeeId) => ({ employeeId, stage: 'follow_up' as const })),
+    ...plan.firstContact.map((employeeId) => ({ employeeId, stage: 'first_contact' as const })),
+  ];
+  for (const { employeeId, stage } of stages) {
+    await enqueue(
+      'upload_contact',
+      { employeeId, stage },
+      { tenantId: ctx.tenantId, runAt, priority: PRIORITY[stage], dedupeKey: `upload_contact:${key}:${stage}:${employeeId}` },
+      ctx.tx,
+    );
+  }
+  return new Set(stages.map((s) => s.employeeId)).size;
+}
+
+/** Every date of these months, up to the date contact is due, oldest first. */
+function datesOfMonths(months: string[], settings: TenantSettings, at: Date): string[] {
+  const last = contactDateFor(settings, at);
+  return months
+    .flatMap((month) => {
+      const [year, number] = month.split('-').map(Number) as [number, number];
+      const days = new Date(Date.UTC(year, number, 0)).getUTCDate();
+      return Array.from({ length: days }, (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`);
+    })
+    .filter((date) => date <= last)
+    .sort();
+}
+
+/**
+ * What the choice after an unlock would send, or null when there is no choice
+ * to offer (a customer not on automatic). The same as after an upload, over the
+ * unlocked months: their unopened dates, and anyone due a follow-up.
+ */
+export async function previewUnlockSend(tenantId: string, months: string[], at = new Date()) {
+  return withTenant(tenantId, async (tx) => {
+    const ctx = await buildContext(tx, tenantId);
+    if (!automaticUploads(ctx.settings) || !months.length) return null;
+    const { firstContact, followUps } = await planSend(ctx, { dateFrom: null, dateTo: null }, at, datesOfMonths(months, ctx.settings, at));
+    return {
+      people: new Set([...firstContact, ...followUps]).size,
+      firstContact: firstContact.length,
+      followUps: followUps.length,
+      delayMinutes: ctx.settings.sendDelayMinutes,
+      sendingEnabled: ctx.settings.sendingEnabled,
+    };
+  });
+}
+
+/** HR chose to send after unlocking: as after an upload, over the unlocked months. */
+export async function startUnlockSend(tenantId: string, months: string[], at = new Date()) {
+  return withTenant(tenantId, async (tx) => {
+    const ctx = await buildContext(tx, tenantId);
+    if (!automaticUploads(ctx.settings) || !months.length) return { people: 0, delayMinutes: 0 };
+    const { firstContact, followUps, newDates } = await planSend(ctx, { dateFrom: null, dateTo: null }, at, datesOfMonths(months, ctx.settings, at));
+    for (const date of newDates) await runDailyCheck(ctx, { date, trigger: 'import', createOnly: true });
+    const people = await queueSends(ctx, { firstContact, followUps }, at, `unlock:${months.join(',')}:${at.getTime()}`);
+    return { people, delayMinutes: ctx.settings.sendDelayMinutes };
   });
 }
 

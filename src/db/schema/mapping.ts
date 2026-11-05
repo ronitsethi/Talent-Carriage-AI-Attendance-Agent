@@ -113,6 +113,9 @@ export type ImportReport = {
   daysImported: number;
   /** Days dated today or later, left out because the day is not over. Absent when there were none. */
   daysHeldBack?: number;
+  /** Days in months whose attendance is locked, skipped; and which months. Absent when there were none. */
+  daysLocked?: number;
+  lockedMonths?: string[];
   rejected: { row: number; employeeCode?: string; reason: string }[];
   unmappedCodes: Record<string, number>;
   meaningCounts: Record<string, number>;

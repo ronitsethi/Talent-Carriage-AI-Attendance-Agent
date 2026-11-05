@@ -34,7 +34,7 @@ _Populated from the codebase on 2026-10-13. Edit only the section that changed._
 **Deploy:** to Azure App Service (Linux), through `npm run deploy` → `scripts/deploy-azure.sh`.
 - Defaults: resource group `rg-client-hub`, web app `tc-attendance-99772`.
 - The script builds standalone and bundles the migrations, `rls.sql` and `tessdata/`. It strips `.env*`, zip-deploys with `--clean`, then polls `/api/health`.
-- The database is an Azure PostgreSQL Flexible Server shared with Client Hub (`tc-clienthub-pg-99772`). Its firewall only lets Azure services in; to migrate from a laptop, add a rule for that IP, run `npm run db:migrate` with the `MIGRATION_DATABASE_URL` from App Settings, then remove the rule. Production had migrations through 0029 on 2026-11-05. This app has its own database (`attendance`) and its own `tc_app` role, both set up by `scripts/azure-db-setup.ts`.
+- The database is an Azure PostgreSQL Flexible Server shared with Client Hub (`tc-clienthub-pg-99772`). Its firewall only lets Azure services in; to migrate from a laptop, add a rule for that IP, run `npm run db:migrate` with the `MIGRATION_DATABASE_URL` from App Settings, then remove the rule. Production had migrations through 0030 on 2026-11-05. This app has its own database (`attendance`) and its own `tc_app` role, both set up by `scripts/azure-db-setup.ts`.
 - The in-process worker relies on App Service "Always On".
 
 **Azure footprint** (subscription "Azure subscription 1", tenant Default Directory, resource group `rg-client-hub`; checked 2026-10-27). Fixed cost is about **$74/month** at Central India list price, before tax. Azure OpenAI is pay-per-token, so it is not part of that figure.
@@ -56,7 +56,7 @@ _Populated from the codebase on 2026-10-13. Edit only the section that changed._
 
 ## Database
 
-Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0029` are in `src/db/migrations/` (0011 soft-deleted employees, 0012–0013 queries, recordings and call feedback, 0014–0017 COE teams and tickets, 0018–0019 manager approvals, 0020 cost lines, 0021 a one-off correction of Plivo phone-line amounts, 0022 v4 voices, 0023 the follow-up limit and count, 0024 upload sending: `check_time` dropped, 0025 `send_delay_minutes`, 0026 drops `follow_up_after_days`, `call_after_days` and `cases.call_due_at`, 0027 `follow_up_contacts` and frees `audit_log` from its customer, 0028 `queries.informed_at`, 0029 `queries.follows_query_id`). `src/db/rls.sql` holds the RLS policies and triggers and is re-applied on every migrate.
+Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0030` are in `src/db/migrations/` (0011 soft-deleted employees, 0012–0013 queries, recordings and call feedback, 0014–0017 COE teams and tickets, 0018–0019 manager approvals, 0020 cost lines, 0021 a one-off correction of Plivo phone-line amounts, 0022 v4 voices, 0023 the follow-up limit and count, 0024 upload sending: `check_time` dropped, 0025 `send_delay_minutes`, 0026 drops `follow_up_after_days`, `call_after_days` and `cases.call_due_at`, 0027 `follow_up_contacts` and frees `audit_log` from its customer, 0028 `queries.informed_at`, 0029 `queries.follows_query_id`, 0030 attendance locks: `case_status.unresolved`, `attendance_locks`, `cases.lock_state`, `call_lines`). `src/db/rls.sql` holds the RLS policies and triggers and is re-applied on every migrate.
 
 **Tenant isolation (RLS)**
 - The app connects as `tc_app`: not a superuser, no `BYPASSRLS`. Migrations use `MIGRATION_DATABASE_URL`, the owner connection.
@@ -74,6 +74,7 @@ Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0029` are in 
 | Tenancy | `tenants`, `tenant_settings`, `tenant_channels`, `users` | `tenant_settings` holds every per-customer knob (see below). `tenant_channels` holds per-tenant provider config (WhatsApp `phoneNumberId`/token/template name in `config` jsonb). `users.tenant_id` is NULL for Talent Carriage staff. |
 | People | `employees`, `employee_history`, `leave_balances`, `shifts`, `calendars`, `calendar_days` | Employees are unique on `(tenant_id, emp_code)`; `mobile_e164` is the WhatsApp id. Per-employee settings: `preferred_channel` (whatsapp/voice), `follow_up_channel`, `operating_mode` (manual/automatic/null), `call_mode` (keypad/agent/null), and opt-out flags. |
 | Data intake | `mapping_profiles`, `code_mappings`, `unmapped_codes`, `imports`, `attendance_days` | Mapping profiles are versioned (`draft`/`active`/`archived`); a draft keeps the uploaded file (`source_file`, base64) and `detected` analysis. `code_mappings` turns a customer's codes into the canonical `attendance_meaning`. `attendance_days` has PK `(tenant_id, employee_id, att_date)` plus a `revision` counter. |
+| Locks and lines | `attendance_locks`, `call_lines` (0030) | `attendance_locks`: one row per customer and locked month (`YYYY-MM`), tenant RLS. `call_lines`: platform-wide, 20 rows of which the first `CALL_LINES` (3) are used; see Calls below. |
 | Cases | `cases`, `detection_runs` | One case per `(tenant_id, employee_id, att_date)` (unique). Holds status, reply option/intent, follow-up and call clocks, close/needs-HR reasons, and `context` jsonb. |
 | Messaging | `conversations`, `messages`, `templates` | One conversation per employee and channel, tracking the 24h WhatsApp window and `active_case_id`. Messages are de-duplicated on `provider_message_id`. `messages.pricing` (0020) keeps Meta's billing verdict from the delivery receipt; a message to a manager has no `case_id` and names its case in `payload.aboutCaseId`. |
 | Queries | `queries` | Something an employee asked of their own accord: one incoming call, or a WhatsApp chat until it goes quiet for 30 min. Holds the call transcript, recording, summaries, call feedback and the ticket fields. With no ticket, `informed_at` marks one shared with its COE team for information (type and description filled, `ticket_status` null). |
@@ -143,14 +144,15 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 
 | Job kind | Handler behaviour |
 |---|---|
-| `upload_contact` | One person's turn in a send after an upload (`contactAfterUpload` in `src/lib/upload-send.ts`), first questions or due follow-ups. Re-checks automatic mode, the employee's own mode and quiet hours first. |
-| `approval_timeout` | Expires pending approvals past `timeout_at` and moves the case to `needs_hr`. |
+| `upload_contact` | One person's turn in a send after an upload or unlock (follow-ups priority 3, first questions 5, both at the same moment) (`contactAfterUpload` in `src/lib/upload-send.ts`), first questions or due follow-ups. Re-checks automatic mode, the employee's own mode and quiet hours first. |
+| `approval_timeout` | Expires pending approvals past `timeout_at` and moves the case to `needs_hr`, except a case in a locked month. |
 | `verify_action` | Reads back `unconfirmed` actions from the HRMS and marks them `executed` when confirmed. |
 | `refresh_leave_balances` | Handler exists (fetches balances from the HRMS); not scheduled. |
 | `place_call` | Stub: returns "voice provider not configured". |
 | `import_file` | Stub: imports are handled by the upload server action. |
 | `query_feedback` | A minute after a call to us ends, asks for feedback on WhatsApp. |
 | `query_ticket` | Once a query is over, decides with the model whether it needs a ticket, and raises and assigns it. With no ticket but something real asked, writes its type and description and queues `query_inform`. |
+| `waiting_call` | A call that found all call lines busy (`voice/waiting.ts`): a case contact, a person's follow-ups, or a manager's approval call. Retried every 15 s via `Postpone` without spending attempts; priority 2 follow-ups, 3 manager calls, 4 first questions. |
 | `ticket_employee` | Tells the employee on WhatsApp about their ticket: that it is logged when raised, and when it is resolved (no ticket number) (`src/lib/conversation/ticket-notices.ts`). Plain text inside the 24h window, else `employee_ticket_raised` / `employee_ticket_resolved`. |
 | `query_inform` | Sends `coe_query_info` (for information, no Resolved button) to every member of the query type's team who looks after the company. |
 | `ticket_notify`, `ticket_reminder`, `ticket_escalate` | WhatsApp notices to the COE member: assigned, a 36h reminder, and at 48h the move to the LT person. Each names the employee with their phone number (`Name (code), phone +91 …`). |
@@ -170,7 +172,7 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 | `/employees` | `(app)/employees/` | Employees and their per-person switches. |
 | `/managers` | `(app)/managers/page.tsx` | Everybody the file names as a manager, with Contact by, Call style and Mode, and the approvals waiting (Send now for manual managers). |
 | `/coe` | `(app)/coe/page.tsx` | COE Teams: members, the clients each looks after, employee codes, and the query-type sheet. |
-| `/mapping` | `(app)/mapping/page.tsx` + `editor.tsx` | "Mapping & Import". Upload a file to analyse it into a draft mapping, edit fields, layout and codes, save as a new active version, import attendance, and resolve unmapped codes. With automatic sending on, an upload then asks whether to send what is due or just update (`components/upload-choice.tsx`). |
+| `/mapping` | `(app)/mapping/page.tsx` + `editor.tsx` | "Mapping & Import". Upload a file to analyse it into a draft mapping, edit fields, layout and codes, save as a new active version, import attendance, and resolve unmapped codes. With automatic sending on, an upload then asks whether to send what is due or just update (`components/upload-choice.tsx`). The Lock attendance card locks a month and unlocks one or more (`components/attendance-lock.tsx`), then asks Send / Just unlock on automatic. |
 | `/knowledge` | `(app)/knowledge/page.tsx` + `refresh.tsx` | "Guidelines". Upload and delete policy PDFs (OCR, then embeddings, in the background; the page auto-refreshes while reading). A test box asks a question the way the agent would. |
 | `/settings` | `(app)/settings/page.tsx` | Per-tenant settings: sending switch, automatic sending and its delay, cap, follow-up/call/approval timings, attendance source, agent voice and pace. Read-only unless the user can manage settings. |
 | `/admin` | `(app)/admin/page.tsx` | "All customers" console for `platform_admin` only: per-tenant health, Add customer (→ `addCustomer`), AI spending (spent / allowed / left per budget, with a top-up form → `topUpAiBudget`), and platform connections. |
@@ -189,6 +191,7 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 | Platform (`platform_admin` only) | `addCustomer` (`src/lib/customers.ts`: tenant plus settings row, status `active`, sending off, manual mode; no login or `tenant_channels` row, so it shares the platform's numbers and only staff can reach it), `topUpAiBudget` |
 | Tickets | `updateTicket`, `closeTickets` (bulk or one; through `closeTicket` in `tickets.ts`, which tells the employee) |
 | Mapping | `analyseMappingFile`, `saveMapping`, `setCodeMeaning`, `importAttendance`, `sendAfterUpload` |
+| Attendance locks (admins) | `lockAttendance`, `unlockAttendance`, `sendAfterUnlock` |
 | Guidelines | `uploadPolicyDocument` (ingestion runs without blocking the request), `deletePolicyDocument`, `askPolicyQuestion` |
 
 **Frontend / UI**
@@ -221,6 +224,7 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 | `answered` | `awaiting_approval` / `needs_hr` | The last follow-up has gone: the manager gets an `overdue` request, or HR takes it when the file names no manager. |
 | contacted and open, including with the manager | `resolved` (`closed_by_revision`, "Action taken") | A later upload shows an explaining meaning (`closeCasesExplainedByData`). A request waiting on a manager is expired. |
 | `queued` | deleted | A later upload shows the day no longer needs chasing. |
+| any open | `unresolved` | Its month's attendance is locked (`lockMonth`); `lock_state` keeps the status and each pending approval's remaining time. Unlocking restores both. |
 | various | `needs_hr` | Employee asks a question or for help; reply unclear twice (one clarification is allowed first); opt-out (all of their unanswered cases); help requested on a call; manager rejects; no reachable manager; approval timeout; HRMS action failure; or HR clicks "Flag for HR". |
 | any | `resolved` / deleted | HR uses `closeCase`, `resetCase` or `resetAllCases`. |
 
@@ -230,6 +234,8 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 - `cancelled` exists in the enum but nothing sets it.
 
 **Deactivated customers** (`tenants.status='suspended'`, All customers): `buildContext` forces sending off without touching the stored switch, the WhatsApp webhook ignores their employees' messages, the worker schedules nothing, inbound calls are refused, and their own users cannot sign in or keep using a session. Pending `upload_contact` jobs are dropped. Delete is only allowed once deactivated, removes everything by cascade except `audit_log` (append-only, so no longer tied to `tenants`), and refuses if a `platform_admin` is tied to the customer.
+
+**Attendance locks** (`src/lib/locks.ts`, Mapping & import, admins only): a locked month is final. Uploads skip its days (`daysLocked`), no case is opened in it, nobody is contacted about it (dashboard, Cases, case page controls disabled; `contactCase` refuses), open cases wait as `unresolved` on the Unresolved tab ("Attendance locked"), and never-contacted absences stay on the dashboard, disabled. A reply after the lock changes nothing: the employee and the manager are each told once that it is locked (employee: speak to your manager). Unlocking one or more months restores every case; a customer on automatic is then asked Send / Just unlock (`previewUnlockSend`, `startUnlockSend`).
 
 **Send guards** (`canSend`): tenant `sending_enabled`, no WhatsApp opt-out, and a mobile number on file. Calls check `sending_enabled`, `call_opt_out` and a mobile number. Global `DRY_RUN` routes everything to fakes.
 
@@ -272,6 +278,10 @@ Code is in `src/lib/jobs/*`. Jobs live in the Postgres `jobs` table.
 - **The manager** (`src/lib/approvals.ts`) is found from the employee's manager mobile column, else the manager code's own mobile. They get the request on WhatsApp (`manager_approval_request`) or by call (`src/lib/voice/approval-calls.ts`: press 1 to approve, 2 to reject, or say it), as set on the Managers page. A missed or undecided call falls back to WhatsApp. No manager in the file sends the case to HR.
 - **The decision:** rejected closes the case; approved closes it, or, in HRMS mode, the agent applies it. The employee is always told on WhatsApp, never by call: free text inside the 24h window, the `approval_outcome` template outside it. The manager is then told the employee knows, also on WhatsApp: free text after a tap, `approval_noted` otherwise.
 - **Reply language** (`spokenLanguage` in `src/lib/conversation/talk.ts`): decided by code, not the model. Turns under three words keep the call's current language, because murmurs and background voices come through as one or two words, often in Devanagari. A script only counts when at least half the words are in it, so one stray Devanagari word in an English sentence does not switch it.
+
+## Calls
+
+No more than 3 calls run at once across the whole platform (`src/lib/voice/lines.ts`, `CALL_LINES`, default 3): first questions, follow-ups, final notices, manager approval calls and incoming calls. Each takes a row of `call_lines` in its own transaction before it is placed; a line frees itself when the call ends (status or end time), when an incoming call's query ends, after 2 minutes if the call row never appeared, or after 45 minutes. One number is never rung twice at once. A call that finds every line busy waits as a `waiting_call` job (follow-ups first, then manager calls, then first questions); the portal says how many are waiting. An incoming call with every line busy hears "All our lines are busy right now. Please try again in a few minutes." and is ended.
 
 ## Costs
 
@@ -327,6 +337,8 @@ Every case and query page ends with one cost box, split by service (`src/lib/cos
 - **Plivo charge:** the SIP trunk CDR lookup was confirmed on live calls on 2026-10-28 (its amounts are in USD). `TotalCost` on the keypad hangup callback has not yet been seen on a live call; without it the phone line stays an estimate.
 - **Tests:** two voice tests need an AI provider key and fail without one (`calls.test.ts` "understands the employee speaking…", `talking-call.test.ts` "…sweeps the backlog"). The job-runner test in `feedback.test.ts` failed once in a full run and passed on its own, so it may be flaky. The mapping tests use `tests/fixtures/timeoffice-register-august-2026.xlsx`, so editing the demo file does not break them.
 - **`approval_noted` template not created (parked 2026-11-05):** it is not on the WhatsApp Business account. Only the confirmation to a manager who decided on a call, and has not written on WhatsApp in 24 hours, needs it; that send fails until it exists. A decision tapped on WhatsApp is confirmed as plain text and works. The user chose not to create it yet. When wanted: `scripts/create-ticket-templates.ts 1185067337113062 approval_noted`.
+- **Call limit is platform-wide:** 3 calls at once across all customers (`CALL_LINES`). When LiveKit is upgraded, it should become per customer (decided 2026-11-05).
+- **`resetAllCases` ignores locks:** the admin reset deletes every case, locked months included.
 - **Legacy code:** the `approval_outcome` call purpose and the `/api/voice/inbound` keypad line for calls to us are still in the code, but production sends incoming calls to LiveKit and decisions only go on WhatsApp.
 - **Capacity (checked 2026-10-27):** the live setup handles about 2–3 calls at once (voice worker: 0.5 vCPU / 1 GiB, max 1 replica) and roughly 500 WhatsApp conversations an hour (gpt-4.1-mini quota: 200K tokens and 200 requests per minute).
 - **Model calls hold a DB connection:** WhatsApp replies (`api/webhook`) and call turns (`api/agent/turn`) call the model inside an open `withTenant` transaction. A web instance can therefore run only as many turns at once as its pool allows (20). The server allows 50 connections, shared with Client Hub, which caps how far the web app can scale out.

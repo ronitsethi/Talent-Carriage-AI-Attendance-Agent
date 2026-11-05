@@ -183,8 +183,11 @@ describe('sending', () => {
     await startUploadSend(scenario.tenantId, importId);
     const queued = await queuedJobs();
     expect(queued.map((job) => job.payload.stage).sort()).toEqual(['first_contact', 'follow_up']);
-    const runAt = (stage: string) => queued.find((job) => job.payload.stage === stage)!.runAt.getTime();
-    expect(runAt('follow_up') - runAt('first_contact'), 'not rung twice at once').toBe(10 * 60_000);
+    // Both at the same moment, follow-ups first: the queue takes the lower priority number first, and the
+    // call lines never ring one person twice at once.
+    const job = (stage: string) => queued.find((row) => row.payload.stage === stage)!;
+    expect(job('follow_up').runAt.getTime()).toBe(job('first_contact').runAt.getTime());
+    expect(job('follow_up').priority).toBeLessThan(job('first_contact').priority);
 
     await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'first_contact');
     await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'follow_up');

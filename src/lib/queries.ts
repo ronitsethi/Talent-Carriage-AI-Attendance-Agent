@@ -1,7 +1,10 @@
 import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
+import { lockedMonths, monthsWithAttendance } from '@/lib/locks';
 import { withPlatformScope, withTenant, type Db } from '@/db';
 import { chasedMeanings } from '@/lib/detection/run';
 import {
+  attendanceLocks,
+  users,
   coePeople,
   actions,
   approvals,
@@ -122,6 +125,8 @@ export const CASE_FILTERS = [
   { key: 'awaiting', label: 'Awaiting reply', statuses: AWAITING_REPLY },
   { key: 'answered', label: 'Answered', statuses: ANSWERED_STATUSES },
   { key: 'follow_up', label: 'Follow-up', statuses: ['follow_up'] },
+  // Open when its month's attendance was locked: frozen there until it is unlocked.
+  { key: 'unresolved', label: 'Unresolved', statuses: ['unresolved'] },
   { key: 'needs_hr', label: 'Needs HR', statuses: ['needs_hr'] },
   { key: 'failed', label: 'Send failed', statuses: ['failed'] },
   { key: 'resolved', label: 'Resolved', statuses: ['resolved'] },
@@ -485,6 +490,7 @@ export type FlaggedRow = {
   operatingMode: string | null;
   caseId: string | null;
   caseStatus: string | null;
+  caseLockedFrom: string | null;
 };
 
 /**
@@ -522,6 +528,8 @@ export async function flaggedInRange(
         isWorkingDay: attendanceDays.isWorkingDay,
         caseId: cases.id,
         caseStatus: cases.status,
+        /** For a case in a locked month: the status it was locked in. */
+        caseLockedFrom: sql<string | null>`${cases.lockState}->>'status'`,
       })
       .from(attendanceDays)
       .innerJoin(employees, eq(employees.id, attendanceDays.employeeId))
@@ -709,6 +717,26 @@ export async function listQueries(
       .limit(filters.limit ?? 200);
     return { rows, counts: { queries: tally?.queries ?? 0, tickets: tally?.tickets ?? 0 } };
   });
+}
+
+/** The locks, with who made them, and the months with attendance that could still be locked. */
+export async function attendanceLockOverview(tenantId: string) {
+  return withTenant(tenantId, async (tx) => {
+    const locks = await tx
+      .select({ month: attendanceLocks.month, lockedAt: attendanceLocks.lockedAt, lockedByName: users.name })
+      .from(attendanceLocks)
+      .leftJoin(users, eq(users.id, attendanceLocks.lockedBy))
+      .where(eq(attendanceLocks.tenantId, tenantId))
+      .orderBy(desc(attendanceLocks.month));
+    const taken = new Set(locks.map((lock) => lock.month));
+    const lockable = (await monthsWithAttendance(tx, tenantId)).filter((month) => !taken.has(month));
+    return { locks, lockable };
+  });
+}
+
+/** The months whose attendance is locked, for the pages that disable their rows. */
+export async function lockedMonthsFor(tenantId: string): Promise<Set<string>> {
+  return withTenant(tenantId, (tx) => lockedMonths(tx, tenantId));
 }
 
 /** The tickets on either side of a follow-up: the one this continues, and any that continue it. */

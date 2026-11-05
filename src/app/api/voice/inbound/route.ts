@@ -8,7 +8,9 @@ import { voiceLines } from '@/lib/voice/say';
 import { agentVoice } from '@/lib/voice/voices';
 import { withCostScope } from '@/lib/costs/record';
 import { recordingsConfigured } from '@/lib/recordings';
-import { startCallQuery } from '@/lib/conversation/queries';
+import { startCallQuery, takeLineForIncoming } from '@/lib/conversation/queries';
+import { LINES_BUSY } from '@/lib/voice/lines';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Somebody rings the company's number.
@@ -59,6 +61,11 @@ export async function inboundXml(request: Request): Promise<Response> {
   // Spoken in the voice chosen in Settings, so an incoming call sounds like the
   // same company as an outgoing one rather than like Plivo.
   // The call is a query from here to the hang-up, greeting and all.
+  // Every line busy: they are told so, and the call ends.
+  const id = randomUUID();
+  const line = await withTenant(found.tenantId, (t) => takeLineForIncoming(t, found.tenantId, id, callUuid)).catch(() => true);
+  if (!line) return xmlResponse(speakAndHangupXml(LINES_BUSY));
+
   const queryId = await withTenant(found.tenantId, (t) =>
     startCallQuery(t, {
       tenantId: found.tenantId,
@@ -66,6 +73,7 @@ export async function inboundXml(request: Request): Promise<Response> {
       style: 'keypad',
       providerCallId: callUuid,
       greeting: `${intro} ${question}`,
+      id,
     }),
   ).catch((error) => {
     console.error('[voice] could not open the query for an incoming call:', error);
