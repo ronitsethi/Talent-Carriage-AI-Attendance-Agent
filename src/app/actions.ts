@@ -51,7 +51,7 @@ import { CodeTaken, PersonClash, readTeamInput, removeTeam, saveTeam, validateTe
 import { createCustomer, deleteCustomer, setCustomerActive, CustomerRefused } from '@/lib/customers';
 import { startUploadSend } from '@/lib/upload-send';
 import { listQueryTypes, parseQueryTypeSheet, replaceQueryTypes } from '@/lib/query-types';
-import { PRIORITIES, queueAssignmentWork, type Priority } from '@/lib/tickets';
+import { PRIORITIES, closeTicket, queueAssignmentWork, type Priority } from '@/lib/tickets';
 import { sendApprovalRequest } from '@/lib/approvals';
 
 async function requireTenant() {
@@ -1246,6 +1246,28 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * the query type keeps its name and COE as they are now, a new assignee is
  * timed from now, and a ticket marked as moved to the LT person records when.
  */
+/**
+ * HR closes tickets from the portal: the ticked ones on the Tickets tab, or one
+ * from its own page. Each employee is told on WhatsApp; a ticket closed already
+ * is left alone, so nobody is told twice.
+ */
+export async function closeTickets(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const ids = [...new Set(formData.getAll('target').map(String))].filter((id) => UUID_PATTERN.test(id));
+  const back = String(formData.get('back') ?? '/queries?view=tickets');
+  let closed = 0;
+  await withTenant(tenantId, async (tx) => {
+    const mine = ids.length
+      ? await tx.select({ id: queries.id }).from(queries).where(and(eq(queries.tenantId, tenantId), inArray(queries.id, ids)))
+      : [];
+    for (const { id } of mine) if (await closeTicket(tx, id)) closed++;
+  });
+  revalidatePath('/queries');
+  for (const id of ids) revalidatePath(`/queries/${id}`);
+  const target = back.startsWith('/queries') ? back : '/queries?view=tickets';
+  redirect(`${target}${target.includes('?') ? '&' : '?'}closed=${closed}`);
+}
+
 export async function updateTicket(formData: FormData) {
   const { tenantId } = await requireTenant();
   const queryId = String(formData.get('queryId') ?? '');

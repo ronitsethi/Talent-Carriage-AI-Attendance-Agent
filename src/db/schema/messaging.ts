@@ -114,6 +114,12 @@ export const queries = pgTable(
      * and description above are written then too, with no ticket status.
      */
     informedAt: timestamp('informed_at', { withTimezone: true }),
+    /**
+     * A follow-up ticket: the employee said, within a week of an earlier ticket
+     * being closed, that its problem was still not right. The query that earlier
+     * ticket belongs to; the new one goes to whoever had it.
+     */
+    followsQueryId: uuid('follows_query_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -1,13 +1,14 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
-import { queryDetail } from '@/lib/queries';
+import { queryDetail, ticketLinks } from '@/lib/queries';
 import { feedbackLabel, formatTime } from '@/lib/display';
 import { summaryIsStale } from '@/lib/conversation/summary';
 import { SummaryWriter } from '@/components/summary-writer';
 import { CallHead, CallPanel, ChatHead, Thread, type Entry } from '@/components/conversation';
 import { CostBox } from '@/components/cost-box';
-import { updateTicket, writeQuerySummary } from '@/app/actions';
+import { closeTickets, updateTicket, writeQuerySummary } from '@/app/actions';
+import { ConfirmSubmit } from '@/components/confirm';
 import { PersonHead } from '@/components/person-head';
 import { TicketForm } from '@/components/ticket-form';
 import { Notice } from '@/components/notice';
@@ -55,7 +56,7 @@ export default async function QueryDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ saved?: string }>;
+  searchParams: Promise<{ saved?: string; closed?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -63,7 +64,7 @@ export default async function QueryDetailPage({
   if (!tenantId) redirect('/');
 
   const { id } = await params;
-  const { saved } = await searchParams;
+  const { saved, closed } = await searchParams;
   const detail = await queryDetail(tenantId, id);
   if (!detail) notFound();
 
@@ -71,6 +72,7 @@ export default async function QueryDetailPage({
   // The ticket's choices: every query type in the sheet, and everybody on a COE team.
   // A query that needed no ticket but was shared with its COE team: who was told, and how it went.
   const shared = !query.ticketStatus && query.informedAt ? await ticketActivity(query.id) : null;
+  const links = query.ticketStatus ? await ticketLinks(tenantId, query) : null;
   const ticket = query.ticketStatus
     ? await Promise.all([listQueryTypes(), assignablePeople(), ticketLtPerson(query.assignedTeamId, query.coeCode), ticketActivity(query.id)])
     : null;
@@ -111,6 +113,11 @@ export default async function QueryDetailPage({
           The ticket is saved.
         </Notice>
       ) : null}
+      {closed ? (
+        <Notice tone="ok" clear={['closed']}>
+          {Number(closed) ? 'The ticket is closed. The employee is being told on WhatsApp.' : 'The ticket was already closed.'}
+        </Notice>
+      ) : null}
       <section className="page-head">
         <Link className="back-link" href="/queries">
           ← All queries
@@ -141,10 +148,57 @@ export default async function QueryDetailPage({
                   <h3>
                     Ticket <span className="mono ticket-no">{ticketLabel(query.ticketNo)}</span>
                   </h3>
-                  <span className={`chip ${query.ticketStatus === 'resolved' ? 'ok' : 'info'}`}>
-                    {query.ticketStatus === 'resolved' ? `Resolved ${formatTime(query.resolvedAt)}` : `Open since ${formatTime(query.ticketRaisedAt)}`}
+                  <span className="ticket-head-end">
+                    <span className={`chip ${query.ticketStatus === 'resolved' ? 'ok' : 'info'}`}>
+                      {query.ticketStatus === 'resolved' ? `Resolved ${formatTime(query.resolvedAt)}` : `Open since ${formatTime(query.ticketRaisedAt)}`}
+                    </span>
+                    {query.ticketStatus === 'open' ? (
+                      <form action={closeTickets}>
+                        <input type="hidden" name="target" value={query.id} />
+                        <input type="hidden" name="back" value={`/queries/${query.id}`} />
+                        <ConfirmSubmit
+                          label="Close ticket"
+                          className="btn small"
+                          title={`Close ${ticketLabel(query.ticketNo)}?`}
+                          message={
+                            <p>
+                              It is marked resolved, and {employee.fullName} is told on WhatsApp that their ticket is resolved.
+                              A closed ticket cannot be opened again.
+                            </p>
+                          }
+                          confirmLabel="Close it"
+                        />
+                      </form>
+                    ) : null}
                   </span>
                 </div>
+                {links && (links.follows || links.followedBy.length) ? (
+                  <p className="hint ticket-links">
+                    {links.follows ? (
+                      <>
+                        Follow-up to{' '}
+                        <Link className="mono" href={`/queries/${links.follows.id}`}>
+                          {ticketLabel(links.follows.no)}
+                        </Link>
+                        : the employee said its problem was still not right.{' '}
+                      </>
+                    ) : null}
+                    {links.followedBy.length ? (
+                      <>
+                        Raised again as{' '}
+                        {links.followedBy.map((next, index) => (
+                          <span key={next.id}>
+                            {index ? ', ' : ''}
+                            <Link className="mono" href={`/queries/${next.id}`}>
+                              {ticketLabel(next.no)}
+                            </Link>
+                          </span>
+                        ))}
+                        , after the employee said it was still not right.
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
                 {/* Keyed on what is saved, so a save starts the form from the new values. */}
                 <TicketForm
                   key={`${query.queryTypeId}-${query.priority}-${query.assignedPersonId}-${query.ltTransferredAt?.toISOString()}-${query.problemDescription?.length}`}

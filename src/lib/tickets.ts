@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, sql } from 'drizzle-orm';
 import { withPlatformScope, type Db } from '@/db';
 import { coeMemberClients, coePeople, coeTeamMembers, coeTeams, employees, queries } from '@/db/schema';
 import { ask, queryConversation, transcriptText } from '@/lib/conversation/summary';
@@ -26,6 +26,9 @@ import { withCostScope } from '@/lib/costs/record';
  */
 
 export const PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
+
+/** How long after a ticket is closed the employee can say it is still not right, and have it raised again. */
+export const FOLLOW_UP_DAYS = 7;
 
 /** How long a member has before they are warned, and before the ticket moves to the LT person. */
 export const REMIND_AFTER_MS = 36 * 3600_000;
@@ -109,14 +112,17 @@ When no ticket is needed but the employee still asked or told something real - a
 - priority: "low".
 - description: two to four plain English sentences, in the third person and using the employee's name, saying what they asked, with every specific detail they gave, and what they were told. Use only what was said; never guess.
 
-When the employee only greeted, tested or hung up, give query_type 0, priority "low" and an empty description.`;
+When the employee only greeted, tested or hung up, give query_type 0, priority "low" and an empty description.
+
+RECENTLY CLOSED TICKETS lists this employee's tickets closed in the last week, if any. When the employee says the problem in one of them is still not right - not fixed, still wrong, still short, still waiting - it is a follow-up: needs_ticket is true, follows_ticket is that ticket's number in the list, and the description says what the original problem was and what the employee says is still not right. A new problem, even on the same subject (another month, another document), is not a follow-up. A thank-you or acknowledgement of a closed ticket needs nothing. When it is not a follow-up, follows_ticket is 0.`;
 
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['needs_ticket', 'query_type', 'priority', 'description'],
+  required: ['needs_ticket', 'query_type', 'priority', 'description', 'follows_ticket'],
   properties: {
     needs_ticket: { type: 'boolean' },
+    follows_ticket: { type: 'integer' },
     query_type: { type: 'integer' },
     priority: { type: 'string', enum: [...PRIORITIES] },
     description: { type: 'string' },
@@ -142,13 +148,16 @@ export function describeTypes(types: QueryType[]): string {
     .join('\n');
 }
 
-type Verdict = { needs_ticket: boolean; query_type: number; priority: Priority; description: string };
+type Verdict = { needs_ticket: boolean; query_type: number; priority: Priority; description: string; follows_ticket?: number };
+
+/** A ticket of the same employee's closed in the last week, as the model is shown it. */
+export type ClosedTicket = { id: string; label: string; type: string | null; resolvedAt: Date; description: string | null };
 
 export type TicketOutcome =
   | { done: 'no_conversation' | 'already_raised' | 'already_informed' | 'not_needed' | 'missing' }
   | { done: 'informed'; queryTypeName: string; people: number }
   | { done: 'later'; at: Date }
-  | { done: 'raised'; queryTypeName: string | null; personId: string | null; mark: AssignmentMark | null };
+  | { done: 'raised'; queryTypeName: string | null; personId: string | null; mark: AssignmentMark | null; follows: string | null };
 
 /**
  * Reads a finished query and raises its ticket when one is needed. A chat still
@@ -173,35 +182,48 @@ export async function raiseTicket(queryId: string, now = new Date(), decide: typ
 
     const employee = await tx.query.employees.findFirst({ where: eq(employees.id, query.employeeId) });
     const types = await listQueryTypes(tx);
+    const closed = await recentlyClosed(tx, query);
     const verdict = await withCostScope({ tenantId: query.tenantId, queryId: query.id }, () =>
-      decide(types, employee?.fullName ?? 'the employee', transcriptText(lines), query.channel === 'voice' ? 'call' : 'whatsapp'),
+      decide(types, employee?.fullName ?? 'the employee', transcriptText(lines), query.channel === 'voice' ? 'call' : 'whatsapp', closed),
     );
+    const earlierId = (verdict.follows_ticket ?? 0) >= 1 ? closed[verdict.follows_ticket! - 1]?.id ?? null : null;
+    const earlier = earlierId ? await tx.query.queries.findFirst({ where: eq(queries.id, earlierId) }) : null;
     const type = verdict.query_type >= 1 ? types[verdict.query_type - 1] ?? null : null;
-    if (!verdict.needs_ticket) return informTeam(tx, query, type, verdict.description);
+    if (!verdict.needs_ticket && !earlier) return informTeam(tx, query, type, verdict.description);
 
+    // A follow-up keeps the earlier ticket's type when the model names none.
+    const typeFields = type
+      ? { queryTypeId: type.id, queryTypeName: type.name, coeCode: type.coeCode }
+      : { queryTypeId: earlier?.queryTypeId ?? null, queryTypeName: earlier?.queryTypeName ?? null, coeCode: earlier?.coeCode ?? null };
     // The sheet is plain: a grievance is never anything but urgent, whatever the model thought.
-    const priority: Priority = type && /grievance|complaint/i.test(type.name) ? 'urgent' : verdict.priority;
-    const assignment = await chooseAssignee(tx, query.tenantId, type?.coeCode ?? null);
+    const priority: Priority = typeFields.queryTypeName && /grievance|complaint/i.test(typeFields.queryTypeName) ? 'urgent' : verdict.priority;
+    const handover = earlier ? await sameHands(tx, earlier) : null;
+    const assignment = handover?.assignment ?? (await chooseAssignee(tx, query.tenantId, typeFields.coeCode));
+    const text = verdict.description.trim();
+    const label = earlier ? ticketLabel(earlier.ticketNo) : null;
     const at = new Date();
     await tx
       .update(queries)
       .set({
         ticketStatus: 'open',
         ticketRaisedAt: at,
-        queryTypeId: type?.id ?? null,
-        queryTypeName: type?.name ?? null,
-        coeCode: type?.coeCode ?? null,
+        ...typeFields,
         priority,
-        problemDescription: verdict.description.trim() || null,
+        problemDescription: label ? `Follow-up to ${label}. ${text || earlier?.problemDescription || ''}`.trim() : text || null,
         assignedPersonId: assignment.personId,
         assignedTeamId: assignment.teamId,
         assignedAt: assignment.personId ? at : null,
         assignmentMark: assignment.mark,
+        followsQueryId: earlier?.id ?? null,
+        // Back with the LT person it had reached: shown as transferred, and no clocks, as after an escalation.
+        ...(handover?.withLt ? { ltTransferredAt: at, ltPersonId: assignment.personId } : {}),
         ticketNo: sql`nextval('ticket_no_seq')`,
       })
       .where(eq(queries.id, queryId));
-    if (assignment.personId) await queueAssignmentWork(tx, query.tenantId, queryId, at);
-    return { done: 'raised', queryTypeName: type?.name ?? null, personId: assignment.personId, mark: assignment.mark };
+    if (assignment.personId) await queueAssignmentWork(tx, query.tenantId, queryId, at, !handover?.withLt);
+    // The employee is told it is logged, whoever it is with.
+    await queueEmployeeNotice(tx, query.tenantId, queryId, 'raised');
+    return { done: 'raised', queryTypeName: typeFields.queryTypeName, personId: assignment.personId, mark: assignment.mark, follows: label };
   });
 }
 
@@ -246,9 +268,70 @@ export async function informRecipients(tx: Db, tenantId: string, coeCode: string
   return [...new Map(rows.map((row) => [row.person.id, row.person])).values()];
 }
 
-async function askModel(types: QueryType[], employeeName: string, transcript: string, budget: 'call' | 'whatsapp'): Promise<Verdict> {
+async function askModel(
+  types: QueryType[],
+  employeeName: string,
+  transcript: string,
+  budget: 'call' | 'whatsapp',
+  closed: ClosedTicket[] = [],
+): Promise<Verdict> {
   const listed = types.length ? describeTypes(types) : '(No query types have been uploaded yet: use 0.)';
-  return ask<Verdict>(TICKET_PROMPT, `QUERY TYPES\n${listed}\n\nEMPLOYEE: ${employeeName}\n\nCONVERSATION\n${transcript}`, SCHEMA, budget, 600, 'Deciding on a ticket');
+  const recent = closed.length ? describeClosed(closed) : '(None.)';
+  return ask<Verdict>(
+    TICKET_PROMPT,
+    `QUERY TYPES\n${listed}\n\nRECENTLY CLOSED TICKETS\n${recent}\n\nEMPLOYEE: ${employeeName}\n\nCONVERSATION\n${transcript}`,
+    SCHEMA,
+    budget,
+    600,
+    'Deciding on a ticket',
+  );
+}
+
+/** The closed tickets as the model reads them: one numbered line each. */
+export function describeClosed(closed: ClosedTicket[]): string {
+  return closed
+    .map((ticket, index) => `${index + 1}. ${ticket.label} [${ticket.type ?? 'Unclassified'}], closed ${ticket.resolvedAt.toISOString().slice(0, 10)}: ${cut(ticket.description, 400) || 'no description'}`)
+    .join('\n');
+}
+
+/**
+ * The employee's tickets closed in the week before this query, newest first:
+ * the ones they may be saying are still not right. A ticket closed after the
+ * query began cannot be what it is about.
+ */
+async function recentlyClosed(tx: Db, query: typeof queries.$inferSelect): Promise<ClosedTicket[]> {
+  const before = query.endedAt ?? query.lastActivityAt;
+  const rows = await tx
+    .select({ id: queries.id, no: queries.ticketNo, type: queries.queryTypeName, resolvedAt: queries.resolvedAt, description: queries.problemDescription })
+    .from(queries)
+    .where(
+      and(
+        eq(queries.employeeId, query.employeeId),
+        ne(queries.id, query.id),
+        eq(queries.ticketStatus, 'resolved'),
+        isNotNull(queries.resolvedAt),
+        gte(queries.resolvedAt, new Date(query.startedAt.getTime() - FOLLOW_UP_DAYS * 86_400_000)),
+        lte(queries.resolvedAt, before),
+      ),
+    )
+    .orderBy(desc(queries.resolvedAt))
+    .limit(5);
+  return rows.map((row) => ({ id: row.id, label: ticketLabel(row.no), type: row.type, resolvedAt: row.resolvedAt!, description: row.description }));
+}
+
+/**
+ * A follow-up goes to whoever had the earlier ticket when it was closed - its LT
+ * person, if it had got that far. Somebody since removed from the COE teams
+ * cannot take it, and the usual choice is made instead.
+ */
+async function sameHands(tx: Db, earlier: typeof queries.$inferSelect): Promise<{ assignment: Assignment; withLt: boolean } | null> {
+  if (!earlier.assignedPersonId) return null;
+  const person = await tx.query.coePeople.findFirst({ where: eq(coePeople.id, earlier.assignedPersonId) });
+  if (!person) return null;
+  return {
+    assignment: { personId: person.id, teamId: earlier.assignedTeamId, mark: null },
+    withLt: Boolean(earlier.ltTransferredAt && earlier.ltPersonId === person.id),
+  };
 }
 
 /**
@@ -264,6 +347,27 @@ export async function queueAssignmentWork(tx: Db, tenantId: string, queryId: str
   if (!clocks) return;
   await enqueue('ticket_reminder', payload, { tenantId, runAt: new Date(assignedAt.getTime() + REMIND_AFTER_MS), dedupeKey: `ticket-remind:${queryId}:${stamp}` }, tx);
   await enqueue('ticket_escalate', payload, { tenantId, runAt: new Date(assignedAt.getTime() + ESCALATE_AFTER_MS), dedupeKey: `ticket-escalate:${queryId}:${stamp}` }, tx);
+}
+
+/** The WhatsApp to the employee about their ticket: its number once raised, and when it is resolved. */
+export async function queueEmployeeNotice(tx: Db, tenantId: string, queryId: string, event: 'raised' | 'resolved') {
+  await enqueue('ticket_employee', { queryId, event }, { tenantId, dedupeKey: `ticket-employee:${queryId}:${event}` }, tx);
+}
+
+/**
+ * Closes a ticket that is still open - from the COE person's WhatsApp or from
+ * the portal - and queues the employee's notice. False when it was not open,
+ * so nothing is said twice.
+ */
+export async function closeTicket(tx: Db, queryId: string, at = new Date()): Promise<boolean> {
+  const [closed] = await tx
+    .update(queries)
+    .set({ ticketStatus: 'resolved', resolvedAt: at })
+    .where(and(eq(queries.id, queryId), eq(queries.ticketStatus, 'open')))
+    .returning({ tenantId: queries.tenantId });
+  if (!closed) return false;
+  await queueEmployeeNotice(tx, closed.tenantId, queryId, 'resolved');
+  return true;
 }
 
 /** Queues the look at a query once it should be over: now for a call, half an hour after a chat goes quiet. */

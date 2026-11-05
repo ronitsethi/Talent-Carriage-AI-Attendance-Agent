@@ -141,7 +141,7 @@ describe('a call somebody made to us', () => {
     expect(detail!.lines.map((line) => line.role)).toEqual(['agent', 'employee', 'agent', 'employee', 'agent']);
     expect(detail!.lines[2]!.heard).toBe('You have 4 sick leaves');
 
-    const [listed] = await listQueries(scenario.tenantId);
+    const { rows: [listed] } = await listQueries(scenario.tenantId);
     expect(listed).toMatchObject({ id, channel: 'voice', callStyle: 'agent', hasRecording: true });
   });
 

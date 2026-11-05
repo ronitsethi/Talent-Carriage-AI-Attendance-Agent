@@ -3,7 +3,7 @@ import { withPlatformScope, withTenant, type Db } from '@/db';
 import { coePeople, coeTeams, employees, queries, tenants, ticketMessages } from '@/db/schema';
 import type { DeliveryUpdate, InboundMessage, Outbound } from '@/lib/channels/types';
 import { buildContext } from '@/lib/runtime';
-import { informRecipients, queueAssignmentWork, ticketLabel } from '@/lib/tickets';
+import { closeTicket, informRecipients, queueAssignmentWork, ticketLabel } from '@/lib/tickets';
 
 /**
  * Tickets on WhatsApp: telling the COE person a ticket is theirs, warning them
@@ -352,9 +352,7 @@ export async function handleTicketReply(message: InboundMessage): Promise<boolea
 }
 
 async function resolve(ticket: Query, person: Person) {
-  await withPlatformScope((tx) =>
-    tx.update(queries).set({ ticketStatus: 'resolved', resolvedAt: new Date() }).where(and(eq(queries.id, ticket.id), eq(queries.ticketStatus, 'open'))),
-  );
+  await withPlatformScope((tx) => closeTicket(tx, ticket.id));
   await send(ticket, person, 'resolved', {
     kind: 'text',
     to: person.mobileE164,

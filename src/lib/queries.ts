@@ -1,7 +1,8 @@
-import { and, asc, count, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
 import { chasedMeanings } from '@/lib/detection/run';
 import {
+  coePeople,
   actions,
   approvals,
   attendanceDays,
@@ -636,7 +637,18 @@ export type QueryListItem = {
   employeeName: string;
   employeeCode: string;
   department: string | null;
+  ticketStatus: 'open' | 'resolved' | null;
+  ticketNo: number | null;
+  queryTypeName: string | null;
+  priority: string | null;
+  assigneeName: string | null;
+  ltTransferredAt: Date | null;
+  /** A follow-up ticket: the number of the earlier ticket it continues. */
+  followsTicketNo: number | null;
 };
+
+/** The two tabs of the Queries page: queries with no ticket, and those a ticket was raised from. */
+export type QueryView = 'queries' | 'tickets';
 
 /**
  * What employees have asked of their own accord, newest first. The dates are
@@ -644,8 +656,8 @@ export type QueryListItem = {
  */
 export async function listQueries(
   tenantId: string,
-  filters: { from?: string; to?: string; search?: string; limit?: number } = {},
-): Promise<QueryListItem[]> {
+  filters: { from?: string; to?: string; search?: string; limit?: number; view?: QueryView } = {},
+): Promise<{ rows: QueryListItem[]; counts: Record<QueryView, number> }> {
   return withTenant(tenantId, async (tx) => {
     const tz = sql`coalesce((select timezone from tenant_settings where tenant_id = ${tenantId}), 'Asia/Kolkata')`;
     const day = sql`(${queries.startedAt} at time zone ${tz})::date`;
@@ -654,7 +666,19 @@ export async function listQueries(
     if (filters.to) conditions.push(sql`${day} <= ${filters.to}::date`);
     if (filters.search?.trim()) conditions.push(employeeSearch(filters.search.trim()));
 
-    return tx
+    // Both tabs' totals under the same filters. A query is in Queries until a ticket is raised from it.
+    const [tally] = await tx
+      .select({
+        queries: sql<number>`count(*) filter (where ${queries.ticketStatus} is null)::int`,
+        tickets: sql<number>`count(*) filter (where ${queries.ticketStatus} is not null)::int`,
+      })
+      .from(queries)
+      .innerJoin(employees, eq(employees.id, queries.employeeId))
+      .where(and(...conditions));
+    const view = filters.view ?? 'queries';
+    conditions.push(view === 'tickets' ? isNotNull(queries.ticketStatus) : isNull(queries.ticketStatus));
+
+    const rows = await tx
       .select({
         id: queries.id,
         channel: queries.channel,
@@ -669,12 +693,36 @@ export async function listQueries(
         employeeName: employees.fullName,
         employeeCode: employees.empCode,
         department: employees.department,
+        ticketStatus: queries.ticketStatus,
+        ticketNo: queries.ticketNo,
+        queryTypeName: queries.queryTypeName,
+        priority: queries.priority,
+        assigneeName: coePeople.fullName,
+        ltTransferredAt: queries.ltTransferredAt,
+        followsTicketNo: sql<number | null>`(select earlier.ticket_no from queries earlier where earlier.id = ${queries.followsQueryId})`,
       })
       .from(queries)
       .innerJoin(employees, eq(employees.id, queries.employeeId))
+      .leftJoin(coePeople, eq(coePeople.id, queries.assignedPersonId))
       .where(and(...conditions))
       .orderBy(desc(queries.startedAt))
       .limit(filters.limit ?? 200);
+    return { rows, counts: { queries: tally?.queries ?? 0, tickets: tally?.tickets ?? 0 } };
+  });
+}
+
+/** The tickets on either side of a follow-up: the one this continues, and any that continue it. */
+export async function ticketLinks(tenantId: string, query: { id: string; followsQueryId: string | null }) {
+  return withTenant(tenantId, async (tx) => {
+    const follows = query.followsQueryId
+      ? ((await tx.select({ id: queries.id, no: queries.ticketNo }).from(queries).where(eq(queries.id, query.followsQueryId)))[0] ?? null)
+      : null;
+    const followedBy = await tx
+      .select({ id: queries.id, no: queries.ticketNo })
+      .from(queries)
+      .where(eq(queries.followsQueryId, query.id))
+      .orderBy(asc(queries.ticketRaisedAt));
+    return { follows, followedBy };
   });
 }
 

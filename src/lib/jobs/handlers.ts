@@ -7,6 +7,7 @@ import { sendPlainText } from '@/lib/conversation/engine';
 import { sendQueryFeedback } from '@/lib/conversation/feedback';
 import { queueTicketCheck, raiseTicket } from '@/lib/tickets';
 import { escalateToLt, informCoe, notifyAssignee, remindAssignee } from '@/lib/ticket-whatsapp';
+import { tellEmployeeAboutTicket, type TicketEvent } from '@/lib/conversation/ticket-notices';
 import type { Job, JobKind } from './queue';
 import { applyPlivoCharge, type ChargeLookup } from '@/lib/costs/plivo';
 
@@ -152,6 +153,13 @@ const queryInform: JobHandler = async (job) => {
   return (await informCoe(queryId)) as Record<string, unknown>;
 };
 
+/** The employee's WhatsApp about their ticket: its number when raised, and when it is resolved. */
+const ticketEmployee: JobHandler = async (job) => {
+  const tenantId = job.tenantId!;
+  const { queryId, event } = job.payload as { queryId: string; event: TicketEvent };
+  return withTenant(tenantId, async (tx) => tellEmployeeAboutTicket(await buildContext(tx, tenantId), queryId, event));
+};
+
 /** Placed here so the queue is complete; the voice provider arrives in its phase. */
 const placeCall: JobHandler = async (job) => {
   return { skipped: 'voice provider not configured', caseId: job.payload.caseId };
@@ -170,6 +178,7 @@ export const handlers: Record<JobKind, JobHandler> = {
   ticket_reminder: ticketReminder,
   ticket_escalate: ticketEscalate,
   query_inform: queryInform,
+  ticket_employee: ticketEmployee,
   // Plivo's own charge for a talking call, or a keypad call to us, once its record is in.
   plivo_charge: async (job) => applyPlivoCharge(job.payload as unknown as ChargeLookup),
 };

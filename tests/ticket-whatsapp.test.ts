@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { and, eq, like } from 'drizzle-orm';
-import { withPlatformScope } from '@/db';
-import { coePeople, coeTeams, jobs, queries, queryTypes, ticketMessages } from '@/db/schema';
+import { withPlatformScope, withTenant } from '@/db';
+import { coePeople, coeTeams, conversations, jobs, messages, queries, queryTypes, ticketMessages } from '@/db/schema';
 import { saveTeam, validateTeam, type MemberInput } from '@/lib/coe';
 import { fakeChannelFor } from '@/lib/runtime';
-import { raiseTicket, ticketLabel } from '@/lib/tickets';
+import { closeTicket, raiseTicket, ticketLabel } from '@/lib/tickets';
+import { tellEmployeeAboutTicket } from '@/lib/conversation/ticket-notices';
+import { listQueries } from '@/lib/queries';
 import { applyTicketDeliveries, dialable, escalateToLt, handleTicketReply, informCoe, notifyAssignee, remindAssignee } from '@/lib/ticket-whatsapp';
 import type { InboundMessage } from '@/lib/channels/types';
 import { makeScenario, type Scenario } from './helpers/scenario';
@@ -90,6 +92,8 @@ describe('telling the COE person', () => {
       ticket_notify: expect.any(Number),
       ticket_reminder: 36,
       ticket_escalate: 48,
+      // The employee is given the ticket's number straight away.
+      ticket_employee: expect.any(Number),
     });
 
     expect(await notifyAssignee(ticket.id, ticket.assignedAt!.toISOString())).toEqual({ sent: true });
@@ -327,5 +331,175 @@ describe('the number a COE person rings', () => {
     expect(dialable('919876543210')).toBe('+91 98765 43210');
     expect(dialable('+971501234567')).toBe('+971501234567');
     expect(dialable(null)).toBeNull();
+  });
+});
+
+describe('telling the employee about their ticket', () => {
+  const noticeJobs = (queryId: string) =>
+    withPlatformScope((tx) => tx.select({ key: jobs.dedupeKey }).from(jobs).where(like(jobs.dedupeKey, `ticket-employee:${queryId}:%`)));
+
+  it('tells them it is logged when it is raised, without the number, as the approved template outside the window', async () => {
+    const ticket = await ticketWithTeam();
+    expect((await noticeJobs(ticket.id)).map((j) => j.key)).toEqual([`ticket-employee:${ticket.id}:raised`]);
+
+    const result = await withTenant(scenario.tenantId, (tx) => tellEmployeeAboutTicket(scenario.context(tx), ticket.id, 'raised'));
+    expect(result).toEqual({ sent: true });
+    const [sent] = scenario.channel.history(scenario.mobile);
+    expect(sent!.message).toMatchObject({ kind: 'template', templateName: 'employee_ticket_raised', variables: ['Ankit'] });
+
+    // Filed under the query, so it shows in its chat, without moving the query on. The number is the COE team's, not theirs.
+    const filed = await withTenant(scenario.tenantId, (tx) => tx.select().from(messages).where(eq(messages.queryId, ticket.id)));
+    expect(filed).toHaveLength(1);
+    expect(filed[0]!.body).not.toContain('TKT-');
+  });
+
+  it('writes plainly inside the 24-hour window', async () => {
+    const ticket = await ticketWithTeam();
+    await withTenant(scenario.tenantId, (tx) =>
+      tx.insert(conversations).values({ tenantId: scenario.tenantId, employeeId: scenario.employeeId, channel: 'whatsapp', windowExpiresAt: new Date(Date.now() + 3600_000) }),
+    );
+    await withTenant(scenario.tenantId, (tx) => tellEmployeeAboutTicket(scenario.context(tx), ticket.id, 'raised'));
+    const [sent] = scenario.channel.history(scenario.mobile);
+    expect(sent!.message).toMatchObject({ kind: 'text', body: 'Hi Ankit, your query has been logged as a ticket. Our team will look into it, and you will be told here once it is resolved.' });
+  });
+
+  it('tells them when the COE person resolves it, once', async () => {
+    const ticket = await ticketWithTeam();
+    expect(await handleTicketReply(inbound(wa(1), { selectionId: `tkt:${ticket.id}` }))).toBe(true);
+    expect((await noticeJobs(ticket.id)).map((j) => j.key).sort()).toEqual([`ticket-employee:${ticket.id}:raised`, `ticket-employee:${ticket.id}:resolved`]);
+
+    expect(await withTenant(scenario.tenantId, (tx) => tellEmployeeAboutTicket(scenario.context(tx), ticket.id, 'resolved'))).toEqual({ sent: true });
+    expect(scenario.channel.history(scenario.mobile)[0]!.message).toMatchObject({
+      templateName: 'employee_ticket_resolved',
+      variables: ['Ankit'],
+      preview: 'Hi Ankit, your ticket has been resolved. If anything is still not right, reply here within 7 days and we will raise it again.',
+    });
+    // A "raised" notice that would arrive after it is resolved is not sent.
+    expect(await withTenant(scenario.tenantId, (tx) => tellEmployeeAboutTicket(scenario.context(tx), ticket.id, 'raised'))).toEqual({ sent: false, reason: 'already resolved' });
+  });
+
+  it('closes from the portal the same way, and only once', async () => {
+    const ticket = await ticketWithTeam();
+    expect(await withTenant(scenario.tenantId, (tx) => closeTicket(tx, ticket.id))).toBe(true);
+    expect(await withTenant(scenario.tenantId, (tx) => closeTicket(tx, ticket.id))).toBe(false);
+    const row = await withPlatformScope(async (tx) => (await tx.query.queries.findFirst({ where: eq(queries.id, ticket.id) }))!);
+    expect(row.ticketStatus).toBe('resolved');
+    expect((await noticeJobs(ticket.id)).map((j) => j.key)).toContain(`ticket-employee:${ticket.id}:resolved`);
+    // The member's clocks find it resolved and do nothing.
+    expect(await remindAssignee(ticket.id, ticket.assignedAt!.toISOString())).toEqual({ skipped: 'resolved or reassigned since' });
+  });
+
+  it('sends nothing for a query with no ticket', async () => {
+    scenario = await makeScenario();
+    const id = await withPlatformScope(async (tx) => {
+      const [row] = await tx.insert(queries).values({ tenantId: scenario.tenantId, employeeId: scenario.employeeId, channel: 'voice' }).returning();
+      return row!.id;
+    });
+    expect(await withTenant(scenario.tenantId, (tx) => tellEmployeeAboutTicket(scenario.context(tx), id, 'raised'))).toEqual({ sent: false, reason: 'no ticket' });
+  });
+});
+
+describe('the Queries and Tickets tabs', () => {
+  it('lists a query under Queries until its ticket is raised, then under Tickets', async () => {
+    scenario = await makeScenario();
+    const checked = validateTeam({ code: `T${tag}`, fullName: 'Exits', members: [person(1, 'Honey Pawar', [scenario.tenantId])], fallback: null, lt: null });
+    if ('errors' in checked) throw new Error('bad team');
+    await saveTeam(checked.team);
+    await withPlatformScope((tx) => tx.insert(queryTypes).values({ position: 970, coeCode: `T${tag}`, name: `Resignation ${tag}` }));
+    const id = await withPlatformScope(async (tx) => {
+      const [row] = await tx
+        .insert(queries)
+        .values({ tenantId: scenario.tenantId, employeeId: scenario.employeeId, channel: 'voice', endedAt: new Date(), transcript: [{ role: 'employee', text: 'My FnF has not come.', at: new Date().toISOString() }] })
+        .returning();
+      return row!.id;
+    });
+
+    const before = await listQueries(scenario.tenantId);
+    expect(before.rows.map((r) => r.id)).toEqual([id]);
+    expect(before.counts).toEqual({ queries: 1, tickets: 0 });
+    expect((await listQueries(scenario.tenantId, { view: 'tickets' })).rows).toEqual([]);
+
+    await raiseTicket(id, new Date(), async (types) => ({
+      needs_ticket: true,
+      query_type: types.findIndex((t) => t.name === `Resignation ${tag}`) + 1,
+      priority: 'high',
+      description: 'FnF not paid.',
+    }));
+
+    const after = await listQueries(scenario.tenantId, { view: 'tickets' });
+    expect(after.counts).toEqual({ queries: 0, tickets: 1 });
+    expect(after.rows[0]).toMatchObject({ id, ticketStatus: 'open', queryTypeName: `Resignation ${tag}`, priority: 'high', assigneeName: 'Honey Pawar', ltTransferredAt: null });
+    expect((await listQueries(scenario.tenantId)).rows).toEqual([]);
+  });
+});
+
+describe('a problem still not right after its ticket was closed', () => {
+  /** A ticket raised and closed, then a new chat; `closedDaysAgo` sets when it was closed. */
+  async function closedThenAsked(closedDaysAgo: number, lt = false) {
+    const ticket = await ticketWithTeam();
+    if (lt) await escalateToLt(ticket.id, ticket.assignedAt!.toISOString());
+    await withPlatformScope((tx) => closeTicket(tx, ticket.id, new Date(Date.now() - closedDaysAgo * 86_400_000)));
+    const again = await withPlatformScope(async (tx) => {
+      const [row] = await tx
+        .insert(queries)
+        .values({
+          tenantId: scenario.tenantId,
+          employeeId: scenario.employeeId,
+          channel: 'voice',
+          endedAt: new Date(),
+          transcript: [{ role: 'employee', text: 'My FnF has still not come.', at: new Date().toISOString() }],
+        })
+        .returning();
+      return row!.id;
+    });
+    return { ticket, again };
+  }
+
+  it('is raised again as a new ticket, linked to the earlier one, to the same person, with both problems', async () => {
+    const { ticket, again } = await closedThenAsked(2);
+    let shown: unknown[] = [];
+    const outcome = await raiseTicket(again, new Date(), async (_types, _name, _transcript, _budget, closed) => {
+      shown = closed ?? [];
+      return { needs_ticket: true, follows_ticket: 1, query_type: 0, priority: 'high', description: 'Ankit says his FnF has still not been paid.' };
+    });
+    expect(shown).toMatchObject([{ id: ticket.id, label: ticketLabel(ticket.ticketNo) }]);
+    expect(outcome).toMatchObject({ done: 'raised', follows: ticketLabel(ticket.ticketNo), personId: ticket.assignedPersonId, mark: null });
+
+    const row = await withPlatformScope(async (tx) => (await tx.query.queries.findFirst({ where: eq(queries.id, again) }))!);
+    expect(row).toMatchObject({
+      ticketStatus: 'open',
+      followsQueryId: ticket.id,
+      assignedPersonId: ticket.assignedPersonId,
+      queryTypeName: ticket.queryTypeName,
+      problemDescription: `Follow-up to ${ticketLabel(ticket.ticketNo)}. Ankit says his FnF has still not been paid.`,
+    });
+    expect(row.ticketNo).not.toBe(ticket.ticketNo);
+    // The earlier ticket stays closed.
+    const earlier = await withPlatformScope(async (tx) => (await tx.query.queries.findFirst({ where: eq(queries.id, ticket.id) }))!);
+    expect(earlier.ticketStatus).toBe('resolved');
+
+    const listed = await listQueries(scenario.tenantId, { view: 'tickets' });
+    expect(listed.rows.find((r) => r.id === again)?.followsTicketNo).toBe(ticket.ticketNo);
+  });
+
+  it('goes back to the LT person when it had reached them, with no clocks', async () => {
+    const { ticket, again } = await closedThenAsked(1, true);
+    const lt = await withPlatformScope(async (tx) => (await tx.query.queries.findFirst({ where: eq(queries.id, ticket.id) }))!.ltPersonId);
+    await raiseTicket(again, new Date(), async () => ({ needs_ticket: true, follows_ticket: 1, query_type: 0, priority: 'high', description: 'Still not paid.' }));
+    const row = await withPlatformScope(async (tx) => (await tx.query.queries.findFirst({ where: eq(queries.id, again) }))!);
+    expect(row.assignedPersonId).toBe(lt);
+    expect(row.ltTransferredAt).not.toBeNull();
+    const queued = await withPlatformScope((tx) => tx.select({ kind: jobs.kind }).from(jobs).where(like(jobs.dedupeKey, `ticket-%:${again}:%`)));
+    expect(queued.map((j) => j.kind).sort()).toEqual(['ticket_employee', 'ticket_notify']);
+  });
+
+  it('is not offered a ticket closed more than a week before', async () => {
+    const { again } = await closedThenAsked(8);
+    let shown: unknown[] = ['not asked'];
+    await raiseTicket(again, new Date(), async (_t, _n, _tr, _b, closed) => {
+      shown = closed ?? [];
+      return { needs_ticket: false, follows_ticket: 0, query_type: 0, priority: 'low', description: '' };
+    });
+    expect(shown).toEqual([]);
   });
 });

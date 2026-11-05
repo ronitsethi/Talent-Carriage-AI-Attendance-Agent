@@ -1,6 +1,7 @@
 /**
  * Creates the WhatsApp templates the app sends and Meta must approve: the three
- * for tickets, the COE notice for a query that needed no ticket, the first question with its new options, the manager's
+ * for tickets, the COE notice for a query that needed no ticket, the employee's
+ * ticket raised and resolved notices, the first question with its new options, the manager's
  * approval request, and the decision told to the employee.
  *
  *   WA_ACCESS_TOKEN=... npx tsx scripts/create-ticket-templates.ts <WABA id>
@@ -22,11 +23,26 @@ import {
   OPTIONS,
 } from '@/lib/conversation/flow';
 import { MANAGER_TEMPLATE, MANAGER_TEMPLATE_BODY, NOTED_TEMPLATE, NOTED_TEMPLATE_BODY, OUTCOME_TEMPLATE } from '@/lib/approvals';
+import { EMPLOYEE_TICKET_BODIES, EMPLOYEE_TICKET_TEMPLATES } from '@/lib/conversation/ticket-notices';
 
 const RESOLVED = { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Resolved' }] };
 
 // The first question with its new options, and the manager's approval request.
 const ATTENDANCE_TEMPLATES = [
+  {
+    // To the employee: their query has been logged as a ticket (no number).
+    name: EMPLOYEE_TICKET_TEMPLATES.raised,
+    body: EMPLOYEE_TICKET_BODIES.raised,
+    example: ['Aryan'],
+    buttons: [],
+  },
+  {
+    // To the employee: their ticket is resolved.
+    name: EMPLOYEE_TICKET_TEMPLATES.resolved,
+    body: EMPLOYEE_TICKET_BODIES.resolved,
+    example: ['Aryan'],
+    buttons: [],
+  },
   {
     // To a query type's COE team about a query that needed no ticket: for information, so no Resolved button.
     name: TICKET_TEMPLATES.info,

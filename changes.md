@@ -2,6 +2,31 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-05 16:10
+- **Files:** none changed (WhatsApp Business account, production database, deploy, git), CURRENT_STATE.md
+- **Change:** Created `employee_ticket_raised` (id 39632356449742304) and `employee_ticket_resolved` (id 30291397737113744) on WABA 1185067337113062, both PENDING Meta review. Applied migration 0029 to production (30 migrations; through a temporary firewall rule for 122.161.39.143, removed after). Deployed to `tc-attendance-99772` (healthy), then committed and pushed to both repos.
+- **Why:** Put the employee ticket notices, the Queries/Tickets tabs, closing from the portal and follow-up tickets live.
+
+## 2026-11-05 15:30
+- **Files:** src/lib/tickets.ts, src/db/schema/messaging.ts, src/db/migrations/0029_ticket_follow_up.sql, src/db/migrations/meta/_journal.json, src/lib/queries.ts, src/app/(app)/queries/page.tsx, src/app/(app)/queries/[id]/page.tsx, src/app/globals.css, tests/ticket-whatsapp.test.ts
+- **Change:** Follow-up tickets. The ticket check is now shown the employee's tickets closed in the 7 days before the query (`recentlyClosed`, up to 5, newest first) and returns `follows_ticket`. When the employee says one of those problems is still not right, a new ticket is raised linked to it (`queries.follows_query_id`, migration 0029): it keeps the earlier type when the model names none, its description starts "Follow-up to TKT-…", and it goes to whoever had the earlier ticket when it closed (`sameHands`); if that was the LT person it goes back to them marked transferred, with no clocks; if that person is no longer on a COE team, the usual least-busy choice is made. The earlier ticket stays closed. The Tickets tab shows "follows TKT-…" under the ticket number, and both ticket pages link to each other.
+- **Why:** An employee whose problem is still not right after a ticket closes should get it raised again, to the same person, with the history, instead of it becoming a context-free new query.
+
+## 2026-11-05 15:30
+- **Files:** src/lib/conversation/ticket-notices.ts, scripts/create-ticket-templates.ts, tests/ticket-whatsapp.test.ts
+- **Change:** The employee's ticket messages no longer carry the ticket number. Raised: "Hi {{1}}, your query has been logged as a ticket. Our team will look into it, and you will be told here once it is resolved." Resolved: "Hi {{1}}, your ticket has been resolved. If anything is still not right, reply here within 7 days and we will raise it again." Both templates now have one variable, the first name.
+- **Why:** The ticket number is for the COE team and the portal, not the employee. The resolved message now says how long they have to say it is still not right.
+
+## 2026-11-05 12:20
+- **Files:** src/lib/queries.ts, src/app/actions.ts, src/app/(app)/queries/page.tsx, src/app/(app)/queries/[id]/page.tsx, src/app/(app)/selection.tsx, src/app/globals.css, tests/queries.test.ts, tests/ticket-whatsapp.test.ts
+- **Change:** The Queries page has two tabs, Queries (default) and Tickets, each with its count under the same filters. Queries lists queries with no ticket (Employee, Date & time, Contact by, Feedback; Call style removed). Tickets lists queries a ticket was raised from: tick box (open tickets only), Employee, Date & time, Contact by, Query type (with ticket number and Open/Resolved under it), Priority, Assigned to, Transferred to LT (Yes/No), Feedback, with a Close selected button and a confirmation. The ticket's own page has a Close ticket button. Both use the new `closeTickets` server action. `listQueries` takes `view` and returns `{ rows, counts }`, with the ticket fields and the assignee's name.
+- **Why:** Separate everyday queries from tickets, and let HR close tickets from the portal. A query moves to Tickets as soon as its ticket is raised.
+
+## 2026-11-05 12:20
+- **Files:** src/lib/conversation/ticket-notices.ts (new), src/lib/tickets.ts, src/lib/ticket-whatsapp.ts, src/lib/jobs/queue.ts, src/lib/jobs/handlers.ts, scripts/create-ticket-templates.ts, tests/ticket-whatsapp.test.ts
+- **Change:** The employee is now told on WhatsApp when a ticket is raised from their query (its number) and when it is closed. New job `ticket_employee` (`{queryId, event: 'raised' | 'resolved'}`, deduped per ticket and event) runs `tellEmployeeAboutTicket`: plain text inside the 24-hour window, else the new templates `employee_ticket_raised` / `employee_ticket_resolved` (variables: first name, ticket number). The message is filed under the query (shows in its chat) without moving `lastActivityAt`, so a later reply starts a new query. Not sent when the ticket's state no longer matches, or sending is blocked for the employee. Every close now goes through `closeTicket()` in `tickets.ts` (COE WhatsApp reply and the portal), which only acts on an open ticket and queues the employee notice.
+- **Why:** Employees should know their query became a ticket and when it is resolved.
+
 ## 2026-11-05 11:05
 - **Files:** none changed (deploy and git)
 - **Change:** Deployed the working tree to Azure App Service `tc-attendance-99772` with `npm run deploy` (healthy on `/api/health`), then committed everything as `2f067c0` and pushed `main` to both repos (ronitsethi/Talent-Carriage-AI-Attendance-Agent and AttendanceMaster).

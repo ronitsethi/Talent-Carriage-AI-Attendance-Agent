@@ -205,3 +205,32 @@ export function SelectAll() {
     />
   );
 }
+
+/** The Tickets tab's bulk close: how many are ticked, and a question before the employees are told. */
+export function CloseSelectedTickets() {
+  const { selectedValues } = useSelection();
+  const count = selectedValues.length;
+  const tickets = `${count} ${count === 1 ? 'ticket' : 'tickets'}`;
+
+  return (
+    <>
+      <span className="selected-count">{count} selected</span>
+      <ConfirmSubmit
+        label="Close selected"
+        className="btn primary"
+        disabled={!count}
+        title={`Close ${tickets}?`}
+        message={
+          <>
+            <p>
+              <strong>{tickets}</strong> will be marked resolved, and each employee is told on WhatsApp that their ticket
+              is resolved.
+            </p>
+            <p>A closed ticket cannot be opened again from here.</p>
+          </>
+        }
+        confirmLabel="Close them"
+      />
+    </>
+  );
+}

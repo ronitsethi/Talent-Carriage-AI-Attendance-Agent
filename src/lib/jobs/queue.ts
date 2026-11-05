@@ -15,6 +15,7 @@ export type JobKind =
   | 'ticket_reminder'
   | 'ticket_escalate'
   | 'query_inform'
+  | 'ticket_employee'
   | 'plivo_charge';
 
 export type Job = typeof jobs.$inferSelect;
