@@ -2,6 +2,11 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-05 22:00
+- **Files:** tests/payroll.test.ts
+- **Change:** The payroll test's sample row used a real bank account number and IFSC code copied from the customer's salary register; replaced with made-up values (`00000000000`, `TEST0000000`). The values remain in the history of commit `764707b` on both remotes.
+- **Why:** Real employee bank details must not be in the repository.
+
 ## 2026-11-05 21:50
 - **Files:** none changed (production database, deploy, git), CURRENT_STATE.md
 - **Change:** Applied migration 0031 to production (32 migrations; `payroll_profiles`, `payroll_uploads`, `payroll_rows` present under tenant RLS), through a temporary firewall rule for 122.161.39.143, removed after. Deployed to `tc-attendance-99772` (healthy), then committed and pushed to both repos.
