@@ -2,6 +2,11 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-05 22:15
+- **Files:** none changed (git history)
+- **Change:** Rewrote the two commits holding a real employee's bank account number and IFSC (old `764707b`, `30c20af`; now `a25d673`, `01408d7`, same files at the end) and force-pushed `main` to both repos. Local backup refs removed and garbage-collected. GitHub still serves the old commit `764707b` by its full id until GitHub Support purges it; `ronitsethi/Talent-Carriage-AI-Attendance-Agent` is public.
+- **Why:** Real bank details from the customer's salary register had been committed in a test.
+
 ## 2026-11-05 22:00
 - **Files:** tests/payroll.test.ts
 - **Change:** The payroll test's sample row used a real bank account number and IFSC code copied from the customer's salary register; replaced with made-up values (`00000000000`, `TEST0000000`). The values remain in the history of commit `764707b` on both remotes.
