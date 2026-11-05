@@ -2,6 +2,11 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-05 11:05
+- **Files:** none changed (deploy and git)
+- **Change:** Deployed the working tree to Azure App Service `tc-attendance-99772` with `npm run deploy` (healthy on `/api/health`), then committed everything as `2f067c0` and pushed `main` to both repos (ronitsethi/Talent-Carriage-AI-Attendance-Agent and AttendanceMaster).
+- **Why:** Put the today's-attendance cut-off, the employee phone on COE ticket messages and the no-ticket COE notices live, and get the work since `6eefbb7` into git.
+
 ## 2026-11-05 10:40
 - **Files:** CURRENT_STATE.md
 - **Change:** Added an Open Issues entry: the `approval_noted` template is not on the WhatsApp account, what fails without it, and the command to create it. Parked by choice.

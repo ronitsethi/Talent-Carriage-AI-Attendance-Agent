@@ -11,6 +11,12 @@ Format:
 - **Impact:** e.g. breaking API change, migration required, new env var
 ```
 
+## 2026-11-05 11:05
+- **Files:** none changed (deploy and git)
+- **Change:** Deployed the working tree to Azure App Service `tc-attendance-99772` with `npm run deploy` (healthy on `/api/health`), then committed everything as `2f067c0` and pushed `main` to both repos (ronitsethi/Talent-Carriage-AI-Attendance-Agent and AttendanceMaster).
+- **Why:** Put the today's-attendance cut-off, the employee phone on COE ticket messages and the no-ticket COE notices live, and get the work since `6eefbb7` into git.
+- **Impact:** Live now. Migration 0028 was applied beforehand; no new env vars.
+
 ## 2026-11-05 10:00
 - **Files:** none in the repo (production database and WhatsApp Business account), CURRENT_STATE.md
 - **Change:** Applied migration 0028 (`queries.informed_at`) to the production `attendance` database; it now has 29 migrations. It was run from the laptop with the owner URL from the web app's App Settings, through a firewall rule for 122.161.39.143 that was removed straight after. Created the `coe_query_info` WhatsApp template on WABA 1185067337113062 (id 1616255606101519, status PENDING).
