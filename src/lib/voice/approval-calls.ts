@@ -101,6 +101,7 @@ async function requestFor(ctx: VoiceContext, call: CallRow) {
 const STAGE_PHRASE: Record<ApplicationStage, string> = {
   applied: 'has applied',
   not_applied: 'has been asked to apply',
+  overdue: 'has still not applied',
   apply_for_me: 'has asked us to apply',
 };
 

@@ -1,9 +1,9 @@
 import { eq } from 'drizzle-orm';
 import { cases, employees } from '@/db/schema';
 import { askCase, type CaseRow, type EmployeeRow } from '@/lib/conversation/engine';
-import { channelFor } from '@/lib/channel';
+import { channelFor, followUpChannel } from '@/lib/channel';
 import { callPurposeFor, placeCaseCall, type CallPurpose } from '@/lib/voice/session';
-import { sendFollowUpMessage } from '@/lib/conversation/followup';
+import { nextFollowUp, sendFollowUp } from '@/lib/conversation/followup';
 import type { FullContext } from '@/lib/runtime';
 
 export { channelFor };
@@ -41,7 +41,10 @@ export async function contactCase(
 }
 
 async function reach(ctx: FullContext, caseRow: CaseRow, employee: EmployeeRow): Promise<ContactResult> {
-  const channel = channelFor(employee, ctx.settings.defaultChannel);
+  const channel =
+    callPurposeFor(caseRow) === 'follow_up'
+      ? followUpChannel(employee, ctx.settings, nextFollowUp(caseRow, ctx.settings).number)
+      : channelFor(employee, ctx.settings.defaultChannel);
 
   // Record the channel on the case, so history shows how someone was reached
   // even if their preference changes later.
@@ -55,16 +58,18 @@ async function reach(ctx: FullContext, caseRow: CaseRow, employee: EmployeeRow):
   // yet?" - not the same question a second time.
   const purpose = callPurposeFor(caseRow);
 
+  if (purpose === 'follow_up') {
+    const result = await sendFollowUp(ctx, caseRow, employee);
+    return result.reached
+      ? { contacted: true, channel, purpose, simulated: result.simulated }
+      : { contacted: false, channel, purpose, reason: result.reason };
+  }
+
   if (channel === 'voice') {
     const result = await placeCaseCall(ctx, caseRow, employee, purpose);
     return result.placed
       ? { contacted: true, channel, purpose, simulated: result.simulated }
       : { contacted: false, channel, purpose, reason: result.reason };
-  }
-
-  if (purpose === 'follow_up') {
-    await sendFollowUpMessage(ctx, caseRow, employee);
-    return { contacted: true, channel, purpose };
   }
 
   const result = await askCase(ctx, caseRow, employee);

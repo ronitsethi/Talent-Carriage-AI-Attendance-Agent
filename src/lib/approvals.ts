@@ -117,6 +117,8 @@ type Request = {
   leaveType?: string | null;
   note: string | null;
   via: 'whatsapp' | 'call';
+  /** With `overdue`: how many follow-ups went unanswered by action. */
+  followUps?: number;
 };
 
 /**
@@ -137,10 +139,7 @@ export function applicationReply(
     return `${base} HR will follow up on the approval.`;
   }
   if (request.stage === 'applied') return `Okay. I have asked ${who} to approve your ${what} for ${f.date}.`;
-  if (request.stage === 'apply_for_me') {
-    return `Okay. I have sent your ${what} for ${f.date} to ${who} for approval, and will apply it in the HRMS once they approve.`;
-  }
-  return `${instructionFor(request.code, request.choice, f)} I have also let ${who} know, so they can approve it once you have.`;
+  return `Okay. I have sent your ${what} for ${f.date} to ${who} for approval, and will apply it in the HRMS once they approve.`;
 }
 
 /**
@@ -168,6 +167,7 @@ export async function requestManagerApproval(
     outcome: request.code,
     leaveType: request.leaveType ?? undefined,
     reason: request.note ?? OUTCOMES[request.code].label,
+    followUps: request.followUps,
   };
   const [action] = await ctx.tx
     .insert(actions)
@@ -191,7 +191,7 @@ export async function requestManagerApproval(
   if (!manager) {
     await ctx.tx
       .update(cases)
-      .set({ status: 'needs_hr', needsHrReason: 'No manager in the file to approve it', followUpDueAt: null, callDueAt: null, updatedAt: at })
+      .set({ status: 'needs_hr', needsHrReason: 'No manager in the file to approve it', followUpDueAt: null, updatedAt: at })
       .where(eq(cases.id, caseRow.id));
     return { managerReached: false, manager: null, approvalId: null };
   }
@@ -214,7 +214,7 @@ export async function requestManagerApproval(
     .returning();
   await ctx.tx
     .update(cases)
-    .set({ status: 'awaiting_approval', followUpDueAt: null, callDueAt: null, updatedAt: at })
+    .set({ status: 'awaiting_approval', followUpDueAt: null, updatedAt: at })
     .where(eq(cases.id, caseRow.id));
 
   // A manager set to manual waits for HR to send it, from the Managers page.
@@ -223,10 +223,11 @@ export async function requestManagerApproval(
 }
 
 /** What the manager is told an employee has done, by where it stands. */
-function requestPhrase(stage: ApplicationStage, what: string, leaveType: string | undefined): string {
+function requestPhrase(stage: ApplicationStage, what: string, leaveType: string | undefined, followUps = 0): string {
   const named = leaveType && what === 'leave' ? `${leaveType} leave` : what;
   if (stage === 'applied') return `has applied ${named}`;
   if (stage === 'apply_for_me') return `has asked us to apply ${named}`;
+  if (stage === 'overdue') return `has still not applied ${named} after ${followUps} ${followUps === 1 ? 'follow-up' : 'follow-ups'}`;
   return `has been asked to apply ${named}`;
 }
 
@@ -254,10 +255,10 @@ export async function sendApprovalRequest(ctx: Ctx, approvalId: string, via?: 'w
     }
   }
 
-  const inputs = action.inputs as { what: string; stage: ApplicationStage; leaveType?: string; reason?: string };
+  const inputs = action.inputs as { what: string; stage: ApplicationStage; leaveType?: string; reason?: string; followUps?: number };
   const date = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
   const one = (text: string) => text.replace(/\s+/g, ' ').trim().slice(0, 300) || '-';
-  const variables = [`${employee.fullName} (${employee.empCode})`, requestPhrase(inputs.stage, inputs.what, inputs.leaveType), date, inputs.reason ?? '-'].map(one);
+  const variables = [`${employee.fullName} (${employee.empCode})`, requestPhrase(inputs.stage, inputs.what, inputs.leaveType, inputs.followUps), date, inputs.reason ?? '-'].map(one);
   const preview = managerRequestBody(variables);
   const message: Outbound = {
     kind: 'template',

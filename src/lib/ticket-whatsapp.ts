@@ -3,15 +3,18 @@ import { withPlatformScope, withTenant, type Db } from '@/db';
 import { coePeople, coeTeams, employees, queries, tenants, ticketMessages } from '@/db/schema';
 import type { DeliveryUpdate, InboundMessage, Outbound } from '@/lib/channels/types';
 import { buildContext } from '@/lib/runtime';
-import { queueAssignmentWork, ticketLabel } from '@/lib/tickets';
+import { informRecipients, queueAssignmentWork, ticketLabel } from '@/lib/tickets';
 
 /**
  * Tickets on WhatsApp: telling the COE person a ticket is theirs, warning them
  * at 36 hours, moving it to the LT person at 48, and closing it when they write
  * back.
  *
+ * Also the notice to a query type's team about a query that needed no ticket,
+ * for their information: no ticket number, no Resolved button, nothing to close.
+ *
  * Messages to them are started by us, often days after they last wrote, so they
- * go as Meta-approved templates - the three named here, which must be approved
+ * go as Meta-approved templates - the four named here, which must be approved
  * on the WhatsApp Business account before anything reaches anybody. Until then
  * a send fails, and the failure is logged against the ticket where HR can see it.
  * A reply to them - the thanks for closing, or the list when it is not clear
@@ -22,6 +25,7 @@ export const TICKET_TEMPLATES = {
   assigned: 'coe_ticket_assigned',
   reminder: 'coe_ticket_reminder',
   escalated: 'coe_ticket_escalated',
+  info: 'coe_query_info',
 } as const;
 const TEMPLATE_LANGUAGE = 'en';
 /** The payload of a template's Resolved button: which ticket it closes. */
@@ -41,13 +45,25 @@ function variable(text: string | null | undefined, max = 120): string {
 
 const PRIORITY = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' } as Record<string, string>;
 
-/** Everything a message about a ticket names: the ticket, the employee, their company. */
+/** A stored number as a person dials it: 919876543210 → +91 98765 43210. */
+export function dialable(mobile: string | null | undefined): string | null {
+  const digits = (mobile ?? '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (/^91\d{10}$/.test(digits)) return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  return `+${digits}`;
+}
+
+/**
+ * Everything a message about a ticket names: the ticket, the employee - with
+ * their phone number, so the COE person can ring them - and their company.
+ */
 async function ticketFacts(tx: Db, query: Query) {
   const employee = await tx.query.employees.findFirst({ where: eq(employees.id, query.employeeId) });
   const company = await tx.query.tenants.findFirst({ where: eq(tenants.id, query.tenantId), columns: { name: true } });
+  const phone = dialable(employee?.mobileE164 ?? employee?.mobileRaw);
   return {
     label: ticketLabel(query.ticketNo),
-    employee: employee ? `${employee.fullName} (${employee.empCode})` : 'An employee',
+    employee: employee ? `${employee.fullName} (${employee.empCode})${phone ? `, phone ${phone}` : ''}` : 'An employee',
     company: company?.name ?? 'their company',
     type: query.queryTypeName ?? 'Unclassified',
     priority: PRIORITY[query.priority ?? 'medium'] ?? 'Medium',
@@ -76,14 +92,15 @@ async function send(query: Query, person: Person, kind: string, message: Outboun
   return !error;
 }
 
-function template(person: Person, name: string, variables: string[], preview: string, queryId: string): Outbound {
+/** A template to a COE person; `queryId` gives it the Resolved button, which only a ticket has. */
+function template(person: Person, name: string, variables: string[], preview: string, queryId: string | null): Outbound {
   return {
     kind: 'template',
     to: person.mobileE164,
     templateName: name,
     language: TEMPLATE_LANGUAGE,
     variables,
-    buttonPayloads: [`${RESOLVE}${queryId}`],
+    ...(queryId ? { buttonPayloads: [`${RESOLVE}${queryId}`] } : {}),
     preview,
   };
 }
@@ -130,6 +147,39 @@ export async function notifyAssignee(queryId: string, assignedAt?: string): Prom
     `New ticket ${facts.label} has been assigned to you.\n\nEmployee: ${facts.employee}, ${facts.company}\n` +
     `Query type: ${facts.type}\nPriority: ${facts.priority}\n\n${facts.description}\n\nReply to this message once it is resolved.`;
   return { sent: await send(query, person, 'assigned', template(person, TICKET_TEMPLATES.assigned, variables.map((v) => variable(v, 600)), preview, query.id)) };
+}
+
+/**
+ * A query that needed no ticket, to every member of its query type's team who
+ * looks after the company: what was asked and what they were told, for their
+ * information. Somebody already sent it - on a job run twice - is not sent it again.
+ */
+export async function informCoe(queryId: string): Promise<{ sent: number; failed: number } | { skipped: string }> {
+  const found = await withPlatformScope(async (tx) => {
+    const query = await tx.query.queries.findFirst({ where: eq(queries.id, queryId) });
+    if (!query?.informedAt || query.ticketStatus || !query.coeCode) return null;
+    const told = await tx
+      .select({ personId: ticketMessages.personId })
+      .from(ticketMessages)
+      .where(and(eq(ticketMessages.queryId, queryId), eq(ticketMessages.kind, 'info')));
+    const already = new Set(told.map((row) => row.personId));
+    const people = (await informRecipients(tx, query.tenantId, query.coeCode)).filter((person) => !already.has(person.id));
+    return { query, people, facts: await ticketFacts(tx, query) };
+  });
+  if (!found) return { skipped: 'not a query to share, or a ticket since' };
+  const { query, people, facts } = found;
+
+  const variables = [facts.employee, facts.company, facts.type, facts.description].map((v) => variable(v, 600));
+  const preview =
+    `For your information: ${facts.employee}, ${facts.company}, contacted the Attendance assistant.\n\n` +
+    `Query type: ${facts.type}\n\n${facts.description}\n\nThis is not a ticket and needs no action.`;
+  let sent = 0;
+  let failed = 0;
+  for (const person of people) {
+    if (await send(query, person, 'info', template(person, TICKET_TEMPLATES.info, variables, preview, null))) sent++;
+    else failed++;
+  }
+  return { sent, failed };
 }
 
 /** At 36 hours: still not resolved, so the member is told it moves to the LT person in 12. */
@@ -246,6 +296,11 @@ export async function handleTicketReply(message: InboundMessage): Promise<boolea
 
   if (ticketId) {
     const ticket = await withPlatformScope((tx) => tx.query.queries.findFirst({ where: eq(queries.id, ticketId) }));
+    // A reply to a notice shared for information: there is nothing to close, so it is kept and left there.
+    if (ticket && !ticket.ticketStatus && ticket.informedAt) {
+      await log(ticket.id);
+      return true;
+    }
     if (!ticket?.ticketStatus) return false;
     await log(ticket.id);
     if (ticket.ticketStatus === 'resolved') {

@@ -116,10 +116,10 @@ describe('a talking turn', () => {
       'bike kharab ho gayi thi, nahi kiya abhi',
     );
 
-    // Recorded, and on to approval - HR's here, since this file names no manager.
+    // Recorded, and left with the employee to apply, with a follow-up on the way.
     expect(after.answeredAt).not.toBeNull();
-    expect(after.status).toBe('needs_hr');
-    expect(after.needsHrReason).toBe('No manager in the file to approve it');
+    expect(after.status).toBe('answered');
+    expect(after.followUpDueAt).not.toBeNull();
     expect(after.replyOption, 'came late is "I was working"').toBe(2);
     expect((after.context as { outcome?: { code: string } }).outcome?.code).toBe('came_late');
     expect(after.replyText).toContain('bike broke down');

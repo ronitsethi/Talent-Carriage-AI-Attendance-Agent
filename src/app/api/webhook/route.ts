@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
-import { employees, messages as messageLog, tenantChannels } from '@/db/schema';
+import { employees, messages as messageLog, tenantChannels, tenants } from '@/db/schema';
 import { parseMetaWebhook, verifyMetaSignature } from '@/lib/channels/meta';
 import type { InboundMessage } from '@/lib/channels/types';
 import { applyDeliveryUpdate, handleInbound } from '@/lib/conversation/engine';
@@ -83,7 +83,9 @@ async function process(body: unknown) {
     for (const status of statuses) {
       await applyDeliveryUpdate(tx, tenantId, status);
     }
-    if (messages.length) {
+    // Nobody answers for a deactivated customer, so nothing is started for them.
+    const customer = await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
+    if (messages.length && customer?.status !== 'suspended') {
       const ctx = await buildContext(tx, tenantId);
       for (const message of messages) {
         // What answering it costs is written against the message it answers.

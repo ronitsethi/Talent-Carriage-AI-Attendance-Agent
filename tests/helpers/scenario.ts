@@ -42,9 +42,6 @@ export async function makeScenario(
       .values({
         tenantId: tenant!.id,
         sendingEnabled: true,
-        // Quiet hours would make tests depend on the clock, so they are open here.
-        quietHoursStart: '00:00',
-        quietHoursEnd: '00:00',
         ...overrides,
       })
       .returning();

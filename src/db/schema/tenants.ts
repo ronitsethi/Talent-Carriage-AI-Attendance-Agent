@@ -14,6 +14,9 @@ import {
 } from 'drizzle-orm/pg-core';
 import { tenantStatus, userRole } from './enums';
 
+/** How one follow-up level reaches people. Null keeps the employee's own setting. */
+export type FollowUpContact = { channel: 'whatsapp' | 'voice' | null; callMode: 'keypad' | 'agent' | null };
+
 /** One tenant = one employer that bought the product. */
 export const tenants = pgTable(
   'tenants',
@@ -40,16 +43,15 @@ export const tenantSettings = pgTable('tenant_settings', {
     .references(() => tenants.id, { onDelete: 'cascade' }),
 
   timezone: text('timezone').notNull().default('Asia/Kolkata'),
-  /** When the daily check runs, in the tenant's timezone. Automatic mode only. */
-  checkTime: time('check_time').notNull().default('10:30'),
   /**
-   * manual    - nothing happens on its own: HR runs the check, sends reminders
-   *             and decides when anything goes out. This is the default, so a
-   *             newly configured customer can never message anyone by surprise.
-   * automatic - the agent runs the daily check at `checkTime` and sends due
-   *             reminders by itself.
+   * manual    - HR contacts people from the dashboard and Cases. This is the
+   *             default, so a newly configured customer can never message anyone
+   *             by surprise.
+   * automatic - with CSV upload only: each upload offers to send everything due,
+   *             starting `sendDelayMinutes` later. Nothing goes out without an upload.
    */
   operatingMode: text('operating_mode').notNull().default('manual'),
+  sendDelayMinutes: integer('send_delay_minutes').notNull().default(60),
   /**
    * The default for `employees.callMode`: 'keypad' or 'agent'. Keypad is the
    * default because it works on any line, needs no speech recognition, and
@@ -72,7 +74,7 @@ export const tenantSettings = pgTable('tenant_settings', {
   lateGraceMinutes: integer('late_grace_minutes').notNull().default(15),
   shortHoursGraceMinutes: integer('short_hours_grace_minutes').notNull().default(30),
 
-  /** No messages or calls outside these hours (tenant timezone). */
+  /** Not in use for now: nothing reads these, and Settings no longer shows them. */
   quietHoursStart: time('quiet_hours_start').notNull().default('20:00'),
   quietHoursEnd: time('quiet_hours_end').notNull().default('09:00'),
   messageOnNonWorkingDays: boolean('message_on_non_working_days').notNull().default(false),
@@ -94,8 +96,13 @@ export const tenantSettings = pgTable('tenant_settings', {
   sendBacklogSummary: boolean('send_backlog_summary').notNull().default(true),
 
   /** Escalation, which applies only to dates the employee has answered. */
-  followUpAfterDays: integer('follow_up_after_days').notNull().default(2),
-  callAfterDays: integer('call_after_days').notNull().default(3),
+  /**
+   * How many follow-ups one date gets, a day apart. The last warns of loss of pay
+   * and moves the case to the manager.
+   */
+  maxFollowUps: integer('max_follow_ups').notNull().default(2),
+  /** One entry per follow-up level, the first for Follow-up 1. */
+  followUpContacts: jsonb('follow_up_contacts').$type<FollowUpContact[]>().notNull().default([]),
   callRetries: smallint('call_retries').notNull().default(2),
   approvalTimeoutHours: integer('approval_timeout_hours').notNull().default(24),
   approvalEscalatesTo: text('approval_escalates_to').notNull().default('hr'), // hr | skip_level | none

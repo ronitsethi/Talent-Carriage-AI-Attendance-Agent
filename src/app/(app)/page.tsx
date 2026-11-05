@@ -365,10 +365,10 @@ export default async function DashboardPage({
             </div>
             <div className="step">
               <div className="dot">04</div>
-              <div className="step-title">Automatic chases yesterday</div>
+              <div className="step-title">Automatic follows each upload</div>
               <div className="step-copy">
-                Employees set to Auto are contacted the day after the absence, at {settings?.checkTime.slice(0, 5)} —
-                change that time in <Link href="/settings">Settings</Link>, under Daily check.
+                With Automatic on, each attendance upload offers to send what is due to employees set to Auto. Change this in{' '}
+                <Link href="/settings">Settings</Link>, under Automatic sending.
               </div>
             </div>
           </div>
@@ -381,12 +381,13 @@ export default async function DashboardPage({
           <div className="btn-row">
             <form action={runFollowUps}>
               <ConfirmSubmit
-                label={`Send due day-${settings?.followUpAfterDays ?? 2} reminders`}
-                title="Send the reminders now?"
+                label="Send due follow-ups"
+                title="Send the follow-ups now?"
                 message={
                   <p>
-                    Every case whose day-{settings?.followUpAfterDays ?? 2} reminder is due will be messaged or called,
-                    on whichever channel that person is set to. This goes out straight away.
+                    Every case with a follow-up due will be messaged or called, on whichever channel that person is set
+                    to. A case on its last follow-up gets the loss of pay warning and moves to the manager. This goes out
+                    straight away.
                   </p>
                 }
                 confirmLabel="Send reminders"

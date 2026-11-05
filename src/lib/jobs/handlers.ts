@@ -1,34 +1,21 @@
 import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant } from '@/db';
 import { approvals, actions, cases, employees, tenants, tenantSettings } from '@/db/schema';
-import { sendDueFollowUps } from '@/lib/conversation/followup';
-import { closeCasesExplainedByData, runDailyCheckAndContact } from '@/lib/detection/run';
+import { contactAfterUpload, type SendStage } from '@/lib/upload-send';
 import { buildContext } from '@/lib/runtime';
 import { sendPlainText } from '@/lib/conversation/engine';
 import { sendQueryFeedback } from '@/lib/conversation/feedback';
 import { queueTicketCheck, raiseTicket } from '@/lib/tickets';
-import { escalateToLt, notifyAssignee, remindAssignee } from '@/lib/ticket-whatsapp';
-import { enqueue, type Job, type JobKind } from './queue';
+import { escalateToLt, informCoe, notifyAssignee, remindAssignee } from '@/lib/ticket-whatsapp';
+import type { Job, JobKind } from './queue';
 import { applyPlivoCharge, type ChargeLookup } from '@/lib/costs/plivo';
 
 export type JobHandler = (job: Job) => Promise<Record<string, unknown>>;
 
-/** The daily check for one tenant and date. */
-const dailyCheck: JobHandler = async (job) => {
-  const { date, trigger } = job.payload as { date: string; trigger?: 'schedule' | 'manual' | 'catch_up' };
-  const tenantId = job.tenantId!;
-  await withTenant(tenantId, (tx) => closeCasesExplainedByData(tx, tenantId, date));
-  const result = await runDailyCheckAndContact(tenantId, { date, trigger: trigger ?? 'schedule' });
-  return result as unknown as Record<string, unknown>;
-};
-
-/** Day-2 reminders for every case whose clock has run out. */
-const sendFollowUp: JobHandler = async (job) => {
-  const tenantId = job.tenantId!;
-  return withTenant(tenantId, async (tx) => {
-    const ctx = await buildContext(tx, tenantId);
-    return (await sendDueFollowUps(ctx)) as unknown as Record<string, unknown>;
-  });
+/** One person's turn in a send after an attendance upload. */
+const uploadContact: JobHandler = async (job) => {
+  const { employeeId, stage } = job.payload as { employeeId: string; stage: SendStage };
+  return contactAfterUpload(job.tenantId!, employeeId, stage);
 };
 
 /**
@@ -122,20 +109,11 @@ const refreshLeaveBalances: JobHandler = async (job) => {
   });
 };
 
-/**
- * Asks for feedback on a call somebody made to us, a minute after it ended.
- * Quiet hours hold it back rather than drop it, so it is queued again.
- */
+/** Asks for feedback on a call somebody made to us, a minute after it ended. */
 const queryFeedback: JobHandler = async (job) => {
   const tenantId = job.tenantId!;
   const queryId = String(job.payload.queryId ?? '');
-  return withTenant(tenantId, async (tx) => {
-    const result = await sendQueryFeedback(await buildContext(tx, tenantId), queryId);
-    if (result.retryAt) {
-      await enqueue('query_feedback', { queryId }, { tenantId, runAt: result.retryAt, dedupeKey: `feedback:${queryId}:${result.retryAt.toISOString()}` }, tx);
-    }
-    return result as unknown as Record<string, unknown>;
-  });
+  return withTenant(tenantId, async (tx) => sendQueryFeedback(await buildContext(tx, tenantId), queryId));
 };
 
 /**
@@ -168,14 +146,19 @@ const ticketEscalate: JobHandler = async (job) => {
   return (await escalateToLt(queryId, assignedAt)) as Record<string, unknown>;
 };
 
+/** A query that needed no ticket, shared with its COE team for their information. */
+const queryInform: JobHandler = async (job) => {
+  const { queryId } = job.payload as { queryId: string };
+  return (await informCoe(queryId)) as Record<string, unknown>;
+};
+
 /** Placed here so the queue is complete; the voice provider arrives in its phase. */
 const placeCall: JobHandler = async (job) => {
   return { skipped: 'voice provider not configured', caseId: job.payload.caseId };
 };
 
 export const handlers: Record<JobKind, JobHandler> = {
-  daily_check: dailyCheck,
-  send_follow_up: sendFollowUp,
+  upload_contact: uploadContact,
   approval_timeout: approvalTimeout,
   verify_action: verifyAction,
   refresh_leave_balances: refreshLeaveBalances,
@@ -186,6 +169,7 @@ export const handlers: Record<JobKind, JobHandler> = {
   ticket_notify: ticketNotify,
   ticket_reminder: ticketReminder,
   ticket_escalate: ticketEscalate,
+  query_inform: queryInform,
   // Plivo's own charge for a talking call, or a keypad call to us, once its record is in.
   plivo_charge: async (job) => applyPlivoCharge(job.payload as unknown as ChargeLookup),
 };

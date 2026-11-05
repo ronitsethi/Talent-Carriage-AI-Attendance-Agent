@@ -5,7 +5,7 @@ import { coePeople, coeTeams, jobs, queries, queryTypes, ticketMessages } from '
 import { saveTeam, validateTeam, type MemberInput } from '@/lib/coe';
 import { fakeChannelFor } from '@/lib/runtime';
 import { raiseTicket, ticketLabel } from '@/lib/tickets';
-import { applyTicketDeliveries, escalateToLt, handleTicketReply, notifyAssignee, remindAssignee } from '@/lib/ticket-whatsapp';
+import { applyTicketDeliveries, dialable, escalateToLt, handleTicketReply, informCoe, notifyAssignee, remindAssignee } from '@/lib/ticket-whatsapp';
 import type { InboundMessage } from '@/lib/channels/types';
 import { makeScenario, type Scenario } from './helpers/scenario';
 
@@ -100,6 +100,9 @@ describe('telling the COE person', () => {
       buttonPayloads: [`tkt:${ticket.id}`],
       variables: [ticketLabel(ticket.ticketNo), expect.stringContaining('(E-1)'), expect.any(String), `Resignation ${tag}`, 'High', expect.stringContaining('full and final')],
     });
+    // The employee's number goes with it, so the COE person can ring them.
+    const mobile = scenario.mobile;
+    expect((sent!.message as { variables: string[] }).variables[1]).toBe(`Ankit Panwar (E-1), phone +91 ${mobile.slice(2, 7)} ${mobile.slice(7)}`);
     // No variable may hold a line break: WhatsApp refuses the whole message.
     expect((sent!.message as { variables: string[] }).variables.every((v) => !/\n/.test(v))).toBe(true);
     expect(await history(ticket.id)).toMatchObject([{ direction: 'outbound', kind: 'assigned', status: 'simulated' }]);
@@ -206,5 +209,123 @@ describe('closing it from WhatsApp', () => {
     ]);
     expect([...known]).toEqual([sent!.providerMessageId]);
     expect((await history(ticket.id))[0]).toMatchObject({ status: 'delivered' });
+  });
+});
+
+describe('a query that needed no ticket', () => {
+  /** Two on the PF team look after the company, one does not, and one on another team does. */
+  async function informed() {
+    scenario = await makeScenario();
+    const pf = validateTeam({
+      code: `I${tag}`,
+      fullName: 'Payroll',
+      members: [person(1, 'Honey Pawar', [scenario.tenantId]), person(2, 'Ankit Sharma', []), person(3, 'Subodh Uniyal', [scenario.tenantId])],
+      fallback: null,
+      lt: null,
+    });
+    const other = validateTeam({ code: `J${tag}`, fullName: 'Exits', members: [person(4, 'Jeet Pawar', [scenario.tenantId])], fallback: null, lt: null });
+    if ('errors' in pf || 'errors' in other) throw new Error('bad team');
+    await saveTeam(pf.team);
+    await saveTeam(other.team);
+    await withPlatformScope((tx) => tx.insert(queryTypes).values({ position: 960, coeCode: `I${tag}`, name: `PF ${tag}` }));
+    const id = await withPlatformScope(async (tx) => {
+      const [row] = await tx
+        .insert(queries)
+        .values({
+          tenantId: scenario.tenantId,
+          employeeId: scenario.employeeId,
+          channel: 'voice',
+          endedAt: new Date(),
+          transcript: [{ role: 'employee', text: 'Why is my PF lower this month?', at: new Date().toISOString() }],
+        })
+        .returning();
+      return row!.id;
+    });
+    const outcome = await raiseTicket(id, new Date(), async (types) => ({
+      needs_ticket: false,
+      query_type: types.findIndex((t) => t.name === `PF ${tag}`) + 1,
+      priority: 'low',
+      description: 'Ankit asked why his PF deduction was lower in September. He was told the PF base changed with his new salary structure.',
+    }));
+    return { id, outcome };
+  }
+
+  it("is written up like a ticket, with no ticket, and queued for the query type's team", async () => {
+    const { id, outcome } = await informed();
+    expect(outcome).toEqual({ done: 'informed', queryTypeName: `PF ${tag}`, people: 2 });
+    const row = await withPlatformScope(async (tx) => (await tx.query.queries.findFirst({ where: eq(queries.id, id) }))!);
+    expect(row).toMatchObject({ ticketStatus: null, ticketNo: null, assignedPersonId: null, queryTypeName: `PF ${tag}`, coeCode: `I${tag}` });
+    expect(row.informedAt).not.toBeNull();
+    expect(row.problemDescription).toContain('PF base changed');
+    const queued = await withPlatformScope((tx) => tx.select({ kind: jobs.kind }).from(jobs).where(eq(jobs.dedupeKey, `query-inform:${id}`)));
+    expect(queued.map((j) => j.kind)).toEqual(['query_inform']);
+    // Never twice.
+    expect(await raiseTicket(id, new Date(), async () => { throw new Error('asked again'); })).toEqual({ done: 'already_informed' });
+  });
+
+  it('goes to every member of that team who looks after the company, with the phone number and no Resolved button', async () => {
+    const { id } = await informed();
+    expect(await informCoe(id)).toEqual({ sent: 2, failed: 0 });
+    const fake = fakeChannelFor(scenario.tenantId);
+    expect(fake.history(wa(2))).toHaveLength(0);
+    expect(fake.history(wa(4))).toHaveLength(0);
+    for (const n of [1, 3]) {
+      const [sent] = fake.history(wa(n));
+      expect(sent!.message).toMatchObject({
+        kind: 'template',
+        templateName: 'coe_query_info',
+        variables: [`Ankit Panwar (E-1), phone ${dialable(scenario.mobile)}`, expect.any(String), `PF ${tag}`, expect.stringContaining('PF base changed')],
+      });
+      expect((sent!.message as { buttonPayloads?: string[] }).buttonPayloads).toBeUndefined();
+    }
+    expect((await history(id)).map((m) => m.kind)).toEqual(['info', 'info']);
+
+    // Run again: nobody hears it twice.
+    expect(await informCoe(id)).toEqual({ sent: 0, failed: 0 });
+  });
+
+  it('closes nothing when a member replies to it', async () => {
+    const { id } = await informed();
+    await informCoe(id);
+    const honey = (await withPlatformScope((tx) => tx.query.coePeople.findFirst({ where: eq(coePeople.mobileE164, wa(1)) })))!;
+    const [notice] = (await history(id)).filter((m) => m.personId === honey.id);
+    expect(await handleTicketReply(inbound(wa(1), { text: 'ok', replyToProviderId: notice!.providerMessageId! }))).toBe(true);
+    const row = await withPlatformScope(async (tx) => (await tx.query.queries.findFirst({ where: eq(queries.id, id) }))!);
+    expect(row.ticketStatus).toBeNull();
+    expect((await history(id)).map((m) => m.kind)).toEqual(['info', 'info', 'reply']);
+  });
+
+  it('is not shared when the employee asked nothing, or the type has nobody looking after the company', async () => {
+    scenario = await makeScenario();
+    await withPlatformScope((tx) => tx.insert(queryTypes).values({ position: 961, coeCode: `K${tag}`, name: `Leave ${tag}` }));
+    const make = () =>
+      withPlatformScope(async (tx) => {
+        const [row] = await tx
+          .insert(queries)
+          .values({ tenantId: scenario.tenantId, employeeId: scenario.employeeId, channel: 'voice', endedAt: new Date(), transcript: [{ role: 'employee', text: 'Hello?', at: new Date().toISOString() }] })
+          .returning();
+        return row!.id;
+      });
+    const greeted = await make();
+    expect(await raiseTicket(greeted, new Date(), async () => ({ needs_ticket: false, query_type: 0, priority: 'low', description: '' }))).toEqual({ done: 'not_needed' });
+    const uncovered = await make();
+    expect(
+      await raiseTicket(uncovered, new Date(), async (types) => ({
+        needs_ticket: false,
+        query_type: types.findIndex((t) => t.name === `Leave ${tag}`) + 1,
+        priority: 'low',
+        description: 'Ankit asked how many leaves he has left.',
+      })),
+    ).toEqual({ done: 'not_needed' });
+    const row = await withPlatformScope(async (tx) => (await tx.query.queries.findFirst({ where: eq(queries.id, uncovered) }))!);
+    expect(row.informedAt).toBeNull();
+  });
+});
+
+describe('the number a COE person rings', () => {
+  it('reads as it is dialled', () => {
+    expect(dialable('919876543210')).toBe('+91 98765 43210');
+    expect(dialable('+971501234567')).toBe('+971501234567');
+    expect(dialable(null)).toBeNull();
   });
 });

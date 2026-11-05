@@ -106,8 +106,6 @@ async function ensureTenant(seed: SeedTenant) {
     await tx.insert(tenantSettings).values({
       tenantId: tenant!.id,
       sendingEnabled: true,
-      quietHoursStart: '22:00',
-      quietHoursEnd: '07:00',
       ...seed.settings,
     });
 

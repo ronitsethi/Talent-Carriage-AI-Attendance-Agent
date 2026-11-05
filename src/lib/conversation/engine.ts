@@ -27,6 +27,7 @@ import {
   buildOptionList,
   clarifyMessage,
   dateLabel,
+  DAYS_TO_ACT,
   firstName,
   handedToHrMessage,
   optOutConfirmation,
@@ -108,7 +109,7 @@ export type SendBlock = { blocked: true; reason: string } | { blocked: false };
 
 /**
  * Nothing is sent without passing here: the tenant's master switch, the
- * employee's opt-out, a usable number, and quiet hours.
+ * employee's opt-out, and a usable number.
  */
 export function canSend(ctx: EngineContext, employee: EmployeeRow): SendBlock {
   // A deleted employee is kept only so their cases can be read. Nothing is ever
@@ -117,24 +118,7 @@ export function canSend(ctx: EngineContext, employee: EmployeeRow): SendBlock {
   if (!ctx.settings.sendingEnabled) return { blocked: true, reason: 'Sending is switched off for this customer' };
   if (employee.whatsappOptOut) return { blocked: true, reason: 'Employee has opted out of messages' };
   if (!employee.mobileE164) return { blocked: true, reason: 'No mobile number on record' };
-  if (inQuietHours(ctx)) return { blocked: true, reason: 'Quiet hours' };
   return { blocked: false };
-}
-
-export function inQuietHours(ctx: EngineContext, at = now(ctx)): boolean {
-  const { quietHoursStart, quietHoursEnd, timezone } = ctx.settings;
-  if (!quietHoursStart || !quietHoursEnd) return false;
-  const local = new Intl.DateTimeFormat('en-GB', {
-    timeZone: timezone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(at);
-
-  const start = quietHoursStart.slice(0, 5);
-  const end = quietHoursEnd.slice(0, 5);
-  // Quiet hours usually wrap midnight (20:00 to 09:00).
-  return start <= end ? local >= start && local < end : local >= start || local < end;
 }
 
 /* ------------------------------------------------------------------ *
@@ -842,7 +826,7 @@ async function resolveCase(
 }
 
 /**
- * Records the answer and starts the escalation clocks. Delivery is the caller's
+ * Records the answer and starts the follow-up clock. Delivery is the caller's
  * job, because the guidance is spoken on a call and written on WhatsApp.
  */
 export async function recordAnswer(
@@ -853,8 +837,7 @@ export async function recordAnswer(
 ): Promise<{ label: string; guidance: string }> {
   const at = now(ctx);
   const label = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
-  const followUpDue = new Date(at.getTime() + ctx.settings.followUpAfterDays * 86_400_000);
-  const callDue = new Date(at.getTime() + ctx.settings.callAfterDays * 86_400_000);
+  const followUpDue = new Date(at.getTime() + DAYS_TO_ACT * 86_400_000);
 
   await ctx.tx
     .update(cases)
@@ -866,7 +849,6 @@ export async function recordAnswer(
       replyText: classification ? (classification.reason ?? null) : null,
       aiUsed: classification?.source === 'model',
       followUpDueAt: followUpDue,
-      callDueAt: callDue,
       error: null,
       updatedAt: at,
     })

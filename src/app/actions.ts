@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
+import type { FollowUpContact } from '@/db/schema';
 import {
   actions,
   approvals,
@@ -47,6 +48,8 @@ import { DEFAULT_AGENT_VOICE, isAgentVoice } from '@/lib/voice/voices';
 import { datesInRange } from '@/lib/dates';
 import { summariseCase, summariseQuery } from '@/lib/conversation/summary';
 import { CodeTaken, PersonClash, readTeamInput, removeTeam, saveTeam, validateTeam } from '@/lib/coe';
+import { createCustomer, deleteCustomer, setCustomerActive, CustomerRefused } from '@/lib/customers';
+import { startUploadSend } from '@/lib/upload-send';
 import { listQueryTypes, parseQueryTypeSheet, replaceQueryTypes } from '@/lib/query-types';
 import { PRIORITIES, queueAssignmentWork, type Priority } from '@/lib/tickets';
 import { sendApprovalRequest } from '@/lib/approvals';
@@ -230,25 +233,33 @@ export async function updateSettings(formData: FormData) {
 
   const bool = (name: string) => formData.get(name) === 'on';
   const int = (name: string, fallback: number) => {
-    const value = Number(formData.get(name));
+    const value = Number(formData.get(name) ?? NaN);
     return Number.isFinite(value) ? value : fallback;
   };
+
+  const maxFollowUps = Math.min(10, Math.max(1, Math.round(int('maxFollowUps', 2))));
+  const followUpContacts = Array.from({ length: maxFollowUps }, (_, index): FollowUpContact => {
+    const channel = formData.get(`followUpChannel${index + 1}`);
+    const callMode = formData.get(`followUpCallMode${index + 1}`);
+    return {
+      channel: channel === 'whatsapp' || channel === 'voice' ? channel : null,
+      callMode: channel !== 'whatsapp' && (callMode === 'keypad' || callMode === 'agent') ? callMode : null,
+    };
+  });
 
   await withTenant(tenantId, (tx) =>
     tx
       .update(tenantSettings)
       .set({
-        checkTime: String(formData.get('checkTime') ?? '10:30'),
         operatingMode: formData.get('operatingMode') === 'automatic' ? 'automatic' : 'manual',
+        sendDelayMinutes: Math.min(1440, Math.max(0, Math.round(int('sendDelayMinutes', 60)))),
         sendingEnabled: bool('sendingEnabled'),
         attendanceSource: formData.get('attendanceSource') === 'hrms' ? 'hrms' : 'csv',
         sendBacklogSummary: bool('sendBacklogSummary'),
         maxOutstandingQuestions: int('maxOutstandingQuestions', 0),
-        followUpAfterDays: int('followUpAfterDays', 2),
-        callAfterDays: int('callAfterDays', 3),
+        maxFollowUps,
+        followUpContacts,
         approvalTimeoutHours: int('approvalTimeoutHours', 24),
-        quietHoursStart: String(formData.get('quietHoursStart') ?? '20:00'),
-        quietHoursEnd: String(formData.get('quietHoursEnd') ?? '09:00'),
         // An unknown voice would leave calls silent, so anything unrecognised
         // falls back rather than being stored.
         agentVoice: isAgentVoice(String(formData.get('agentVoice') ?? '')) 
@@ -271,15 +282,16 @@ export async function importAttendance(formData: FormData) {
   if (!(file instanceof File) || file.size === 0) return;
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  let outcome: { importId: string | null; closed: number; removed: number } | null = null;
 
   try {
-    await withTenant(tenantId, async (tx) => {
-      await importAttendanceFile(tx, tenantId, buffer, {
+    outcome = await withTenant(tenantId, async (tx) => {
+      const { importId } = await importAttendanceFile(tx, tenantId, buffer, {
         source: 'upload',
         filename: file.name,
         createdBy: session.userId,
       });
-      await closeCasesExplainedByData(tx, tenantId);
+      return { importId, ...(await closeCasesExplainedByData(tx, tenantId)) };
     });
   } catch (error) {
     // An unreadable file, or one whose shape defeats the mapping. Recorded
@@ -299,7 +311,19 @@ export async function importAttendance(formData: FormData) {
   }
 
   revalidatePath('/mapping');
+  revalidatePath('/cases');
   revalidatePath('/');
+  // The page asks what to do next from here, when this customer sends after uploads.
+  if (outcome?.importId) redirect(`/mapping?uploaded=${outcome.importId}&resolved=${outcome.closed}&removed=${outcome.removed}`);
+}
+
+/** HR chose to send after an upload: everything due goes out once the customer's time period is up. */
+export async function sendAfterUpload(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const { people, delayMinutes } = await startUploadSend(tenantId, String(formData.get('importId') ?? ''));
+  revalidatePath('/');
+  revalidatePath('/cases');
+  redirect(`/mapping?scheduled=${people}&after=${delayMinutes}`);
 }
 
 /**
@@ -796,6 +820,50 @@ export async function topUpAiBudget(formData: FormData) {
 
   await topUpBudget(budget, Math.round(dollars * 1_000_000), session.userId);
   revalidatePath('/admin');
+}
+
+/** Adds a customer to the platform. Talent Carriage staff only. */
+export async function addCustomer(formData: FormData) {
+  const session = await getSession();
+  if (!session || !isPlatformAdmin(session)) throw new Error('Only Talent Carriage staff can add a customer');
+
+  let name: string;
+  try {
+    ({ name } = await createCustomer(String(formData.get('name') ?? '')));
+  } catch (error) {
+    if (error instanceof CustomerRefused) redirect(`/admin?add=1&problem=${encodeURIComponent(error.message)}`);
+    throw error;
+  }
+  revalidatePath('/', 'layout');
+  redirect(`/admin?added=${encodeURIComponent(name)}`);
+}
+
+/** Runs a change to a customer from All customers, and says how it went. */
+async function changeCustomer(formData: FormData, change: (tenantId: string) => Promise<{ name: string }>, done: string) {
+  const session = await getSession();
+  if (!session || !isPlatformAdmin(session)) throw new Error('Only Talent Carriage staff can change a customer');
+
+  let name: string;
+  try {
+    ({ name } = await change(String(formData.get('customerId') ?? '')));
+  } catch (error) {
+    if (error instanceof CustomerRefused) redirect(`/admin?problem=${encodeURIComponent(error.message)}`);
+    throw error;
+  }
+  revalidatePath('/', 'layout');
+  redirect(`/admin?changed=${encodeURIComponent(`${name} is ${done}.`)}`);
+}
+
+export async function deactivateCustomer(formData: FormData) {
+  await changeCustomer(formData, (id) => setCustomerActive(id, false), 'deactivated');
+}
+
+export async function reactivateCustomer(formData: FormData) {
+  await changeCustomer(formData, (id) => setCustomerActive(id, true), 'active again');
+}
+
+export async function removeCustomer(formData: FormData) {
+  await changeCustomer(formData, deleteCustomer, 'deleted');
 }
 
 export async function signOutAction() {

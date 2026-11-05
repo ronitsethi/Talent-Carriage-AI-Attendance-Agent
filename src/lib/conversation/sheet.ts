@@ -12,7 +12,7 @@ import {
   type EmployeeRow,
   type EngineContext,
 } from './engine';
-import { dateLabel, formatDate, LEGACY_OPTIONS, leaveTypeSelectionId, type OptionNumber } from './flow';
+import { dateLabel, DAYS_TO_ACT, formatDate, LEGACY_OPTIONS, leaveTypeSelectionId, type OptionNumber } from './flow';
 import { instructionFor, OUTCOMES, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
 import { recordOutcome } from './talk';
 import { agentCanApply, leaveTypesFor, needsApplication, submitApplication, type ApplyContext } from './apply';
@@ -253,7 +253,7 @@ export async function openMenu(
 export async function writtenFacts(ctx: EngineContext, caseRow: CaseRow, employee: EmployeeRow, answeredOn?: string) {
   const from = answeredOn ?? today(ctx.settings.timezone);
   const d = new Date(`${from}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + ctx.settings.followUpAfterDays);
+  d.setUTCDate(d.getUTCDate() + DAYS_TO_ACT);
   return {
     date: label(caseRow),
     deadline: formatDate(d.toISOString().slice(0, 10)),

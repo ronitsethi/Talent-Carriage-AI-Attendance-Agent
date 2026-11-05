@@ -137,7 +137,9 @@ export async function buildContext(tx: Db, tenantId: string): Promise<FullContex
   return {
     tx,
     tenantId,
-    settings,
+    // A deactivated customer reaches nobody, and its own switch is left as it was
+    // for when it comes back.
+    settings: tenant.status === 'suspended' ? { ...settings, sendingEnabled: false } : settings,
     channel: await resolveChannel(tx, tenantId),
     voice: resolveVoice(tenantId),
     voiceAgent: resolveVoiceAgent(),

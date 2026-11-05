@@ -45,8 +45,9 @@ export type ApplyAction = 'apply_leave' | 'apply_regularisation' | 'apply_on_dut
 /**
  * Where an outcome that ends in an application stands: not applied yet, applied
  * and waiting on the manager, or - with an HRMS connected - for the agent to apply.
+ * `overdue` is a case the follow-ups ran out on, and is never chosen by the employee.
  */
-export type ApplicationStage = 'not_applied' | 'applied' | 'apply_for_me';
+export type ApplicationStage = 'not_applied' | 'applied' | 'apply_for_me' | 'overdue';
 
 export type Application = {
   action: ApplyAction;

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { withTenant, type Db } from '@/db';
-import { attendanceDays, cases, detectionRuns, employees } from '@/db/schema';
+import { actions, approvals, attendanceDays, cases, detectionRuns, employees, messages, tenantSettings } from '@/db/schema';
 import { CHASED_BY_DEFAULT, OPTIONALLY_CHASED } from '@/db/schema/enums';
 import { explainsAbsence, shouldChase, type Meaning } from '@/lib/mapping/meanings';
 import { capAllows, outstandingCount, type EngineContext, type TenantSettings } from '@/lib/conversation/engine';
@@ -156,7 +156,7 @@ export async function findGaps(
 
 export type DailyCheckOptions = {
   date: string;
-  trigger: 'schedule' | 'manual' | 'import' | 'catch_up';
+  trigger: 'manual' | 'import';
   /** Find and report, create nothing, send nothing. */
   dryRun?: boolean;
   /** Create cases but send no messages - used to build a backlog safely. */
@@ -193,10 +193,10 @@ export type DailyCheckResult = {
  * chain of dated questions that simply wait for the employee.
  */
 /**
- * The date an automatic run should look at.
+ * The latest date a send after an upload looks at.
  *
  * Contact happens the day after the absence: attendance for a day is not final
- * until the day has ended, so a run on the 22nd chases the 21st.
+ * until the day has ended, so a send on the 22nd chases up to the 21st.
  */
 export function contactDateFor(settings: TenantSettings, at = new Date()): string {
   const local = new Intl.DateTimeFormat('en-CA', { timeZone: settings.timezone }).format(at);
@@ -207,7 +207,7 @@ export function contactDateFor(settings: TenantSettings, at = new Date()): strin
 
 export async function runDailyCheck(ctx: FullContext, opts: DailyCheckOptions): Promise<DailyCheckResult> {
   const { gaps, skipped } = await findGaps(ctx.tx, ctx.tenantId, opts.date, ctx.settings, {
-    automaticOnly: opts.trigger === 'schedule',
+    automaticOnly: opts.trigger === 'import',
   });
 
   const result: DailyCheckResult = {
@@ -349,9 +349,11 @@ export async function ensureCase(tx: Db, tenantId: string, employeeId: string, d
  * If a corrected register shows the day as approved leave, or the employee
  * applied it in the HRMS meanwhile, the case is resolved quietly rather than
  * being chased again — which is what stops the agent nagging about something
- * already sorted.
+ * already sorted. The portal shows such a case as Resolved · Action taken. An
+ * unopened case the new data no longer calls for is deleted instead.
  */
 export async function closeCasesExplainedByData(tx: Db, tenantId: string, date?: string) {
+  const settings = await tx.query.tenantSettings.findFirst({ where: eq(tenantSettings.tenantId, tenantId) });
   const open = await tx
     .select({
       caseId: cases.id,
@@ -367,12 +369,22 @@ export async function closeCasesExplainedByData(tx: Db, tenantId: string, date?:
     .where(
       and(
         eq(cases.tenantId, tenantId),
-        inArray(cases.status, ['queued', 'asked', 'delivered', 'read', 'answered', 'needs_hr']),
+        inArray(cases.status, ['queued', 'asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval', 'needs_hr']),
         date ? eq(cases.attDate, date) : sql`true`,
       ),
     );
 
-  const toClose = open.filter((row) => explainsAbsence(row.meaning as Meaning));
+  // Nobody was ever contacted about these, so there is nothing to keep: the case goes.
+  const unopened = open
+    .filter((row) => row.status === 'queued')
+    .filter((row) => !shouldChase(row.meaning as Meaning, { tenantChaseMeanings: settings?.chaseMeanings ?? [] }))
+    .map((row) => row.caseId);
+  if (unopened.length) {
+    await tx.delete(messages).where(inArray(messages.caseId, unopened));
+    await tx.delete(cases).where(inArray(cases.id, unopened));
+  }
+
+  const toClose = open.filter((row) => row.status !== 'queued' && explainsAbsence(row.meaning as Meaning));
   for (const row of toClose) {
     await tx
       .update(cases)
@@ -381,11 +393,28 @@ export async function closeCasesExplainedByData(tx: Db, tenantId: string, date?:
         resolvedAt: new Date(),
         closedByRevision: true,
         closeReason: `Attendance now shows ${row.meaning.replace(/_/g, ' ')}`,
+        followUpDueAt: null,
         updatedAt: new Date(),
       })
       .where(eq(cases.id, row.caseId));
   }
-  return { closed: toClose.length };
+
+  // The file already shows the answer, so a manager has nothing left to decide.
+  const withManager = toClose.filter((row) => row.status === 'awaiting_approval').map((row) => row.caseId);
+  if (withManager.length) {
+    const waiting = await tx
+      .update(actions)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(and(inArray(actions.caseId, withManager), eq(actions.status, 'awaiting_approval')))
+      .returning({ id: actions.id });
+    if (waiting.length) {
+      await tx
+        .update(approvals)
+        .set({ decision: 'expired', respondedAt: new Date() })
+        .where(and(inArray(approvals.actionId, waiting.map((action) => action.id)), eq(approvals.decision, 'pending')));
+    }
+  }
+  return { closed: toClose.length, removed: unopened.length };
 }
 
 

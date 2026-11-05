@@ -72,6 +72,22 @@ export const LEGACY_OPTIONS = {
 /** The approved template the first question goes out as, since the options changed. */
 export const FIRST_STEP_TEMPLATE = 'attendance_absent_v2';
 
+/** A follow-up once the 24-hour window has closed, which by then it nearly always has. */
+export const FOLLOW_UP_TEMPLATE = 'attendance_follow_up';
+export const FOLLOW_UP_TEMPLATE_BODY = 'Hi {{1}}, a follow-up on your attendance.\n\n{{2}}\n\nPlease choose an option below.';
+
+/** The last follow-up, as the same template outside the window and as text inside it. */
+export const FINAL_NOTICE_TEMPLATE = 'attendance_final_notice';
+export const FINAL_NOTICE_TEMPLATE_BODY =
+  'Hi {{1}}, this is the final reminder about your {{2}} for {{3}}. It has still not been done, and not doing it will lead to ' +
+  'loss of pay. This is now being transferred to {{4}}.\n\nReply here if you have any questions.';
+
+/** Employees get until the next day to act, and that is also when the next follow-up falls due. */
+export const DAYS_TO_ACT = 1;
+
+export const fillTemplate = (body: string, variables: string[]) =>
+  body.replace(/\{\{(\d)\}\}/g, (_, n: string) => variables[Number(n) - 1] ?? '');
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export function formatDate(isoDate: string): string {
@@ -398,7 +414,7 @@ export function followUpAcknowledgement(choice: FollowUpChoice, label: string): 
     case 'done':
       return `Thank you. I will confirm ${label} against the HRMS record and close it.`;
     case 'not_done':
-      return `Thank you for telling me. Please complete it for ${label} as soon as you can - HR has been informed.`;
+      return `Thank you for telling me. Please complete it for ${label} as soon as you can.`;
     case 'help':
       return 'I have asked HR to contact you and help with this.';
   }

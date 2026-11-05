@@ -111,6 +111,8 @@ export type ImportReport = {
   /** Deleted employees the file brought back. Absent from reports written before this existed. */
   employeesRestored?: number;
   daysImported: number;
+  /** Days dated today or later, left out because the day is not over. Absent when there were none. */
+  daysHeldBack?: number;
   rejected: { row: number; employeeCode?: string; reason: string }[];
   unmappedCodes: Record<string, number>;
   meaningCounts: Record<string, number>;

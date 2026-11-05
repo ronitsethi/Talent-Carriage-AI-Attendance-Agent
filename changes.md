@@ -2,6 +2,131 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-05 10:40
+- **Files:** CURRENT_STATE.md
+- **Change:** Added an Open Issues entry: the `approval_noted` template is not on the WhatsApp account, what fails without it, and the command to create it. Parked by choice.
+- **Why:** Not needed yet; kept on record so it is not forgotten.
+
+## 2026-11-05 10:20
+- **Files:** CURRENT_STATE.md
+- **Change:** Recorded that Meta approved `coe_query_info` (checked on the WhatsApp Business account; it was PENDING when created).
+- **Why:** The state file still said the template was waiting for review.
+
+## 2026-11-05 10:00
+- **Files:** none in the repo (production database and WhatsApp Business account), CURRENT_STATE.md
+- **Change:** Applied migration 0028 (`queries.informed_at`) to the production `attendance` database; it now has 29 migrations. It was run from the laptop with the owner URL from the web app's App Settings, through a firewall rule for 122.161.39.143 that was removed straight after. Created the `coe_query_info` WhatsApp template on WABA 1185067337113062 (id 1616255606101519, status PENDING).
+- **Why:** The "for information" notices to COE teams need the column and the template.
+
+## 2026-11-04 17:10
+- **Files:** src/lib/ticket-whatsapp.ts, scripts/create-ticket-templates.ts
+- **Change:** The `coe_query_info` notice now says the employee "contacted the Attendance assistant" instead of "the HR assistant", both in the template body the script submits to Meta and in the preview logged on the query page.
+- **Why:** The assistant is called the Attendance assistant.
+
+## 2026-11-04 16:58
+- **Files:** src/lib/tickets.ts, src/lib/ticket-whatsapp.ts, src/lib/jobs/queue.ts, src/lib/jobs/handlers.ts, src/db/schema/messaging.ts, src/db/migrations/0028_query_informed.sql, src/db/migrations/meta/_journal.json, src/app/(app)/queries/[id]/page.tsx, scripts/create-ticket-templates.ts, tests/ticket-whatsapp.test.ts
+- **Change:** A query that needs no ticket but was about something real is now shared with its COE team for their information. The ticket prompt asks the model for the query type and a description (what was asked and what they were told) even when no ticket is needed. `raiseTicket` writes the type, COE code and description on the query with no ticket status or number, sets the new `queries.informed_at`, and queues a `query_inform` job. `informCoe` sends the new `coe_query_info` template (employee with phone, company, query type, description; no Resolved button) to every member of that query type's team who looks after the company, logged in `ticket_messages` as kind `info`; nobody is sent it twice. A reply quoting the notice is logged and closes nothing. Nothing is shared when the employee only greeted or tested, the query matched no type, or nobody on that team looks after the company (no other team stands in). The query page shows a "Shared with COE" section with the type, description and who was told.
+- **Why:** The COE team should hear about queries the agent settled too, not only the ones that need resolving.
+
+## 2026-11-04 16:58
+- **Files:** src/lib/ticket-whatsapp.ts, scripts/create-ticket-templates.ts, tests/ticket-whatsapp.test.ts
+- **Change:** Every WhatsApp notice about a ticket (assigned, 36-hour reminder, escalated to the LT person) now gives the employee's phone number with their name and code: `Ankit Panwar (E-1), phone +91 98765 43210`. It goes in the existing employee variable, so the approved templates are unchanged. `dialable()` formats the stored number. The template script's examples show the phone too.
+- **Why:** The COE member should be able to ring the employee straight from the ticket message.
+
+## 2026-11-04 16:58
+- **Files:** src/lib/mapping/import.ts, src/db/schema/mapping.ts, src/app/(app)/mapping/page.tsx, tests/import-today.test.ts
+- **Change:** An attendance upload now leaves out every day dated today or later, in the customer's own timezone (`holdBackFrom` in `import.ts`). The upload is not rejected: employees are still read and earlier days written. The import's date range, day count and meaning counts cover only the kept days; the report carries `daysHeldBack`, and the upload notice says today's attendance was left out (or, when the file held nothing but today, that nothing was imported and to upload it again tomorrow). `importAttendanceFile` takes an optional `today` for tests.
+- **Why:** Customers may send a file that runs up to today. Today is not over, so its attendance is not final, and it must not reach the dashboard or the database.
+
+## 2026-11-04 16:20
+- **Files:** .git/config (not tracked), CURRENT_STATE.md
+- **Change:** `origin` now has two push URLs: ronitsethi/Talent-Carriage-AI-Attendance-Agent and tcmpludaymoitraoffice-vsa/AttendanceMaster. A plain `git push` updates both; fetch/pull still come only from the ronitsethi repo. The `attendancemaster` remote is kept for fetching or pushing to that repo alone.
+- **Why:** Every push should update both repos without a second command.
+
+## 2026-11-04 16:01
+- **Files:** .git/config (not tracked), CURRENT_STATE.md
+- **Change:** Added a second git remote, `attendancemaster` → https://github.com/tcmpludaymoitraoffice-vsa/AttendanceMaster (private, empty when added). `origin` (ronitsethi/Talent-Carriage-AI-Attendance-Agent) is unchanged. Pushed `main` at `6eefbb7` (committed history only); local `main` still tracks `origin/main`.
+- **Why:** The project should also live in the AttendanceMaster repo, alongside the existing one.
+
+## 2026-11-03 14:47
+- **Files:** src/app/(app)/layout.tsx
+- **Change:** The "Viewing customer" form in the sidebar is keyed on the active customer, so it is drawn again after each switch with the new customer chosen.
+- **Why:** After a switch the page showed the new customer but the drop-down still showed the previous one. React 19 resets a form after its action, which put the select back on the option it was first drawn with. Checked in a browser over three switches: before the fix the drop-down stayed on Demo Industries every time; after it, the drop-down matched each customer.
+
+## 2026-11-03 12:58
+- **Files:** docs/whatsapp-message-flow.xlsx, CURRENT_STATE.md
+- **Change:** Added an Excel workbook of the full WhatsApp message flow: every message from the first question to the case closing (flow-sheet menus, applying, next date, typing and exceptions, follow-ups and final notice, manager approval, the decision to the employee, call feedback and COE tickets), with buttons, the step each reply leads to and the case status. Also tabs for the 20 outcomes and their instructions, the Meta templates, a worked example chat, and wording gaps found on the way. Built from the code, no code changed.
+- **Why:** Requested by the user: the full WhatsApp flow from start to end in a sheet.
+
+## 2026-11-03 12:45
+- **Files:** agent/worker.py, CURRENT_STATE.md, Backend-changes.md
+- **Change:** Removed "Achha." from the English fillers, leaving "Okay." and "Sure.". Hindi is unchanged. Deployed as worker image v21 (revision tc-attendance-worker--0000021); `AGENT_FILLERS` stays `on`.
+- **Why:** Requested by the user: on the 12:38 IST test call, in English, the first filler was "Achha.", which sounds Hindi.
+
+## 2026-11-03 12:38
+- **Files:** agent/worker.py, CURRENT_STATE.md, Backend-changes.md
+- **Change:** Fillers are placed as they were before being switched off on 2026-10-27: one before every reply that is not ready when the turn ends, except after a thank-you or goodbye. Removed the limits added today (first slow reply always, short answers skipped, never three in a row, random draw) and the dropping of an "Okay," that opens the reply. The filler no longer waits up to 0.3 s for the platform's pleasantry verdict: it uses the verdict if it is back and the word list if not. Kept the one-word fillers, the audio made in advance and the start the moment the turn ends. Deployed as worker image v20 (revision tc-attendance-worker--0000020); `AGENT_FILLERS` stays `on`.
+- **Why:** Requested by the user: the only change wanted from the old fillers was one word instead of a sentence, and the filler should start as fast as possible. On the 12:22 IST call one reply had no filler and the other's waited 0.3 s on the check.
+
+## 2026-11-03 12:22
+- **Files:** agent/worker.py, CURRENT_STATE.md, Backend-changes.md
+- **Change:** A filler is now said the moment the turn ends instead of after a 0.5 s wait, and plays from audio made in the call's voice while the phone rings or the greeting plays, instead of a fresh trip to Sarvam. If that audio is not ready it is said through the voice as before. Up to two replies in a row can have one (never three), and about three in four substantial replies after the first, up from two in three with never two in a row. Speech silence stays at 0.8 s. Deployed as worker image v19 (revision tc-attendance-worker--0000019); `AGENT_FILLERS` stays `on`.
+- **Why:** Requested by the user: on the 10:11 IST test call the filler came 1.89 s after they stopped and the next reply, which by the old rule had none, took 2.93 s. Expected now: the filler at about 1.0-1.2 s, on most substantial replies.
+
+## 2026-11-03 09:50
+- **Files:** agent/worker.py, CURRENT_STATE.md, Backend-changes.md
+- **Change:** Changed when fillers are said. The first slow reply of every call always has one (still not after a thank-you or goodbye). After that, only a reply to a question (a question mark, or a question word such as kab, kitni, क्या, what) or to a turn of 4+ words, never two replies in a row, and about two in three of those at random. One-word answers like "haan", "nahi" or "yes" get none after the first. Each skipped filler is logged with its reason. Deployed as worker image v18 (revision tc-attendance-worker--0000018); `AGENT_FILLERS` stays `on`.
+- **Why:** Reported by the user: a test call at 04:05 UTC had no fillers. Both of its replies lost the random draw: with "never two in a row" plus 2 in 3, fillers came on only about 40% of slow replies, and a two-question call had none about 1 time in 9.
+
+## 2026-11-03 09:32
+- **Files:** agent/worker.py, CURRENT_STATE.md, Backend-changes.md
+- **Change:** Fillers are back on talking calls, as one word instead of a sentence: Okay / Sure / Achha in English, जी / अच्छा / ठीक है / हाँ जी in Hindi, the same for every voice. Still only when nothing of the reply has come within 0.5 s and never after a thank-you or goodbye; now also never on two replies in a row and on about two in three of the rest, picked at random. After a filler, a reply opening with an acknowledgement and a comma or stop ("Okay, so...", "जी, आपकी...") loses that word; "Right now" and "Okay so" are kept, and a reply that is only "Okay." is still said. Each word was synthesised in all five voices and transcribed back; Hmm, हम्म, Got it, Alright and Right were left out for how Bulbul said them. Deployed as worker image v17 (revision tc-attendance-worker--0000017) with `AGENT_FILLERS=on`.
+- **Why:** Requested by the user, so a caller hears something about 2 s after they stop instead of 3.2 s of silence (measured on incoming calls on 2026-11-02), without fillers on every turn as before.
+
+## 2026-11-01 13:15
+- **Files:** src/db/migrations/0027_customer_controls.sql, src/db/migrations/meta/_journal.json, src/db/schema/tenants.ts, src/db/schema/ops.ts, src/lib/customers.ts, src/lib/runtime.ts, src/lib/auth.ts, src/lib/channel.ts, src/lib/contact.ts, src/lib/conversation/followup.ts, src/lib/voice/session.ts, src/app/api/webhook/route.ts, src/app/actions.ts, src/app/(app)/admin/page.tsx, src/app/(app)/settings/page.tsx, src/components/follow-up-contacts.tsx, tests/customers.test.ts, tests/follow-ups.test.ts, tests/settings-form.test.ts, CURRENT_STATE.md, Backend-changes.md
+- **Change:** All customers has a Status column and Deactivate, Reactivate and Delete buttons. Deactivating stops all contact, replies and the customer's own sign-ins and keeps the data. Delete needs the customer deactivated first and removes everything except the audit log. Settings has a row per follow-up level, below No. of follow-ups, setting Contact by and Call style for the whole customer.
+- **Why:** Requested by the user.
+
+## 2026-11-01 12:36
+- **Files:** src/lib/queries.ts, src/app/(app)/cases/page.tsx, tests/follow-ups.test.ts, CURRENT_STATE.md, Backend-changes.md
+- **Change:** A case now enters Follow-up 1 as soon as the employee answers and still has to act, instead of sitting in Answered, and moves to Follow-up 2 when the first follow-up goes. The level is the follow-up the case is waiting for, not how many have gone.
+- **Why:** Reported by the user: cases stayed in Answered until a reminder was pressed. This matches the ladder they described originally.
+
+## 2026-11-01 12:25
+- **Files:** src/lib/queries.ts, src/app/(app)/cases/page.tsx, tests/follow-ups.test.ts, CURRENT_STATE.md, Backend-changes.md
+- **Change:** The Cases page now has one Follow-up tab per level, as many as No. of follow-ups, each with its own count, and a new Level column ("1 of 2"). Cases that have had their final follow-up stay in their level's tab while the manager decides, instead of moving to Answered.
+- **Why:** Requested by the user, so follow-ups can be separated and filtered by level.
+
+## 2026-11-01 11:48
+- **Files:** src/db/migrations/0026_drop_timing_settings.sql, src/db/migrations/meta/_journal.json, src/db/schema/tenants.ts, src/db/schema/cases.ts, src/lib/conversation/flow.ts, src/lib/conversation/engine.ts, src/lib/conversation/followup.ts, src/lib/conversation/follow-up-state.ts, src/lib/conversation/sheet.ts, src/lib/conversation/talk.ts, src/lib/voice/keypad-sheet.ts, src/lib/approvals.ts, src/app/actions.ts, src/app/(app)/settings/page.tsx, tests/follow-ups.test.ts, tests/upload-send.test.ts, CURRENT_STATE.md, Backend-changes.md
+- **Change:** Removed the Reminder after and Call after settings. Employees are now always told to act by the next day (`DAYS_TO_ACT`), on WhatsApp and on calls. Dashboard follow-ups fall due a day after the answer or the last follow-up. The unused `cases.call_due_at` is gone too.
+- **Why:** Requested by the user: No. of follow-ups and the send choices now set the pace, and Call after never did anything.
+
+## 2026-11-01 11:16
+- **Files:** src/app/(app)/settings/page.tsx, src/app/actions.ts, tests/settings-form.test.ts, Backend-changes.md
+- **Change:** Restored two Settings sections deleted by accident when Quiet hours was removed: The talking call (Voice, Speed) and Backlog and escalation (Outstanding questions cap, Reminder after, No. of follow-ups, Call after, Approval timeout, the pending-days summary). Added a note on what Reminder after still does. A setting missing from the form now keeps its fallback instead of saving 0, and a test checks that every field saved has a box on the page.
+- **Why:** The removal overran its section, and that version was deployed. While it is live, saving Settings overwrites those values: Reminder after, Call after and Approval timeout become 0, the cap becomes 0, the summary turns off and the voice resets.
+
+## 2026-11-01 10:47
+- **Files:** src/lib/upload-send.ts, src/lib/conversation/followup.ts, src/lib/conversation/engine.ts, src/lib/conversation/feedback.ts, src/lib/jobs/handlers.ts, src/lib/display.ts, src/db/migrations/0025_send_delay.sql, src/db/migrations/meta/_journal.json, src/db/schema/tenants.ts, src/db/seed/index.ts, src/app/actions.ts, src/app/(app)/mapping/page.tsx, src/app/(app)/settings/page.tsx, src/app/(app)/cases/page.tsx, src/app/(app)/cases/[id]/page.tsx, tests/upload-send.test.ts, tests/helpers/scenario.ts, CURRENT_STATE.md, Backend-changes.md
+- **Change:** The time period after an upload is now a delay: everything starts that many minutes after HR chooses to send (setting "Start sending after (minutes)", 0 to 1440), with follow-ups 10 minutes behind first questions. Quiet hours are removed everywhere, including manual sends, and their Settings section is gone; the columns stay. After uploads, anyone who answered on an earlier day and whose date is still unexplained gets a follow-up with that day's file, one a day, regardless of "Reminder after". Cases show "With the next upload" for these people. Manual mode and "Send due follow-ups" still use "Reminder after".
+- **Why:** Requested by the user: the period is a wait, not a spread; quiet hours are not needed yet; and a follow-up goes with the next day's file along with that day's absences. The user chose to keep follow-ups to people who replied.
+
+## 2026-11-01 09:10
+- **Files:** src/lib/upload-send.ts, src/components/upload-choice.tsx, src/db/migrations/0024_upload_sending.sql, src/db/migrations/meta/_journal.json, src/db/schema/tenants.ts, src/db/schema/employees.ts, src/lib/detection/run.ts, src/lib/conversation/followup.ts, src/lib/jobs/queue.ts, src/lib/jobs/handlers.ts, src/lib/jobs/scheduler.ts, src/lib/queries.ts, src/app/actions.ts, src/app/(app)/settings/page.tsx, src/app/(app)/mapping/page.tsx, src/app/(app)/layout.tsx, src/app/(app)/page.tsx, src/app/(app)/admin/page.tsx, src/app/(app)/cases/page.tsx, src/app/(app)/cases/[id]/page.tsx, tests/upload-send.test.ts, tests/calls.test.ts, CURRENT_STATE.md, Backend-changes.md
+- **Change:** Automatic now follows an attendance upload instead of the clock. The daily check, its time and the hourly follow-up sweep are gone. Every upload updates attendance, resolves contacted cases the file explains (shown as Resolved with "Action taken" below) and deletes unopened cases it no longer calls for. With Automatic on and CSV upload selected, an alert then asks "Send today's calls/messages" or "Just update attendance data". Sending covers new and old unopened dates and due follow-ups, spread evenly over the new "Send within (minutes)" setting, and leaves out employees set to Manual. Settings: the Daily check section is replaced by Automatic sending and Quiet hours. Approval timeouts now run for every active customer, not only automatic ones.
+- **Why:** Requested by the user, so nothing is sent until a new file is uploaded, and an upload settles what the employee has already done.
+
+## 2026-10-30 14:30
+- **Files:** src/db/migrations/0023_follow_up_limit.sql, src/db/migrations/meta/_journal.json, src/db/schema/tenants.ts, src/db/schema/cases.ts, src/lib/conversation/followup.ts, src/lib/conversation/flow.ts, src/lib/conversation/outcomes.ts, src/lib/conversation/apply.ts, src/lib/conversation/talk.ts, src/lib/conversation/voice-script.ts, src/lib/approvals.ts, src/lib/contact.ts, src/lib/voice/session.ts, src/lib/voice/approval-calls.ts, src/app/api/agent/turn/route.ts, src/lib/queries.ts, src/lib/display.ts, src/app/actions.ts, src/app/(app)/settings/page.tsx, src/app/(app)/page.tsx, src/app/(app)/cases/[id]/page.tsx, scripts/create-ticket-templates.ts, tests/follow-ups.test.ts, tests/calls.test.ts, tests/talk.test.ts, tests/whatsapp-sheet.test.ts, CURRENT_STATE.md, Backend-changes.md
+- **Change:** Settings has a "No. of follow-ups" box (1 to 10, default 2). A date gets that many follow-ups, "Reminder after" days apart, until the action is taken. The last one warns of loss of pay and moves the case to the manager as an Approved / Rejected request, or to HR when the file names no manager. "Not applied yet" no longer asks the manager straight away; the case stays with the employee and the follow-ups run. "Done" or later attendance data resolves the case. The Cases page shows which follow-up a case is on, and a case with the manager shows "With the manager".
+- **Why:** Requested by the user. Until now a case that needed an application went to the manager at once and never reached a follow-up, so follow-ups did not run for leave or regularisation.
+
+## 2026-10-30 13:37
+- **Files:** src/lib/customers.ts, src/app/actions.ts, src/app/(app)/admin/page.tsx, tests/customers.test.ts, CURRENT_STATE.md, Backend-changes.md
+- **Change:** The All customers page has an Add customer button. It opens a one-field form (customer name) that creates the customer with default settings: active, manual mode, sending off. The customers table now has a "Customers (n)" heading. A name already in use, or one with no English letter or number, is refused with a message.
+- **Why:** Staff asked to create customers from the portal. Until now a customer could only be added through the seed script. Separate credentials are not needed for now, so no login or WhatsApp/phone config is created.
+
 ### 2026-10-13 — Document the system in CURRENT_STATE.md
 - **What changed:** Filled in every section of the system-state document from the code: overview, database, API routes and webhooks, background jobs, pages, case statuses, integrations, sign-in and permissions, and open issues.
 - **Why:** The file was created empty with "auto-populate pending" markers, and the documentation rules require it to describe the real system.
@@ -127,3 +252,21 @@ Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` follow
 - **Why:** On the first v15 calls, idle memory had gone from about 600 MB to about 850 MB of the 1 GiB limit (four pre-started processes, each holding the VAD and the noise filter). The process answering the 11:50 call was killed (exit -9), LiveKit gave the call to another process 21 seconds later, and that one opened a second query. "तो I would like to know my attendance for the month of September" was answered in Hindi. At 11:39 and 11:43 calls rang out because `AGENT_VOICE_MODEL` was still `bulbul:v3-beta` while the voice was a v4 one (the Azure setting was then changed by hand).
 - **Where:** `agent/worker.py`, `src/app/api/agent/turn/route.ts`, `src/lib/conversation/queries.ts`, `src/lib/conversation/talk.ts`, `tests/queries.test.ts`, `tests/talk.test.ts`
 - **Technical details:** `WorkerOptions(num_idle_processes=1)`; LiveKit's production default is min(CPUs seen, 4), and it sees the host's CPUs. The inbound greeting sends `ask.room` (the LiveKit room name), stored as `queries.provider_call_id`; `startCallQuery` returns the existing query for the same tenant and `providerCallId`, replacing a greeting-only transcript with the new greeting. `spokenLanguage` only counts a script when at least half the words are in it. `voice_model()` gives v4 Flash for names with an underscore and v3 otherwise. Worker image v16.
+
+### 2026-10-29 — Voice worker hosting comparison for 10 calls at once
+- **What changed:** Added `docs/voice-worker-hosting-10-calls.pdf`. It compares keeping the voice worker on Azure (sized 2 vCPU / 4 GiB) with letting LiveKit host it on the Ship plan, for 10 calls at once and at most 100 calls a day. It covers costs, how they change with volume, trade-offs, what changes where, an all-in monthly budget and the limits to check.
+- **Why:** The worker is the largest Azure cost (₹3,307 for 1–29 Oct), and LiveKit is moving to a paid plan anyway.
+- **Where:** `docs/voice-worker-hosting-10-calls.pdf`
+- **Technical details:** Built with reportlab in the same style as `docs/plivo-livekit-costs.pdf`. Azure rates come from this account's October bill; LiveKit's from livekit.com/pricing and the agent deployment docs (Mumbai `ap-south` region, rolling deploys with a 1-hour drain, warm on paid plans). Result: about ₹13,000 a month hosted against about ₹21,000 on Azure, with break-even near 175 calls a day.
+
+### 2026-10-29 — Shorten the upgrade-cost document to two pages
+- **What changed:** Rewrote `docs/voice-worker-hosting-10-calls.pdf` as two pages of tables with no paragraphs. It has one table for each option, listing every resource across LiveKit, Azure and Plivo with today's setup, the upgrade and the monthly cost, followed by cost by calls a day, a short comparison and possible extra costs.
+- **Why:** The first version was too long to read; the user asked for upgrade costing only, at most two pages.
+- **Where:** `docs/voice-worker-hosting-10-calls.pdf`
+- **Technical details:** Same figures as the first version, built with reportlab.
+
+### 2026-10-29 — Upgrade-cost document: today's costs for unchanged resources
+- **What changed:** In `docs/voice-worker-hosting-10-calls.pdf`, every resource that stays the same now shows its current monthly cost instead of "No change". The rows are web app ₹1,140, database ₹2,000, Azure OpenAI ₹0 fixed and Plivo number ₹200. Totals now cover every resource: today ₹7,200, option B ~₹16,360, option A ~₹24,320. The calls-a-day table adds LiveKit minutes. The comparison table now says the Azure worker is fixed while the hosted worker is billed per minute, which is why the two options grow differently. The document is still two pages.
+- **Why:** The user asked for current costs in place of "No change", and asked why the calls-a-day figures differ.
+- **Where:** `docs/voice-worker-hosting-10-calls.pdf`
+- **Technical details:** The calls-a-day figures include the ₹3,340 of unchanged resources on both options; the gaps between A and B are unchanged.

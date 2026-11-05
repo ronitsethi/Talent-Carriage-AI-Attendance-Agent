@@ -43,7 +43,12 @@ export type CaseListItem = {
   answeredAt: Date | null;
   followUpDueAt: Date | null;
   followUpSentAt: Date | null;
+  followUpCount: number;
   followUpReply: string | null;
+  followUpLevel: number;
+  inFollowUp: boolean;
+  /** Closed because an uploaded file showed the action was taken. */
+  closedByRevision: boolean;
   /** The last thing said about this date, by the agent or the employee, by message or on a call. */
   lastContactAt: Date | null;
   employeeName: string;
@@ -75,16 +80,32 @@ const ANSWERED_STATUSES = ['answered', 'awaiting_action', 'awaiting_approval'] a
 export const ASKED_STATUSES = [...AWAITING_REPLY, ...ANSWERED_STATUSES] as const;
 
 /**
- * Where a case stands for the tabs: its status, except that a case whose
- * follow-up has gone out and is not yet done stands in Follow-up - waiting on
- * that, rather than on the first answer it already has.
+ * Where a case stands for the tabs: its status, except that a case the employee
+ * has answered and still has to act on stands in Follow-up, from the moment they
+ * answer. It stays there, at its level, while the manager decides what the last
+ * follow-up handed them.
  */
 type CaseStage = CaseStatus | 'follow_up';
 const caseStage = sql<CaseStage>`case
+  when ${cases.status} = 'answered' and ${cases.followUpDueAt} is not null then 'follow_up'
   when ${cases.followUpSentAt} is not null
     and (${cases.followUpReply} is null or ${cases.followUpReply} = 'not_done')
     and ${cases.status} in ('asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval')
   then 'follow_up' else ${cases.status}::text end`;
+
+/**
+ * A follow-up case's level: the follow-up it is waiting for, so a case answered
+ * today is at 1. Once none is owed, it stays at the last one that went.
+ */
+const followUpLevel = sql<number>`case
+  when ${cases.status} = 'answered' and ${cases.followUpDueAt} is not null then ${cases.followUpCount} + 1
+  else greatest(${cases.followUpCount}, 1) end`.mapWith(Number);
+
+/** The level a `status` in the URL picks, as in `follow_up_2`. */
+export function followUpLevelOf(status: string | undefined): number | null {
+  const level = /^follow_up_([1-9]\d?)$/.exec(status ?? '')?.[1];
+  return level ? Number(level) : null;
+}
 
 /** Everything still in play, which is what the sidebar counts. */
 const OPEN_STATUSES = ['queued', ...ASKED_STATUSES, 'follow_up'] as const;
@@ -114,6 +135,7 @@ export const DEFAULT_CASE_FILTER: CaseFilterKey = 'open';
  * sensible rather than on an empty table. */
 function statusesFor(status: string | undefined): readonly CaseStage[] | null {
   if (!status || status === 'all') return null;
+  if (followUpLevelOf(status)) return ['follow_up'];
   if (status === 'attention') return ['needs_hr', 'failed'];
   return (CASE_FILTERS.find((f) => f.key === status) ?? CASE_FILTERS[0]).statuses;
 }
@@ -145,6 +167,8 @@ export async function listCases(
     const conditions = caseFilterConditions(tenantId, filters);
     const statuses = statusesFor(filters.status);
     if (statuses) conditions.push(inArray(caseStage, [...statuses]));
+    const level = followUpLevelOf(filters.status);
+    if (level) conditions.push(sql`${followUpLevel} = ${level}`);
 
     return tx
       .select({
@@ -167,7 +191,11 @@ export async function listCases(
         answeredAt: cases.answeredAt,
         followUpDueAt: cases.followUpDueAt,
         followUpSentAt: cases.followUpSentAt,
+        followUpCount: cases.followUpCount,
         followUpReply: cases.followUpReply,
+        followUpLevel,
+        inFollowUp: sql<boolean>`${caseStage} = 'follow_up' or ${cases.followUpSentAt} is not null`,
+        closedByRevision: cases.closedByRevision,
         lastContactAt: sql<Date | null>`greatest(
           (select max(m.created_at) from messages m where m.case_id = ${cases.id} and m.query_id is null),
           (select max(coalesce(c.ended_at, c.started_at)) from calls c where c.case_id = ${cases.id})
@@ -193,16 +221,23 @@ export async function listCases(
 export async function caseCounts(tenantId: string, filters: CaseFilters = {}) {
   return withTenant(tenantId, async (tx) => {
     const rows = await tx
-      .select({ status: caseStage, total: count() })
+      .select({ status: caseStage, level: followUpLevel, total: count() })
       .from(cases)
       .innerJoin(employees, eq(employees.id, cases.employeeId))
       .where(and(...caseFilterConditions(tenantId, filters)))
-      .groupBy(caseStage);
+      .groupBy(caseStage, followUpLevel);
 
     const all = rows.reduce((total, row) => total + row.total, 0);
     const sum = (statuses: readonly string[] | null) =>
       statuses ? rows.filter((row) => statuses.includes(row.status)).reduce((total, row) => total + row.total, 0) : all;
-    return Object.fromEntries(CASE_FILTERS.map((f) => [f.key, sum(f.statuses)])) as Record<CaseFilterKey, number>;
+    const followUpLevels: Record<number, number> = {};
+    for (const row of rows) {
+      if (row.status === 'follow_up') followUpLevels[row.level] = (followUpLevels[row.level] ?? 0) + row.total;
+    }
+    return {
+      ...(Object.fromEntries(CASE_FILTERS.map((f) => [f.key, sum(f.statuses)])) as Record<CaseFilterKey, number>),
+      followUpLevels,
+    };
   });
 }
 
@@ -400,7 +435,6 @@ export async function platformOverview() {
         sendingEnabled: tenantSettings.sendingEnabled,
         operatingMode: tenantSettings.operatingMode,
         actionsEnabled: tenantSettings.actionsEnabled,
-        checkTime: tenantSettings.checkTime,
         cap: tenantSettings.maxOutstandingQuestions,
       })
       .from(tenants)

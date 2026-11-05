@@ -1,6 +1,6 @@
 /**
  * Creates the WhatsApp templates the app sends and Meta must approve: the three
- * for tickets, the first question with its new options, the manager's
+ * for tickets, the COE notice for a query that needed no ticket, the first question with its new options, the manager's
  * approval request, and the decision told to the employee.
  *
  *   WA_ACCESS_TOKEN=... npx tsx scripts/create-ticket-templates.ts <WABA id>
@@ -13,13 +13,34 @@
  * template sends it back for review.
  */
 import { TICKET_TEMPLATES } from '@/lib/ticket-whatsapp';
-import { FIRST_STEP_TEMPLATE, OPTIONS } from '@/lib/conversation/flow';
+import {
+  FINAL_NOTICE_TEMPLATE,
+  FINAL_NOTICE_TEMPLATE_BODY,
+  FIRST_STEP_TEMPLATE,
+  FOLLOW_UP_TEMPLATE,
+  FOLLOW_UP_TEMPLATE_BODY,
+  OPTIONS,
+} from '@/lib/conversation/flow';
 import { MANAGER_TEMPLATE, MANAGER_TEMPLATE_BODY, NOTED_TEMPLATE, NOTED_TEMPLATE_BODY, OUTCOME_TEMPLATE } from '@/lib/approvals';
 
 const RESOLVED = { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Resolved' }] };
 
 // The first question with its new options, and the manager's approval request.
 const ATTENDANCE_TEMPLATES = [
+  {
+    // To a query type's COE team about a query that needed no ticket: for information, so no Resolved button.
+    name: TICKET_TEMPLATES.info,
+    body:
+      'For your information: {{1}}, {{2}}, contacted the Attendance assistant.\n\nQuery type: {{3}}\n\n{{4}}\n\n' +
+      'This is not a ticket and needs no action.',
+    example: [
+      'Aryan Jain (DI-1001), phone +91 98765 43210',
+      'Demo Industries',
+      'Payslip',
+      'Aryan Jain asked why his September payslip shows a lower PF deduction. He was told the PF base changed with the new salary structure from September.',
+    ],
+    buttons: [],
+  },
   {
     name: FIRST_STEP_TEMPLATE,
     body: 'Hi {{1}}, our attendance record shows you are marked absent on {{2}}. Please confirm the reason by choosing one option below.',
@@ -46,6 +67,20 @@ const ATTENDANCE_TEMPLATES = [
     example: ['Aryan', 'leave', '08-Sep-2026', 'Deepak has approved it.'],
     buttons: [],
   },
+  {
+    // A follow-up, for an employee whose 24-hour window has closed.
+    name: FOLLOW_UP_TEMPLATE,
+    body: FOLLOW_UP_TEMPLATE_BODY,
+    example: ['Aryan', 'Reminder: have you submitted regularization for 08-Sep-2026 and got it approved by your manager?'],
+    buttons: ['Done', 'Not done', 'Need help'],
+  },
+  {
+    // The last follow-up: the loss of pay warning, and who the case has gone to.
+    name: FINAL_NOTICE_TEMPLATE,
+    body: FINAL_NOTICE_TEMPLATE_BODY,
+    example: ['Aryan', 'leave', '08-Sep-2026', 'your manager, Deepak'],
+    buttons: [],
+  },
 ];
 
 const TEMPLATES = [
@@ -56,7 +91,7 @@ const TEMPLATES = [
       'Reply to this message once it is resolved.',
     example: [
       'TKT-00012',
-      'Aryan Jain (DI-1001)',
+      'Aryan Jain (DI-1001), phone +91 98765 43210',
       'Demo Industries',
       'Resignation/Notice Period/FnF/No Dues/Employement Certificate',
       'High',
@@ -68,7 +103,7 @@ const TEMPLATES = [
     body:
       'You have not resolved ticket {{1}} for {{2}}, {{3}}, yet. If it is not resolved within the next 12 hours, it will be escalated to the LT person {{4}}.\n\n' +
       'Reply to the ticket message once it is resolved.',
-    example: ['TKT-00012', 'Aryan Jain (DI-1001)', 'Demo Industries', 'Jeet Vishnubhai Pawar'],
+    example: ['TKT-00012', 'Aryan Jain (DI-1001), phone +91 98765 43210', 'Demo Industries', 'Jeet Vishnubhai Pawar'],
   },
   {
     name: TICKET_TEMPLATES.escalated,
@@ -77,7 +112,7 @@ const TEMPLATES = [
       'Reply to this message once it is resolved.',
     example: [
       'TKT-00012',
-      'Aryan Jain (DI-1001)',
+      'Aryan Jain (DI-1001), phone +91 98765 43210',
       'Demo Industries',
       'Honey Pawar',
       'Resignation/Notice Period/FnF/No Dues/Employement Certificate',

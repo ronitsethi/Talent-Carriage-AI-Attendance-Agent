@@ -11,7 +11,7 @@ import { halfOfDay, MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings'
 import { timed } from '@/lib/timing';
 import { agentGender } from '@/lib/voice/voices';
 import { recordFollowUpChoice } from './follow-up-state';
-import { dateLabel, formatDate, OPTIONS } from './flow';
+import { dateLabel, DAYS_TO_ACT, formatDate, OPTIONS } from './flow';
 import { instructionFor, OUTCOME_CODES, OUTCOMES, outcomeGuide, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
 import { recordAnswer, UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from './engine';
 import { spokenDate } from './voice-script';
@@ -235,9 +235,9 @@ APPLYING (outcomes marked "applied for", and an absence where they choose leave)
   their answer in application: "not_applied", "applied", or "apply_for_me" (the last only when APPLY QUESTION offers it).
   For "apply_for_me" with leave, also ask which leave type from the list given, and put it in leave_type.
 - The outcome is only written down once application is known: keep outcome set, and application "not_said", until then.
-- Then tell them, in your own words: not_applied - what to do (the line above, keeping its facts) and that their manager
-  has been told so they can approve it once it is applied; applied - that you have asked their manager to approve it;
-  apply_for_me - that you have sent it to their manager, and will apply it once they approve.
+- Then tell them, in your own words: not_applied - what to do (the line above, keeping its facts) and that you will check
+  back with them; applied - that you have asked their manager to approve it; apply_for_me - that you have sent it to their
+  manager, and will apply it once they approve.
 - For on_leave outcomes, their answer to "have you applied it yet" is the outcome itself: leave_not_applied or
   leave_pending_approval; set application to match ("not_applied", "applied", or "apply_for_me" for leave_not_applied).
 
@@ -460,8 +460,8 @@ function describe(ctx: TalkContext, s: Situation): string {
   // Spoken dates on a call, the dates as WhatsApp messages write them in a chat.
   const dateOf = (row: CaseRow) => (chat ? dateLabel(row.attDate, row.meaning as Meaning) : spokenFor(row));
   const deadline = chat
-    ? formatDate(addDays(now, ctx.settings.followUpAfterDays))
-    : spokenDate(addDays(now, ctx.settings.followUpAfterDays));
+    ? formatDate(addDays(now, DAYS_TO_ACT))
+    : spokenDate(addDays(now, DAYS_TO_ACT));
   const lines: string[] = [];
 
   const preferred = voiceLanguage(s.employee.language ?? ctx.settings.defaultLanguage);
@@ -815,7 +815,7 @@ async function apply(
       await recordOutcome(ctx, caseRow, args.employee, code, choice, verdict.note, manager);
       if (needsApplication(code, choice) && stage) {
         const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseRow.id) })) ?? caseRow;
-        const facts = { date: spokenFor(caseRow), deadline: spokenDate(addDays(today(ctx.settings.timezone), ctx.settings.followUpAfterDays)), manager };
+        const facts = { date: spokenFor(caseRow), deadline: spokenDate(addDays(today(ctx.settings.timezone), DAYS_TO_ACT)), manager };
         await submitApplication(ctx as ApplyContext, fresh, args.employee, {
           code,
           choice,
@@ -880,10 +880,10 @@ export async function recordOutcome(
       context: { ...(caseRow.context ?? {}), outcome: { code, leaveChoice: choice, note, at: at.toISOString(), via } },
       // Nothing to chase: Loss of Pay is settled, and a handover is HR's now.
       ...(lossOfPay
-        ? { status: 'resolved' as const, resolvedAt: at, closeReason: 'Employee chose Loss of Pay', followUpDueAt: null, callDueAt: null }
+        ? { status: 'resolved' as const, resolvedAt: at, closeReason: 'Employee chose Loss of Pay', followUpDueAt: null }
         : {}),
       ...(outcome.handover
-        ? { status: 'needs_hr' as const, needsHrReason: outcome.handover, followUpDueAt: null, callDueAt: null }
+        ? { status: 'needs_hr' as const, needsHrReason: outcome.handover, followUpDueAt: null }
         : {}),
       updatedAt: at,
     })
@@ -891,7 +891,7 @@ export async function recordOutcome(
 
   // A chat is already in the message history; only a call needs writing into it.
   if (via === 'whatsapp') return;
-  const deadline = spokenDate(addDays(today(ctx.settings.timezone), ctx.settings.followUpAfterDays));
+  const deadline = spokenDate(addDays(today(ctx.settings.timezone), DAYS_TO_ACT));
   const told = instructionFor(code, choice, { date: spokenFor(caseRow), deadline, manager });
   await mirror(ctx.tx, ctx.tenantId, caseRow, employee, `Said on the call: ${label}${note ? ` (${note})` : ''}`, told);
 }

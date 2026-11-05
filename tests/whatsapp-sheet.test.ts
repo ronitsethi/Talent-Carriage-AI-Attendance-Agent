@@ -115,7 +115,7 @@ describe('the first question', () => {
 });
 
 describe('asking where it stands, with attendance from a file', () => {
-  it('after a reason and "Apply leave": not applied yet is told to apply, and the manager is asked', async () => {
+  it('after a reason and "Apply leave": not applied yet is told to apply, and the manager is not asked yet', async () => {
     await twoAbsences();
     const first = await caseOn('2026-08-17');
     await tap(selectionId(first!.id, 1), sheetSelectionId(first!.id, 'unwell'));
@@ -129,21 +129,14 @@ describe('asking where it stands, with attendance from a file', () => {
     scenario.channel.clear();
     await tap(sheetSelectionId(first!.id, 'app_not'));
     expect(sent()[0]!.body).toMatch(
-      /^Please apply Sick Leave, or any leave you have available, for 17-Aug-2026 in the HRMS by \d{2}-\w{3}-\d{4}\. I have also let Deepak know, so they can approve it once you have\.$/,
+      /^Please apply Sick Leave, or any leave you have available, for 17-Aug-2026 in the HRMS by \d{2}-\w{3}-\d{4}\.$/,
     );
     expect(sent()[1]!.body, 'then the next date').toContain('18-Aug-2026');
-
-    const [request] = toManager();
-    expect(request).toMatchObject({
-      kind: 'template',
-      templateName: 'manager_approval_request',
-      variables: ['Ankit Panwar (E-1)', 'has been asked to apply leave', '17-Aug-2026', 'Absent - unwell'],
-    });
-    const approval = await pendingApproval();
-    expect(request!.buttonPayloads).toEqual([approvalSelectionId(approval!.id, 'approve'), approvalSelectionId(approval!.id, 'reject')]);
+    expect(toManager()).toEqual([]);
 
     const settled = await caseOn('2026-08-17');
-    expect(settled!.status).toBe('awaiting_approval');
+    expect(settled!.status).toBe('answered');
+    expect(settled!.followUpDueAt).not.toBeNull();
     expect((settled!.context as { outcome?: { code: string } }).outcome?.code).toBe('absent_unwell');
   });
 
@@ -177,9 +170,9 @@ describe('asking where it stands, with attendance from a file', () => {
     scenario.channel.clear();
     await tap(sheetSelectionId(first!.id, 'app_not'));
     expect(sent()[0]!.body).toBe(
-      'Please raise a late-coming regularisation for 17-Aug-2026 in the HRMS. I have also let Deepak know, so they can approve it once you have.',
+      'Please raise a late-coming regularisation for 17-Aug-2026 in the HRMS.',
     );
-    expect(toManager()[0]!.variables![1]).toBe('has been asked to apply late-coming regularisation');
+    expect(toManager()).toEqual([]);
   });
 
   it('weekly off goes to HR, and comp off asks where it stands', async () => {
@@ -203,12 +196,11 @@ describe('asking where it stands, with attendance from a file', () => {
     await inbound(typeText(scenario.mobile, 'abhi nahi kiya'));
 
     const settled = await caseOn('2026-08-17');
-    expect(settled!.status).toBe('awaiting_approval');
+    expect(settled!.status).toBe('answered');
     expect((settled!.context as { outcome?: { code: string; note: string } }).outcome).toMatchObject({
       code: 'absent_other',
       note: 'Had to go to my village for a wedding',
     });
-    expect(toManager()[0]!.variables![3]).toBe('Had to go to my village for a wedding');
   });
 });
 
@@ -375,6 +367,6 @@ describe('with an HRMS connected', () => {
     scenario.channel.clear();
     await tap(sheetSelectionId(first!.id, 'app_self'));
     expect(sent()[0]!.body).toContain('Please raise a regularisation for your missed in-punch on 17-Aug-2026 in the HRMS');
-    expect(toManager()[0]!.variables![1]).toBe('has been asked to apply regularisation for the missed in-punch');
+    expect(toManager()).toEqual([]);
   });
 });

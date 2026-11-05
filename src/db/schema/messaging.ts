@@ -108,6 +108,12 @@ export const queries = pgTable(
     ticketNo: integer('ticket_no'),
     /** When its assignee was warned it escalates to the LT person in 12 hours. */
     remindedAt: timestamp('reminded_at', { withTimezone: true }),
+    /**
+     * A query that needed no ticket but was still about something real: when it
+     * was shared with its query type's COE team, for their information. The type
+     * and description above are written then too, with no ticket status.
+     */
+    informedAt: timestamp('informed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

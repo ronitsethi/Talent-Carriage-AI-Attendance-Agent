@@ -23,7 +23,6 @@ export async function recordFollowUpChoice(ctx: EngineContext, caseRow: CaseRow,
         followUpReply: 'done',
         resolvedAt: at,
         closeReason: 'Employee confirmed it is done; pending HRMS verification',
-        callDueAt: null,
         updatedAt: at,
       })
       .where(eq(cases.id, caseRow.id));
@@ -32,7 +31,6 @@ export async function recordFollowUpChoice(ctx: EngineContext, caseRow: CaseRow,
       .update(cases)
       .set({
         followUpReply: 'not_done',
-        callDueAt: new Date(at.getTime() + 86_400_000),
         updatedAt: at,
       })
       .where(eq(cases.id, caseRow.id));

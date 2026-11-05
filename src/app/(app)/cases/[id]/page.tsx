@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
-import { caseDetail } from '@/lib/queries';
+import { caseDetail, tenantSummary } from '@/lib/queries';
+import { followsUploads } from '@/lib/upload-send';
 import { actionLabel, caseDateLabel, caseStatus, followUpLabel, formatTime, meaningLabel, replyLabel, statusDisplay } from '@/lib/display';
 import { OPTIONS, OPTION_NUMBERS } from '@/lib/conversation/flow';
 import { env } from '@/lib/env';
@@ -30,7 +31,7 @@ export default async function CaseDetailPage({
 
   const { id } = await params;
   const { blocked } = await searchParams;
-  const detail = await caseDetail(tenantId, id);
+  const [detail, { settings }] = await Promise.all([caseDetail(tenantId, id), tenantSummary(tenantId)]);
   if (!detail) notFound();
 
   const { caseRow, employee, transcript, calls, actions, approvals, manager, otherPending, lines, company, costs } = detail;
@@ -42,7 +43,7 @@ export default async function CaseDetailPage({
   // A case is read one channel at a time, each the way it happened: the chat as
   // the chat it was, and every call as its own panel - its recording over its
   // transcript. The case's own channel goes first, the other below it.
-  const followUp = followUpLabel(caseRow);
+  const followUp = followUpLabel(caseRow, !!settings && followsUploads(employee, settings));
   const chat: Entry[] = [
     ...transcript
       .filter((message) => message.body?.trim() || message.buttons?.length)
@@ -65,7 +66,7 @@ export default async function CaseDetailPage({
             kind: 'mark',
             key: 'follow-up',
             at: new Date(caseRow.followUpSentAt.getTime() - 1).toISOString(),
-            label: `Follow-up · ${formatTime(caseRow.followUpSentAt)}`,
+            label: `Follow-up ${caseRow.followUpCount} · ${formatTime(caseRow.followUpSentAt)}`,
           } as Entry,
         ]
       : []),
@@ -165,6 +166,7 @@ export default async function CaseDetailPage({
           <h1>{employee.fullName}</h1>
           <StatusPill status={caseStatus(caseRow)} />
         </div>
+        {caseRow.status === 'resolved' && caseRow.closedByRevision ? <div className="sub">Action taken</div> : null}
         <p style={{ marginTop: 6 }}>
           {label} · {meaningLabel(caseRow.meaning)}
         </p>
@@ -463,9 +465,9 @@ export default async function CaseDetailPage({
                   </>
                 ) : null}
 
-                {caseRow.followUpSentAt && !caseRow.followUpReply ? (
+                {caseRow.status === 'answered' && caseRow.followUpSentAt && !caseRow.followUpReply ? (
                   <>
-                    <div className="sim-sub">Answer the day-2 reminder</div>
+                    <div className="sim-sub">Answer the follow-up</div>
                     <div className="sim-grid three">
                       {(['done', 'not_done', 'help'] as const).map((choice) => (
                         <form key={choice} action={simulateReply}>

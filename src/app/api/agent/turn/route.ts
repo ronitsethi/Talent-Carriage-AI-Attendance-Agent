@@ -387,6 +387,12 @@ async function turn(request: Request) {
     // the moment they pick up.
     warmModel();
     const opening = await withCallContext(callId, async (ctx) => {
+      // The final notice is fixed wording with nothing to discuss, so the model has no part in it.
+      const placed = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
+      if (placed?.purpose === 'final_notice') {
+        const notice = await openingTurn(ctx, callId);
+        return { say: notice.speak, language: ctx.settings.defaultLanguage, nextCaseId: null, done: true };
+      }
       const args = await talkArgs(ctx, callId, undefined, null);
       if (!args) return null;
       await ctx.tx.update(calls).set({ status: 'in_progress' }).where(eq(calls.id, callId));

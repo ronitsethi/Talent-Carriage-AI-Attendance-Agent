@@ -7,12 +7,14 @@ import {
   employeeHistory,
   imports,
   mappingProfiles,
+  tenantSettings,
   unmappedCodes,
   type ImportReport,
 } from '@/db/schema';
 import { applyProfile, type ApplyResult, type CodeLookup, type MappedEmployee, type MappedRecord } from './apply';
 import { isNonWorking, type Meaning } from './meanings';
 import { pickTable, readWorkbook, detectRunDate, type SourceWorkbook } from './source';
+import { today as localToday } from '@/lib/dates';
 
 export type ImportOptions = {
   source: 'upload' | 'sftp' | 'blob' | 'api_pull' | 'db_read' | 'push' | 'seed';
@@ -21,6 +23,8 @@ export type ImportOptions = {
   createdBy?: string;
   /** Read and report, but change nothing. Used for onboarding sign-off. */
   dryRun?: boolean;
+  /** The customer's today (YYYY-MM-DD), for tests; otherwise worked out from their timezone. */
+  today?: string;
 };
 
 export type ImportResult = {
@@ -80,6 +84,13 @@ export async function importAttendanceFile(
   const { profile, codes } = await loadActiveProfile(tx, tenantId, opts.profileId);
   const mapped = mapWorkbook(wb, profile.fieldMap, codes);
 
+  // Today is not over, so its attendance is not final: a file that runs up to
+  // today is taken, but only up to yesterday. Today's column - and anything
+  // later a register leaves blank - is never written.
+  const settings = await tx.query.tenantSettings.findFirst({ where: eq(tenantSettings.tenantId, tenantId), columns: { timezone: true } });
+  const cutoff = opts.today ?? localToday(settings?.timezone ?? 'Asia/Kolkata');
+  const heldBack = holdBackFrom(mapped, cutoff);
+
   const dates = mapped.records.flatMap((r) => r.days.map((d) => d.date)).sort();
   const dateFrom = dates[0];
   const dateTo = dates[dates.length - 1];
@@ -91,6 +102,7 @@ export async function importAttendanceFile(
     employeesUpdated: 0,
     employeesRestored: 0,
     daysImported: 0,
+    ...(heldBack ? { daysHeldBack: heldBack } : {}),
     rejected: mapped.rejected,
     unmappedCodes: mapped.unmapped,
     meaningCounts: mapped.meaningCounts,
@@ -140,6 +152,26 @@ export async function importAttendanceFile(
     // outside this transaction.
     throw error;
   }
+}
+
+/**
+ * Drops every day on or after `cutoff` from the mapped file, in place, and takes
+ * them out of the meaning counts too. Returns how many were dropped.
+ */
+export function holdBackFrom(mapped: ApplyResult, cutoff: string): number {
+  let dropped = 0;
+  for (const record of mapped.records) {
+    const kept = record.days.filter((day) => day.date < cutoff);
+    for (const day of record.days) {
+      if (day.date < cutoff) continue;
+      dropped++;
+      const left = (mapped.meaningCounts[day.meaning] ?? 0) - 1;
+      if (left > 0) mapped.meaningCounts[day.meaning] = left;
+      else delete mapped.meaningCounts[day.meaning];
+    }
+    record.days = kept;
+  }
+  return dropped;
 }
 
 async function upsertEmployee(tx: Db, tenantId: string, emp: MappedEmployee, importId: string) {

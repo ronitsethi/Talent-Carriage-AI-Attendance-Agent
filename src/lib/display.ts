@@ -25,14 +25,20 @@ export const STATUS_DISPLAY: Record<string, { label: string; tone: Tone }> = {
   follow_up_not_done: { label: 'Follow-up · not done yet', tone: 'pending' },
 };
 
-type FollowUpFields = { status: string; followUpDueAt: Date | null; followUpSentAt: Date | null; followUpReply: string | null };
+type FollowUpFields = {
+  status: string;
+  followUpDueAt: Date | null;
+  followUpSentAt: Date | null;
+  followUpCount: number;
+  followUpReply: string | null;
+};
 
 /**
  * The status a case shows: its own until the follow-up goes out, and then the
- * follow-up's - unless the case has since been settled one way or another.
+ * follow-up's - unless the case has since been settled, or gone to the manager.
  */
 export function caseStatus(row: FollowUpFields): string {
-  if (!row.followUpSentAt || ['resolved', 'needs_hr', 'failed', 'cancelled'].includes(row.status)) return row.status;
+  if (!row.followUpSentAt || ['resolved', 'needs_hr', 'failed', 'cancelled', 'awaiting_approval'].includes(row.status)) return row.status;
   if (!row.followUpReply) return 'follow_up_awaiting';
   if (row.followUpReply === 'not_done') return 'follow_up_not_done';
   return row.status;
@@ -57,12 +63,17 @@ export function feedbackLabel(row: {
 
 const FOLLOW_UP_REPLIES: Record<string, string> = { done: 'Done', not_done: 'Not done yet', help: 'Asked for help' };
 
-/** When the follow-up went, or is due, and what they said to it. Null if none is planned. */
-export function followUpLabel(row: FollowUpFields): { when: string; note: string } | null {
+/**
+ * When the follow-up went, or is due, and what they said to it. Null if none is
+ * planned. `onUpload` is for someone whose next follow-up goes with the next
+ * upload, whatever date the case holds.
+ */
+export function followUpLabel(row: FollowUpFields, onUpload = false): { when: string; note: string } | null {
   if (row.followUpSentAt) {
-    return { when: formatTime(row.followUpSentAt), note: row.followUpReply ? FOLLOW_UP_REPLIES[row.followUpReply] ?? row.followUpReply : 'Awaiting reply' };
+    const reply = row.followUpReply ? FOLLOW_UP_REPLIES[row.followUpReply] ?? row.followUpReply : 'Awaiting reply';
+    return { when: formatTime(row.followUpSentAt), note: `Follow-up ${row.followUpCount} · ${reply}` };
   }
-  if (row.followUpDueAt) return { when: `Due ${formatTime(row.followUpDueAt)}`, note: 'Not sent yet' };
+  if (row.followUpDueAt) return { when: onUpload ? 'With the next upload' : `Due ${formatTime(row.followUpDueAt)}`, note: 'Not sent yet' };
   return null;
 }
 

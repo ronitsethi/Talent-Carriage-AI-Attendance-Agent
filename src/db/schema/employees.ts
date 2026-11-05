@@ -55,8 +55,8 @@ export const employees = pgTable(
     /** Channel for the day-2 follow-up; falls back to preferredChannel. */
     followUpChannel: text('follow_up_channel'),
     /**
-     * 'manual'    - this person is only contacted when HR runs a check
-     * 'automatic' - the daily run contacts them on its own
+     * 'manual'    - this person is only contacted when HR does it by hand
+     * 'automatic' - contacted when HR sends after an attendance upload
      * null        - follow the customer's default
      */
     operatingMode: text('operating_mode'),

@@ -6,6 +6,7 @@ import { agentCanApply, leaveTypesFor, needsApplication, submitApplication, type
 import type { CaseRow, EmployeeRow } from '@/lib/conversation/engine';
 import { instructionFor, OUTCOMES, type ApplicationStage, type LeaveChoice, type OutcomeCode } from '@/lib/conversation/outcomes';
 import { MENUS, setState, sheetState, STEPS, type Menu, type SheetState, type Step, type StepName } from '@/lib/conversation/sheet';
+import { DAYS_TO_ACT } from '@/lib/conversation/flow';
 import { addDays, recordOutcome } from '@/lib/conversation/talk';
 import { datePrompt, spokenBacklogSummary, spokenClosing, spokenDate, spokenHandover, spokenNotUnderstood } from '@/lib/conversation/voice-script';
 import { appendTurn, finishCall, pending, spokenFor, type CallRow, type CallTurn, type VoiceContext } from './session';
@@ -36,7 +37,7 @@ function keys(steps: StepName[]): string {
 
 const spokenFacts = async (ctx: VoiceContext, caseRow: CaseRow, employee: EmployeeRow) => ({
   date: spokenFor(caseRow),
-  deadline: spokenDate(addDays(today(ctx.settings.timezone), ctx.settings.followUpAfterDays)),
+  deadline: spokenDate(addDays(today(ctx.settings.timezone), DAYS_TO_ACT)),
   manager: await managerFirstName(ctx.tx, ctx.tenantId, employee),
 });
 

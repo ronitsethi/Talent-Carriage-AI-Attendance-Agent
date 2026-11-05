@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
-import { CASE_FILTERS, DEFAULT_CASE_FILTER, caseCounts, listCases, tenantSummary } from '@/lib/queries';
+import { CASE_FILTERS, DEFAULT_CASE_FILTER, caseCounts, followUpLevelOf, listCases, tenantSummary } from '@/lib/queries';
+import { followsUploads } from '@/lib/upload-send';
 import { actionLabel, caseDateLabel, caseStatus, followUpLabel, formatTime, replyLabel } from '@/lib/display';
 import { StatusPill } from '@/components/status-pill';
 import { Notice } from '@/components/notice';
@@ -22,12 +23,25 @@ export default async function CasesPage({
 
   const { date, from, to, status, q, sent, blocked } = await searchParams;
   // One unknown value in the URL should not empty the table.
-  const current = CASE_FILTERS.some((f) => f.key === status) ? status! : DEFAULT_CASE_FILTER;
+  const current = CASE_FILTERS.some((f) => f.key === status) || followUpLevelOf(status) ? status! : DEFAULT_CASE_FILTER;
   const [rows, counts, { settings }] = await Promise.all([
     listCases(tenantId, { date, from, to, status: current, search: q }),
     caseCounts(tenantId, { date, from, to, search: q }),
     tenantSummary(tenantId),
   ]);
+
+  // Follow-up is one tab per level. A customer who lowered the number keeps a tab
+  // for any case still at a higher level, or that case could not be reached.
+  const maxLevel = Math.max(settings?.maxFollowUps ?? 2, ...Object.keys(counts.followUpLevels).map(Number));
+  const tabs = CASE_FILTERS.flatMap((f): { key: string; label: string; total: number }[] =>
+    f.key === 'follow_up'
+      ? Array.from({ length: maxLevel }, (_, index) => ({
+          key: `follow_up_${index + 1}`,
+          label: `Follow-up ${index + 1}`,
+          total: counts.followUpLevels[index + 1] ?? 0,
+        }))
+      : [{ key: f.key, label: f.label, total: counts[f.key] }],
+  );
 
   const query = (next: Record<string, string | undefined>) => {
     const params = new URLSearchParams();
@@ -79,14 +93,14 @@ export default async function CasesPage({
                   leaves the tabs wrapping mid-group. */}
               <div style={{ flexBasis: '100%' }}>
                 <nav className="switch-group wrap" aria-label="Status">
-                  {CASE_FILTERS.map((f) => (
+                  {tabs.map((f) => (
                     <Link
                       key={f.key}
                       href={query({ status: f.key })}
                       className={`switch-option ${current === f.key ? 'on' : ''}`}
                       aria-current={current === f.key ? 'page' : undefined}
                     >
-                      {f.label} <span className="count">{counts[f.key]}</span>
+                      {f.label} <span className="count">{f.total}</span>
                     </Link>
                   ))}
                 </nav>
@@ -128,6 +142,7 @@ export default async function CasesPage({
                     <th>Absent date</th>
                     <th>Asked</th>
                     <th>Follow-up</th>
+                    <th>Level</th>
                     <th>Last contact</th>
                     <th>Status</th>
                     <th>Reply → action</th>
@@ -175,7 +190,7 @@ export default async function CasesPage({
                           <td className="nowrap">{row.askedAt ? formatTime(row.askedAt) : <span className="sub">Not yet</span>}</td>
                           <td className="nowrap">
                             {(() => {
-                              const followUp = followUpLabel(row);
+                              const followUp = followUpLabel(row, !!settings && followsUploads(row, settings));
                               return followUp ? (
                                 <>
                                   {followUp.when}
@@ -187,10 +202,18 @@ export default async function CasesPage({
                             })()}
                           </td>
                           <td className="nowrap">
+                            {row.inFollowUp ? (
+                              `${row.followUpLevel} of ${Math.max(settings?.maxFollowUps ?? 2, row.followUpLevel)}`
+                            ) : (
+                              <span className="sub">—</span>
+                            )}
+                          </td>
+                          <td className="nowrap">
                             {row.lastContactAt ? formatTime(row.lastContactAt) : <span className="sub">—</span>}
                           </td>
                           <td style={{ maxWidth: 240 }}>
                             <StatusPill status={caseStatus(row)} />
+                            {row.status === 'resolved' && row.closedByRevision ? <div className="sub">Action taken</div> : null}
                             {row.needsHrReason ? <div className="sub">{row.needsHrReason}</div> : null}
                           </td>
                           <td>
@@ -281,7 +304,7 @@ export default async function CasesPage({
                     })
                   ) : (
                     <tr>
-                      <td className="empty" colSpan={11}>
+                      <td className="empty" colSpan={12}>
                         No cases match that filter.
                       </td>
                     </tr>

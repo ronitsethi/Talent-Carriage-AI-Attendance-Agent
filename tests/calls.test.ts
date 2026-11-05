@@ -156,8 +156,9 @@ describe('the call that is finally answered', () => {
       expect(rows.every((r) => r.answeredAt !== null)).toBe(true);
       expect(rows.filter((r) => r.replyOption === 1)).toHaveLength(1);
       expect(rows.filter((r) => r.replyOption === 4)).toHaveLength(4);
-      // No manager in this file: the leave goes to HR to approve; a weekly off is HR's anyway.
-      expect(rows.every((r) => r.status === 'needs_hr')).toBe(true);
+      // The leave is not applied yet, so it waits on the employee; a weekly off is HR's.
+      expect(rows.filter((r) => r.status === 'answered').map((r) => r.attDate)).toEqual(['2026-09-25']);
+      expect(rows.filter((r) => r.status === 'needs_hr')).toHaveLength(4);
     });
   });
 
@@ -245,12 +246,12 @@ describe('channel choice', () => {
         { date: '2026-09-21', meaning: 'absent_full', raw: 'A' },
       ]);
 
-      const scheduled = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
+      const scheduled = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'import' });
       expect(scheduled.messagesSent).toBe(0);
       expect(scheduled.skipped.manual_employee).toBe(1);
 
       await tx.update(employees).set({ operatingMode: 'automatic' }).where(eq(employees.id, scenario.employeeId));
-      const second = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
+      const second = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'import' });
       expect(second.messagesSent).toBe(1);
     });
   });
@@ -458,7 +459,7 @@ describe('automatic mode, customer setting versus row switch', () => {
     await absentOnce({ operatingMode: 'automatic' }, { operatingMode: null });
 
     await withTenant(scenario.tenantId, async (tx) => {
-      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
+      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'import' });
       expect(result.messagesSent).toBe(1);
     });
   });
@@ -467,7 +468,7 @@ describe('automatic mode, customer setting versus row switch', () => {
     await absentOnce({ operatingMode: 'automatic' }, { operatingMode: 'manual' });
 
     await withTenant(scenario.tenantId, async (tx) => {
-      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
+      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'import' });
       expect(result.messagesSent, 'the row wins over the customer default').toBe(0);
       expect(result.skipped.manual_employee).toBe(1);
     });
@@ -477,7 +478,7 @@ describe('automatic mode, customer setting versus row switch', () => {
     await absentOnce({ operatingMode: 'manual' }, { operatingMode: 'automatic' });
 
     await withTenant(scenario.tenantId, async (tx) => {
-      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'schedule' });
+      const result = await runDailyCheck(scenario.context(tx), { date: '2026-09-21', trigger: 'import' });
       expect(result.messagesSent).toBe(1);
     });
   });

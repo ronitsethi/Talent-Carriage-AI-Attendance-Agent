@@ -1,4 +1,4 @@
-import type { EmployeeRow } from '@/lib/conversation/engine';
+import type { EmployeeRow, TenantSettings } from '@/lib/conversation/engine';
 
 /**
  * Which channel an employee is contacted on.
@@ -10,4 +10,9 @@ import type { EmployeeRow } from '@/lib/conversation/engine';
 export function channelFor(employee: EmployeeRow, fallback: string): 'whatsapp' | 'voice' {
   const choice = employee.preferredChannel || fallback;
   return choice === 'voice' ? 'voice' : 'whatsapp';
+}
+
+/** A follow-up goes the way its level is set for the customer, else the employee's way. */
+export function followUpChannel(employee: EmployeeRow, settings: TenantSettings, level: number) {
+  return settings.followUpContacts[level - 1]?.channel ?? channelFor(employee, settings.defaultChannel);
 }

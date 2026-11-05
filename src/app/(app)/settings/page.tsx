@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession, canManageSettings } from '@/lib/auth';
 import { tenantSummary } from '@/lib/queries';
 import { updateSettings } from '@/app/actions';
+import { FollowUpContacts } from '@/components/follow-up-contacts';
 import { AGENT_VOICES, agentVoice } from '@/lib/voice/voices';
 import { capabilities, env } from '@/lib/env';
 
@@ -20,8 +21,8 @@ const SOURCES = [
 ] as const;
 
 const MODES = [
-  { value: 'manual', title: 'Manual', copy: 'HR starts every check and reminder' },
-  { value: 'automatic', title: 'Automatic', copy: 'The agent runs the daily check itself' },
+  { value: 'manual', title: 'Manual', copy: 'HR contacts people from the dashboard' },
+  { value: 'automatic', title: 'Automatic', copy: 'Each upload offers to send what is due' },
 ] as const;
 
 export default async function SettingsPage() {
@@ -80,23 +81,9 @@ export default async function SettingsPage() {
             </div>
 
             <div className="form-section">
-              <h2>Daily check</h2>
-              <div className="row">
-                <div className="field" style={{ width: 190 }}>
-                  <label htmlFor="checkTime">Check time ({settings.timezone})</label>
-                  <input className="input" type="time" id="checkTime" name="checkTime" defaultValue={settings.checkTime.slice(0, 5)} />
-                </div>
-                <div className="field" style={{ width: 140 }}>
-                  <label htmlFor="quietHoursStart">Quiet from</label>
-                  <input className="input" type="time" id="quietHoursStart" name="quietHoursStart" defaultValue={settings.quietHoursStart.slice(0, 5)} />
-                </div>
-                <div className="field" style={{ width: 140 }}>
-                  <label htmlFor="quietHoursEnd">Quiet until</label>
-                  <input className="input" type="time" id="quietHoursEnd" name="quietHoursEnd" defaultValue={settings.quietHoursEnd.slice(0, 5)} />
-                </div>
-              </div>
+              <h2>Automatic sending</h2>
               {/* Still the operatingMode radio, drawn as two cards. */}
-              <fieldset style={{ marginTop: 16 }}>
+              <fieldset>
                 <legend className="label">How the agent runs</legend>
                 <div className="choice-cards">
                   {MODES.map((mode) => (
@@ -108,9 +95,23 @@ export default async function SettingsPage() {
                   ))}
                 </div>
               </fieldset>
+              <div className="field" style={{ width: 190, marginTop: 16 }}>
+                <label htmlFor="sendDelayMinutes">Start sending after (minutes)</label>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={1440}
+                  id="sendDelayMinutes"
+                  name="sendDelayMinutes"
+                  defaultValue={settings.sendDelayMinutes}
+                />
+              </div>
               <p className="field-help">
-                Manual is the default, so a newly configured customer can never message anyone by surprise. In automatic
-                mode the daily check runs at the time above, and due reminders go out on their own.
+                Works with CSV upload only. After each upload you choose whether to send what is due or just update the
+                attendance. Sending starts this long after you choose. Anyone who answered and whose absence the new file
+                still shows gets their follow-up with that upload, one a day. Employees set to Manual are left out. Nothing
+                goes out until a new file is uploaded.
               </p>
             </div>
 
@@ -177,14 +178,6 @@ export default async function SettingsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label htmlFor="followUpAfterDays">Reminder after (days)</label>
-                  <input className="input" type="number" min={1} id="followUpAfterDays" name="followUpAfterDays" defaultValue={settings.followUpAfterDays} />
-                </div>
-                <div className="field">
-                  <label htmlFor="callAfterDays">Call after (days)</label>
-                  <input className="input" type="number" min={1} id="callAfterDays" name="callAfterDays" defaultValue={settings.callAfterDays} />
-                </div>
-                <div className="field">
                   <label htmlFor="approvalTimeoutHours">Approval timeout (hours)</label>
                   <input className="input" type="number" min={1} id="approvalTimeoutHours" name="approvalTimeoutHours" defaultValue={settings.approvalTimeoutHours} />
                 </div>
@@ -199,6 +192,7 @@ export default async function SettingsPage() {
                   Send the &quot;N days still pending&quot; summary after each answer
                 </label>
               </div>
+              <FollowUpContacts levels={settings.maxFollowUps} saved={settings.followUpContacts} />
             </div>
 
             <div className="form-section">

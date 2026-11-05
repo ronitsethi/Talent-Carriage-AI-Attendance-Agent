@@ -212,6 +212,12 @@ export function spokenHandover(): string {
   return `I have passed this to your HR team, and someone will contact you directly. Goodbye.`;
 }
 
+/** The last follow-up, said once: nothing is asked, because the case has already moved on. */
+export function spokenFinalNotice(what: string, dates: string[], transferee: string): string {
+  const about = dates.length === 1 ? `your ${what} for ${dates[0]}` : `what you were asked to do for ${dates.join(', ')}`;
+  return `This is the final reminder about ${about}. It has still not been done, and not doing it will lead to loss of pay. This is now being transferred to ${transferee}. Goodbye.`;
+}
+
 /** Keypad digit to option, so a press and a spoken "two" mean the same thing. */
 export function optionFromDigits(digits: string | undefined): OptionNumber | null {
   const match = /^[1-4]$/.exec((digits ?? '').trim());

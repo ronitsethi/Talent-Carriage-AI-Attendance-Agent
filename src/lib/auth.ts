@@ -21,12 +21,19 @@ export type Session = {
   departmentScope: string[];
 };
 
+/** A customer that has been deactivated or deleted no longer lets its own people in. */
+async function tenantInUse(tenantId: string): Promise<boolean> {
+  const tenant = await withPlatformScope((tx) => tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId) }));
+  return !!tenant && tenant.status !== 'suspended';
+}
+
 export async function signIn(email: string, password: string): Promise<Session | null> {
   const user = await withPlatformScope((tx) =>
     tx.query.users.findFirst({ where: and(eq(users.email, email.toLowerCase().trim()), eq(users.isActive, true)) }),
   );
   if (!user?.passwordHash) return null;
   if (!(await bcrypt.compare(password, user.passwordHash))) return null;
+  if (user.tenantId && !(await tenantInUse(user.tenantId))) return null;
 
   const session: Session = {
     userId: user.id,
@@ -82,7 +89,7 @@ export async function getSession(): Promise<Session | null> {
  * `withTenant`, so the database enforces the boundary either way.
  */
 export async function getActiveTenantId(session: Session): Promise<string | null> {
-  if (session.tenantId) return session.tenantId;
+  if (session.tenantId) return (await tenantInUse(session.tenantId)) ? session.tenantId : null;
 
   const chosen = (await cookies()).get('tc_tenant')?.value;
   if (chosen && UUID.test(chosen)) {

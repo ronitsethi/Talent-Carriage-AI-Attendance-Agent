@@ -50,9 +50,10 @@ export const cases = pgTable(
 
     /** Escalation clocks, set only once a case has been answered. */
     followUpDueAt: timestamp('follow_up_due_at', { withTimezone: true }),
+    /** The latest follow-up: when it went, how many have gone, and the reply to it. */
     followUpSentAt: timestamp('follow_up_sent_at', { withTimezone: true }),
+    followUpCount: integer('follow_up_count').notNull().default(0),
     followUpReply: text('follow_up_reply'),
-    callDueAt: timestamp('call_due_at', { withTimezone: true }),
     callAttempts: integer('call_attempts').notNull().default(0),
 
     /** Set when the day was explained by later data rather than by a reply. */
@@ -75,7 +76,6 @@ export const cases = pgTable(
     index('cases_tenant_status_idx').on(t.tenantId, t.status, t.attDate),
     index('cases_employee_open_idx').on(t.employeeId, t.status, t.attDate),
     index('cases_follow_up_idx').on(t.tenantId, t.followUpDueAt),
-    index('cases_call_due_idx').on(t.tenantId, t.callDueAt),
   ],
 );
 

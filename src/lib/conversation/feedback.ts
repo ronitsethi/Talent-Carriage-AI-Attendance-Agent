@@ -58,14 +58,11 @@ export function parseFeedbackSelection(id: string | null | undefined) {
   return match ? { queryId: match[1]!, step: match[2] as 'resolved' | 'rating', choice: match[3]! } : null;
 }
 
-/**
- * Asks for feedback on a call that has ended. Quiet hours hold it back rather
- * than drop it: `retryAt` says when to try again.
- */
+/** Asks for feedback on a call that has ended. */
 export async function sendQueryFeedback(
   ctx: EngineContext,
   queryId: string,
-): Promise<{ sent: boolean; reason?: string; retryAt?: Date }> {
+): Promise<{ sent: boolean; reason?: string }> {
   const query = await ctx.tx.query.queries.findFirst({ where: eq(queries.id, queryId) });
   if (!query || query.channel !== 'voice') return { sent: false, reason: 'not a call' };
   if (query.feedbackSentAt) return { sent: false, reason: 'already asked' };
@@ -73,11 +70,7 @@ export async function sendQueryFeedback(
   if (!employee) return { sent: false, reason: 'no employee' };
 
   const block = canSend(ctx, employee);
-  if (block.blocked) {
-    return block.reason === 'Quiet hours'
-      ? { sent: false, reason: block.reason, retryAt: new Date(Date.now() + 15 * 60_000) }
-      : { sent: false, reason: block.reason };
-  }
+  if (block.blocked) return { sent: false, reason: block.reason };
 
   const name = employee.fullName.split(/\s+/)[0] ?? employee.fullName;
   const body = QUESTIONS.resolved.ask(name);

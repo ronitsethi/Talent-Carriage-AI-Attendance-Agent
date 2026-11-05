@@ -23,6 +23,7 @@ const ACTIVITY: Record<string, string> = {
   resolved: 'Resolved, thanks sent',
   which: 'Asked which ticket',
   moved: 'Told it is with somebody else, sent',
+  info: 'Shared for information',
   reply: 'Reply',
 };
 const STATUS: Record<string, string> = {
@@ -68,6 +69,8 @@ export default async function QueryDetailPage({
 
   const { query, employee, lines, chatMessages, company, costs } = detail;
   // The ticket's choices: every query type in the sheet, and everybody on a COE team.
+  // A query that needed no ticket but was shared with its COE team: who was told, and how it went.
+  const shared = !query.ticketStatus && query.informedAt ? await ticketActivity(query.id) : null;
   const ticket = query.ticketStatus
     ? await Promise.all([listQueryTypes(), assignablePeople(), ticketLtPerson(query.assignedTeamId, query.coeCode), ticketActivity(query.id)])
     : null;
@@ -181,6 +184,40 @@ export default async function QueryDetailPage({
                     </ol>
                   ) : (
                     <p className="hint">Nothing sent yet{query.assignedPersonId ? '' : ': it goes out once somebody is assigned'}.</p>
+                  )}
+                </div>
+              </>
+            ) : shared ? (
+              <>
+                <div className="ticket-head">
+                  <h3>Shared with COE</h3>
+                  <span className="chip info">For information · {formatTime(query.informedAt)}</span>
+                </div>
+                <p className="hint">No ticket was raised: nothing was left to do. It was sent to the {query.coeCode} team for their information.</p>
+                <dl className="kv">
+                  <dt>Query type</dt>
+                  <dd>{query.queryTypeName ?? '—'}</dd>
+                  <dt>Description</dt>
+                  <dd>{query.problemDescription ?? '—'}</dd>
+                </dl>
+                <div className="ticket-activity">
+                  <h4>On WhatsApp</h4>
+                  {shared.length ? (
+                    <ol>
+                      {shared.map((line) => (
+                        <li key={line.id} className={line.status === 'failed' ? 'failed' : undefined}>
+                          <span className="ticket-activity-what">
+                            {ACTIVITY[line.kind] ?? line.kind} {line.direction === 'inbound' ? 'from' : 'with'} {line.person ?? 'somebody since removed'}
+                          </span>
+                          <span className="ticket-activity-when">
+                            {formatTime(line.at)} · {STATUS[line.status] ?? line.status}
+                          </span>
+                          {line.error ? <span className="ticket-activity-error">{line.error}</span> : null}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="hint">Nothing sent yet.</p>
                   )}
                 </div>
               </>

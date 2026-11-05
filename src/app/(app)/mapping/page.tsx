@@ -2,30 +2,50 @@ import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession } from '@/lib/auth';
 import { mappingOverview } from '@/lib/queries';
 import { meaningLabel, formatTime } from '@/lib/display';
-import { analyseMappingFile, importAttendance, saveMapping, setCodeMeaning } from '@/app/actions';
+import { analyseMappingFile, importAttendance, saveMapping, sendAfterUpload, setCodeMeaning } from '@/app/actions';
 import { FileDrop } from '@/components/file-drop';
 import { Notice } from '@/components/notice';
 import { Toast } from '@/components/toast';
+import { UploadChoice } from '@/components/upload-choice';
+import { previewUploadSend } from '@/lib/upload-send';
 import { MappingForm, type CodeRow, type MappingDraft } from './editor';
 import { ALL_MEANINGS } from '@/lib/mapping/meanings';
 import type { Analysis } from '@/lib/mapping/analyse';
 import type { FieldMap } from '@/db/schema';
 import type { ImportReport } from '@/db/schema';
 
+/** What an upload settled by itself, in a sentence. Empty when it settled nothing. */
+function settledByUpload(resolved: number, removed: number): string {
+  const parts = [];
+  if (resolved) parts.push(`${resolved} ${resolved === 1 ? 'case' : 'cases'} resolved`);
+  if (removed) parts.push(`${removed} unopened ${removed === 1 ? 'case' : 'cases'} removed`);
+  return parts.length ? `${parts.join(', ')}.` : '';
+}
+
+const startsIn = (minutes: number) => (minutes ? `in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` : 'now');
+
 export default async function MappingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ problem?: string; saved?: string }>;
+  searchParams: Promise<{
+    problem?: string;
+    saved?: string;
+    uploaded?: string;
+    resolved?: string;
+    removed?: string;
+    scheduled?: string;
+    after?: string;
+  }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) redirect('/');
 
-  const [{ profile, draft, codes, unmapped, recentImports }, { problem, saved }] = await Promise.all([
-    mappingOverview(tenantId),
-    searchParams,
-  ]);
+  const [{ profile, draft, codes, unmapped, recentImports }, { problem, saved, uploaded, resolved, removed, scheduled, after }] =
+    await Promise.all([mappingOverview(tenantId), searchParams]);
+  const choice = uploaded ? await previewUploadSend(tenantId, uploaded) : null;
+  const settled = settledByUpload(Number(resolved ?? 0), Number(removed ?? 0));
   const latest = recentImports[0];
   const openUnmapped = unmapped.filter((u) => !u.resolvedAt);
   const analysis = (draft?.detected ?? null) as Analysis | null;
@@ -100,6 +120,33 @@ export default async function MappingPage({
         </Notice>
       ) : null}
       {saved ? <Toast clear={['saved']}>Mapping saved and in use.</Toast> : null}
+      {scheduled ? (
+        <Toast clear={['scheduled', 'after']}>
+          {Number(scheduled)
+            ? `${scheduled} ${Number(scheduled) === 1 ? 'person' : 'people'} will be contacted, starting ${startsIn(Number(after))}.`
+            : 'Nobody is due a call or message.'}
+        </Toast>
+      ) : null}
+      {uploaded && !choice?.people ? (
+        <Toast clear={['uploaded', 'resolved', 'removed']}>Attendance updated. {settled}</Toast>
+      ) : null}
+      {uploaded && choice?.people ? (
+        <UploadChoice importId={uploaded} action={sendAfterUpload}>
+          {settled ? <p>{settled}</p> : null}
+          <p>
+            Do you want to send today&apos;s calls/messages, or just update the attendance data?{' '}
+            <strong>
+              {choice.firstContact} to ask about an absence, {choice.followUps} due a follow-up
+            </strong>
+            , starting {startsIn(choice.delayMinutes)}.
+          </p>
+          {choice.sendingEnabled ? null : (
+            <p>
+              <strong>Sending is switched off in Settings, so nothing would reach anyone.</strong>
+            </p>
+          )}
+        </UploadChoice>
+      ) : null}
 
       {latest ? <ImportOutcome row={latest} /> : null}
 
@@ -303,6 +350,16 @@ function ImportOutcome({
   const report = row.report;
   if (!report) return null;
 
+  // A file of nothing but today: read fine, but today is not over, so nothing went in.
+  if (report.employeesSeen && !report.daysImported && report.daysHeldBack) {
+    return (
+      <Notice tone="info">
+        <strong>Nothing was imported from {row.filename}.</strong> It only has today&rsquo;s attendance, which is left out
+        until the day is over. Upload it again tomorrow.
+      </Notice>
+    );
+  }
+
   // Nothing read is never a success: it means the mapping does not fit the file.
   if (!report.employeesSeen || !report.daysImported) {
     return (
@@ -320,6 +377,7 @@ function ImportOutcome({
       Imported {report.daysImported} days for {report.employeesSeen}{' '}
       {report.employeesSeen === 1 ? 'employee' : 'employees'} from {row.filename}.
       {report.rejected.length ? ` ${report.rejected.length} rows skipped.` : ''}
+      {report.daysHeldBack ? ` Today’s attendance was left out (${report.daysHeldBack} days), as the day is not over yet.` : ''}
       {report.employeesRestored
         ? ` ${report.employeesRestored} deleted ${report.employeesRestored === 1 ? 'employee is' : 'employees are'} back, with any cases that were kept when they were deleted.`
         : ''}

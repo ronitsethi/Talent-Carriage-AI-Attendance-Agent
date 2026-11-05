@@ -27,7 +27,7 @@ from pathlib import Path
 
 import aiohttp
 from dotenv import load_dotenv
-from livekit import agents, api
+from livekit import agents, api, rtc
 from livekit.agents import Agent, AgentSession, JobContext, JobProcess, StopResponse, WorkerOptions, cli, room_io
 from livekit.agents.voice.recorder_io import RecorderIO
 from livekit.plugins import noise_cancellation, openai, sarvam, silero
@@ -114,43 +114,59 @@ TURN_HANDLING = {
     "preemptive_generation": {"enabled": False},
 }
 
-# If no part of a reply has arrived by then, the caller hears a filler instead
-# of silence, as from a colleague looking something up. Several, so it does not
-# sound like a recording, in the language the call is in and - in Hindi, where
-# the verb says so - as the voice speaking it. A language with none here gets
-# silence rather than a filler in the wrong language.
-FILLER_AFTER_S = 0.5
-# Fillers are off: with the connections kept warm the real answer comes soon
-# enough. Everything below stays as it was - AGENT_FILLERS=on, or True here,
-# brings them back.
+# If no part of a reply has arrived by then, the caller hears one word - an
+# "okay", a "जी" - instead of silence: what a person says to show they heard
+# before answering. Every reply that is not ready gets one, except after a
+# thank-you or goodbye (`_wants_filler`), as before fillers were switched off on
+# 2026-10-27; only the words are shorter. Several, so it does not sound like a
+# recording, in the language the call is in; the same for either voice, since
+# none of them has a verb. A language with none here gets silence rather than a word in the wrong one.
+#
+# 0 is as soon as the turn ends: every reply so far has taken over a second, so
+# waiting only made the filler late. Above 0, a reply that arrives within that
+# long goes without.
+FILLER_AFTER_S = 0.0
+# AGENT_FILLERS=off turns them off without touching anything else.
 FILLERS_ON = os.environ.get("AGENT_FILLERS", "off").lower() == "on"
+# Each was heard in all five voices first (2026-11-03). Left out for how Bulbul
+# said them: "Hmm" and "हम्म" (drawn out up to 3s, or "Mm-hmm"), "Got it"
+# (asked, as a question), "Alright" (2.3s in one voice), "Right" (heard as "Wait").
 FILLERS = {
-    ("en-IN", "female"): [
-        "Okay, one moment.",
-        "Sure, let me see.",
-        "Hmm, just a second.",
-        "Right, give me a moment.",
-        "Okay, let me check that.",
-        "Got it, one second.",
-    ],
-    ("hi-IN", "female"): [
-        "जी, एक सेकंड।",
-        "अच्छा, मैं देखती हूँ।",
-        "हम्म, बस एक मिनट।",
-        "ठीक है, एक सेकंड दीजिए।",
-        "जी, मैं check करती हूँ।",
-        "जी, बस एक पल।",
-    ],
-    ("hi-IN", "male"): [
-        "जी, एक सेकंड।",
-        "अच्छा, मैं देखता हूँ।",
-        "हम्म, बस एक मिनट।",
-        "ठीक है, एक सेकंड दीजिए।",
-        "जी, मैं check करता हूँ।",
-        "जी, बस एक पल।",
-    ],
+    # Not "Achha": callers on an English call hear it as Hindi.
+    "en-IN": ["Okay.", "Sure."],
+    "hi-IN": ["जी।", "अच्छा।", "ठीक है।", "हाँ जी।"],
 }
-FILLERS[("en-IN", "male")] = FILLERS[("en-IN", "female")]
+
+
+async def make_filler_audio(voice: str, pace: float) -> dict[str, list[rtc.AudioFrame]]:
+    """
+    Every filler as audio in this call's voice, keyed by its words.
+
+    Made while the phone rings or the greeting plays, so a filler plays the
+    moment the turn ends rather than after its own trip to Sarvam. One that
+    could not be made is left out, and is said through the voice instead.
+    """
+    clips: dict[str, list[rtc.AudioFrame]] = {}
+    if not FILLERS_ON:
+        return clips
+    for language, words in FILLERS.items():
+        voice_for = sarvam.TTS(target_language_code=language, model=voice_model(voice), speaker=voice, pace=pace)
+        try:
+            for word in words:
+                try:
+                    clips[word] = [event.frame async for event in voice_for.synthesize(word)]
+                except Exception as problem:  # noqa: BLE001 - the voice says it instead
+                    log.warning("could not make the filler %r in advance: %s", word, problem)
+        finally:
+            await voice_for.aclose()
+    log.info("fillers made in advance: %d of %d", len(clips), sum(len(w) for w in FILLERS.values()))
+    return clips
+
+
+async def _play(frames: list[rtc.AudioFrame]):  # noqa: ANN202
+    for frame in frames:
+        yield frame
+
 
 # Said when the platform cannot be reached, in the language the call is in.
 TROUBLE = {
@@ -200,8 +216,9 @@ PLEASANTRIES = set(
 
 
 # How much longer the filler waits for the platform's verdict before the word
-# list decides instead.
-CHECK_GRACE_S = 0.3
+# list decides instead. 0: the filler goes the moment the turn ends, on the
+# platform's verdict if it is back, on the word list if not.
+CHECK_GRACE_S = 0.0
 
 
 def only_pleasantries(said: str) -> bool:
@@ -610,6 +627,9 @@ class TalkingAgent(Agent):
         # Every call opens in English, and the platform says when that changes.
         self._language = "en-IN"
         self._last_filler: str | None = None
+        # Each filler as audio in this call's voice, being made while the phone
+        # rings or the greeting plays - see `make_filler_audio`.
+        self.filler_audio: asyncio.Future | None = None
         # When the agent last started and finished working on a reply - see `_stale`.
         self._busy = (0.0, 0.0)
         # Whether the caller has started on something new while a reply is
@@ -668,8 +688,8 @@ class TalkingAgent(Agent):
         return bool(stopped) and start <= stopped <= end and only_still_there(said)
 
     def _filler(self) -> str | None:
-        """A filler in the call's language and the voice's gender, not the one said last."""
-        options = FILLERS.get((self._language, self._gender))
+        """A filler in the call's language, not the one said last."""
+        options = FILLERS.get(self._language)
         if not options:
             return None
         choice = random.choice([f for f in options if f != self._last_filler] or options)
@@ -679,28 +699,45 @@ class TalkingAgent(Agent):
     async def _wants_filler(self, said: str) -> bool:
         """
         Whether to say a filler: not for a pleasantry. The platform's verdict
-        decides, given a moment more if it is nearly back; the word list if not.
+        decides if it is back (given CHECK_GRACE_S more, when that is above 0);
+        the word list if not.
         """
         check = self._check
-        if check is not None:
+        if check is not None and not check.done() and CHECK_GRACE_S > 0:
             try:
-                verdict = await asyncio.wait_for(asyncio.shield(check), CHECK_GRACE_S)
-                if verdict is not None:
-                    return not verdict
+                await asyncio.wait_for(asyncio.shield(check), CHECK_GRACE_S)
             except Exception:  # noqa: BLE001 - late or failed: the word list decides
                 pass
-        log.info("the pleasantry check was not back in time; using the word list")
+        if check is not None and check.done() and not check.cancelled() and check.exception() is None:
+            verdict = check.result()
+            if verdict is not None:
+                return not verdict
+        log.info("the pleasantry check was not back; using the word list")
         return not only_pleasantries(said)
 
-    async def _speak_stream(self, stream, filler=None) -> tuple[dict, str, str | None]:  # noqa: ANN001
+    def _say_filler(self, word: str) -> None:
+        """Says a filler from the audio made for it, or through the voice if that is not ready."""
+        task = self.filler_audio
+        frames = None
+        if task is not None and task.done() and not task.cancelled() and task.exception() is None:
+            frames = task.result().get(word)
+        if frames:
+            log.info("timing: saying %r, made in advance", word)
+            self.session.say(word, audio=_play(frames))
+        else:
+            log.info("timing: saying %r through the voice; no audio made in advance", word)
+            self.session.say(word)
+
+    async def _speak_stream(self, stream, said: str | None = None) -> tuple[dict, str, str | None]:  # noqa: ANN001
         """
         Speaks a reply while it is still being written.
 
         Returns the platform's verdict (done, next date), what was written, and
         how much of it the caller heard - see `heard_of`. The language arrives
         before the first word, so the voice is switched before speaking starts.
-        `filler`, when given, is asked if nothing of the reply has arrived
-        within FILLER_AFTER_S, and a filler is said if it agrees.
+        `said`, when given, is what the caller said, and if nothing of the reply
+        has arrived within FILLER_AFTER_S a filler goes first, unless
+        `_wants_filler` says it was a pleasantry.
 
         If the caller starts on something new before the reply is ready, it is
         not said at all: their new words come next, and the platform is told
@@ -722,18 +759,21 @@ class TalkingAgent(Agent):
             return None
 
         self._writing, self._new_speech, self._cut_in = True, False, False
+        filled = None
         try:
             first = asyncio.ensure_future(first_text())
-            if filler and FILLERS_ON:
-                try:
-                    await asyncio.wait_for(asyncio.shield(first), FILLER_AFTER_S)
-                except asyncio.TimeoutError:
-                    said = self._filler() if await filler() else None
-                    if said:
-                        log.info("timing: nothing yet after %.1fs, saying a filler", FILLER_AFTER_S)
-                        self.session.say(said)
+            if said is not None and FILLERS_ON:
+                if FILLER_AFTER_S > 0:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(first), FILLER_AFTER_S)
+                    except asyncio.TimeoutError:
+                        pass
+                if not first.done():
+                    filled = self._filler() if await self._wants_filler(said) else None
+                    if filled:
+                        self._say_filler(filled)
                     else:
-                        log.info("timing: nothing yet after %.1fs, but no filler for this", FILLER_AFTER_S)
+                        log.info("timing: no filler for a pleasantry")
             opening = await first
             # They paused, the reply got written, and they are talking again:
             # wait to hear whether it is more of the same thought. Half a
@@ -761,16 +801,19 @@ class TalkingAgent(Agent):
             self._busy = (started, time.time())
             return outcome, "".join(spoken), ""
 
-        async def rest():
-            spoken.append(opening)
+        async def pieces():
             yield opening
+            async for piece in stream:
+                if isinstance(piece, dict):
+                    outcome.update(piece)
+                elif isinstance(piece, str) and piece:
+                    yield piece
+
+        async def rest():
             try:
-                async for piece in stream:
-                    if isinstance(piece, dict):
-                        outcome.update(piece)
-                    elif isinstance(piece, str) and piece:
-                        spoken.append(piece)
-                        yield piece
+                async for piece in pieces():
+                    spoken.append(piece)
+                    yield piece
             except Exception:
                 # What was already said stands; the rest of this reply is lost.
                 log.exception("the reply broke off part way")
@@ -884,7 +927,7 @@ class AttendanceAgent(TalkingAgent):
         try:
             outcome, _, self._heard = await self._speak_stream(
                 self._api.talk(self._case_id, said, heard),
-                filler=lambda: self._wants_filler(said),
+                said=said,
             )
         except Exception:
             log.exception("turn API failed; handing the call over")
@@ -953,7 +996,7 @@ class QuestionAgent(TalkingAgent):
             heard, self._heard = self._heard, None
             outcome, spoken, heard = await self._speak_stream(
                 self._api.ask_stream(self._caller, said, self._history[-14:], heard),
-                filler=lambda: self._wants_filler(said),
+                said=said,
             )
         except Exception:
             log.exception("turn API failed on an incoming call")
@@ -1233,6 +1276,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # Somebody who rang us is on the line already.
         api_client.answered_at = time.monotonic()
         agent = QuestionAgent(api_client, caller, brief)
+        agent.filler_audio = asyncio.ensure_future(make_filler_audio(voice, pace))
         agent.forget_heard = search_early(session, lambda said: api_client.prepare(said, caller))
         # `record=False` keeps LiveKit's paid cloud recording off, whatever the
         # project is set to; the call is recorded here instead.
@@ -1281,6 +1325,7 @@ async def entrypoint(ctx: JobContext) -> None:
     answered = asyncio.Event()
     asyncio.ensure_future(wait_until_answered(ctx.room, answered))
     agent = AttendanceAgent(api_client, answered, gender=brief.get("gender") or "female")
+    agent.filler_audio = asyncio.ensure_future(make_filler_audio(voice, pace))
     agent.forget_heard = search_early(session, api_client.prepare)
     await session.start(agent=agent, room=ctx.room, room_options=CALLER_AUDIO, record=False)
     recorder = CallRecorder(session, ctx.job.id)

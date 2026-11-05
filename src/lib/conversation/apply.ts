@@ -1,16 +1,17 @@
 import type { HrmsConnector } from '@/lib/hrms/types';
 import { applicationReply, requestManagerApproval } from '@/lib/approvals';
 import type { CaseRow, EmployeeRow, EngineContext } from './engine';
-import { OUTCOMES, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
+import { instructionFor, OUTCOMES, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
 
 /**
  * The step after "what happened", for everything that is applied for: leave,
  * regularisation, On-Duty, comp-off.
  *
  * With attendance from a file, the employee says whether they have applied it
- * yet - if not, they are told to - and their manager is asked to approve it once
- * it is in their system. With an HRMS connected, the agent offers to apply it
- * itself, and the manager's approval is what sets it going.
+ * yet. If they have, their manager is asked to approve it; if not, they are told
+ * to, and the follow-ups chase them until it is done or the manager takes over.
+ * With an HRMS connected, the agent offers to apply it itself, and the manager's
+ * approval is what sets it going.
  */
 
 export type ApplyContext = EngineContext & { hrms?: HrmsConnector | null };
@@ -59,6 +60,8 @@ export async function submitApplication(
 ): Promise<string> {
   // Without an HRMS to write to, "apply it for me" is the employee applying it after all.
   const stage: ApplicationStage = request.stage === 'apply_for_me' && !agentCanApply(ctx) ? 'not_applied' : request.stage;
+  // Nothing to approve yet: the case stays with the employee and its follow-ups run.
+  if (stage === 'not_applied') return instructionFor(request.code, request.choice, request.facts);
   const result = await requestManagerApproval(ctx, caseRow, employee, { ...request, stage });
   const manager = result.manager ? result.manager.fullName.split(/\s+/)[0] ?? null : null;
   return applicationReply({ ...request, stage }, { ...request.facts, manager: manager ?? request.facts.manager }, result.managerReached);

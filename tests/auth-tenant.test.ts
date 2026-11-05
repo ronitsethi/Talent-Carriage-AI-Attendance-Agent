@@ -54,8 +54,17 @@ describe('active tenant selection', () => {
   });
 
   it('pins a customer user to their own tenant, cookie or not', async () => {
+    const [own] = await withPlatformScope((tx) =>
+      tx.insert(tenants).values({ slug: `pinned-${Date.now()}`, name: 'Pinned', status: 'active' }).returning(),
+    );
     cookieStore.value = '84a14bde-4910-47cc-9bcd-7f27ff940e55';
-    const resolved = await getActiveTenantId({ ...staffSession, role: 'hr_admin', tenantId: 'fixed-tenant' });
-    expect(resolved).toBe('fixed-tenant');
+    const session = { ...staffSession, role: 'hr_admin' as const, tenantId: own!.id };
+    expect(await getActiveTenantId(session)).toBe(own!.id);
+
+    await withPlatformScope((tx) => tx.update(tenants).set({ status: 'suspended' }).where(eq(tenants.id, own!.id)));
+    expect(await getActiveTenantId(session), 'locked out once deactivated').toBeNull();
+
+    await withPlatformScope((tx) => tx.delete(tenants).where(eq(tenants.id, own!.id)));
+    expect(await getActiveTenantId(session), 'and once deleted').toBeNull();
   });
 });

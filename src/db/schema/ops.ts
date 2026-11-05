@@ -199,7 +199,8 @@ export const auditLog = pgTable(
   'audit_log',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }),
+    // Not a reference: this trail refuses deletes, so it outlives a deleted customer.
+    tenantId: uuid('tenant_id'),
     actorType: text('actor_type').notNull(), // user | agent | system | employee | manager
     actorId: text('actor_id'),
     actorLabel: text('actor_label'),

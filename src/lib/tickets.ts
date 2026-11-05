@@ -15,6 +15,11 @@ import { withCostScope } from '@/lib/costs/record';
  * is, how urgent, and the problem in a few sentences - and the ticket goes to
  * the least busy member who looks after the employee's company.
  *
+ * A query with nothing left to do but still about something real - a question
+ * the agent answered - is not a ticket. It is written up the same way and sent
+ * to the members of its query type's team who look after the company, for
+ * their information.
+ *
  * Everything here runs in platform scope: COE people work across customers, so
  * how busy somebody is counts their tickets from every customer, not only the
  * one this query belongs to.
@@ -99,7 +104,12 @@ When a ticket is needed:
 - priority: "urgent" for a grievance, harassment, safety or distress; "high" when pay is missing or wrong, or something stops them working or being paid this month; "low" for a general question with nothing at stake; otherwise "medium".
 - description: two to four plain English sentences, in the third person and using the employee's name, saying what the problem is and every specific detail they gave - dates, months, amounts, which record or field, what the system shows against what is right. Use only what was said; never guess.
 
-When no ticket is needed, give query_type 0, priority "low" and an empty description.`;
+When no ticket is needed but the employee still asked or told something real - about their pay, leave, attendance, a policy, a document - it is shared with the COE team for their information:
+- query_type: the number of the one query type below that best fits it, or 0 when truly none fits.
+- priority: "low".
+- description: two to four plain English sentences, in the third person and using the employee's name, saying what they asked, with every specific detail they gave, and what they were told. Use only what was said; never guess.
+
+When the employee only greeted, tested or hung up, give query_type 0, priority "low" and an empty description.`;
 
 const SCHEMA = {
   type: 'object',
@@ -135,7 +145,8 @@ export function describeTypes(types: QueryType[]): string {
 type Verdict = { needs_ticket: boolean; query_type: number; priority: Priority; description: string };
 
 export type TicketOutcome =
-  | { done: 'no_conversation' | 'already_raised' | 'not_needed' | 'missing' }
+  | { done: 'no_conversation' | 'already_raised' | 'already_informed' | 'not_needed' | 'missing' }
+  | { done: 'informed'; queryTypeName: string; people: number }
   | { done: 'later'; at: Date }
   | { done: 'raised'; queryTypeName: string | null; personId: string | null; mark: AssignmentMark | null };
 
@@ -149,6 +160,7 @@ export async function raiseTicket(queryId: string, now = new Date(), decide: typ
     const query = await tx.query.queries.findFirst({ where: eq(queries.id, queryId) });
     if (!query) return { done: 'missing' };
     if (query.ticketStatus) return { done: 'already_raised' };
+    if (query.informedAt) return { done: 'already_informed' };
     if (query.channel === 'whatsapp') {
       const quietAt = new Date(query.lastActivityAt.getTime() + QUERY_QUIET_MS);
       if (quietAt > now) return { done: 'later', at: quietAt };
@@ -164,9 +176,9 @@ export async function raiseTicket(queryId: string, now = new Date(), decide: typ
     const verdict = await withCostScope({ tenantId: query.tenantId, queryId: query.id }, () =>
       decide(types, employee?.fullName ?? 'the employee', transcriptText(lines), query.channel === 'voice' ? 'call' : 'whatsapp'),
     );
-    if (!verdict.needs_ticket) return { done: 'not_needed' };
-
     const type = verdict.query_type >= 1 ? types[verdict.query_type - 1] ?? null : null;
+    if (!verdict.needs_ticket) return informTeam(tx, query, type, verdict.description);
+
     // The sheet is plain: a grievance is never anything but urgent, whatever the model thought.
     const priority: Priority = type && /grievance|complaint/i.test(type.name) ? 'urgent' : verdict.priority;
     const assignment = await chooseAssignee(tx, query.tenantId, type?.coeCode ?? null);
@@ -191,6 +203,47 @@ export async function raiseTicket(queryId: string, now = new Date(), decide: typ
     if (assignment.personId) await queueAssignmentWork(tx, query.tenantId, queryId, at);
     return { done: 'raised', queryTypeName: type?.name ?? null, personId: assignment.personId, mark: assignment.mark };
   });
+}
+
+/**
+ * No ticket, but something real was asked: written on the query as a ticket's
+ * type and description would be - with no ticket status - and the notice to the
+ * query type's team queued. Nothing to share, or nobody to share it with, is
+ * simply not needed.
+ */
+async function informTeam(tx: Db, query: typeof queries.$inferSelect, type: QueryType | null, description: string): Promise<TicketOutcome> {
+  const text = description.trim();
+  if (!text || !type) return { done: 'not_needed' };
+  const people = await informRecipients(tx, query.tenantId, type.coeCode);
+  if (!people.length) return { done: 'not_needed' };
+  const at = new Date();
+  await tx
+    .update(queries)
+    .set({ queryTypeId: type.id, queryTypeName: type.name, coeCode: type.coeCode, problemDescription: text, informedAt: at })
+    .where(eq(queries.id, query.id));
+  await enqueue('query_inform', { queryId: query.id }, { tenantId: query.tenantId, dedupeKey: `query-inform:${query.id}` }, tx);
+  return { done: 'informed', queryTypeName: type.name, people: people.length };
+}
+
+/**
+ * Who hears about a query that needed no ticket: every member of the query
+ * type's team who looks after this company, in the team's own order. Unlike a
+ * ticket there is no one to pick - it is for everybody's information - and no
+ * other team stands in when nobody on that one looks after the company.
+ */
+export async function informRecipients(tx: Db, tenantId: string, coeCode: string) {
+  const rows = await tx
+    .select({ person: coePeople })
+    .from(coeMemberClients)
+    .innerJoin(coeTeams, eq(coeTeams.id, coeMemberClients.teamId))
+    .innerJoin(
+      coeTeamMembers,
+      and(eq(coeTeamMembers.teamId, coeMemberClients.teamId), eq(coeTeamMembers.personId, coeMemberClients.personId)),
+    )
+    .innerJoin(coePeople, eq(coePeople.id, coeMemberClients.personId))
+    .where(and(eq(coeMemberClients.tenantId, tenantId), eq(coeTeams.code, coeCode)))
+    .orderBy(asc(coeTeamMembers.position));
+  return [...new Map(rows.map((row) => [row.person.id, row.person])).values()];
 }
 
 async function askModel(types: QueryType[], employeeName: string, transcript: string, budget: 'call' | 'whatsapp'): Promise<Verdict> {

@@ -3,8 +3,7 @@ import { db, withPlatformScope, type Db } from '@/db';
 import { jobs } from '@/db/schema';
 
 export type JobKind =
-  | 'daily_check'
-  | 'send_follow_up'
+  | 'upload_contact'
   | 'place_call'
   | 'approval_timeout'
   | 'verify_action'
@@ -15,6 +14,7 @@ export type JobKind =
   | 'ticket_notify'
   | 'ticket_reminder'
   | 'ticket_escalate'
+  | 'query_inform'
   | 'plivo_charge';
 
 export type Job = typeof jobs.$inferSelect;

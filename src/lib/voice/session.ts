@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { calls, cases, employees, messages, usageEvents } from '@/db/schema';
 import { classifyReply } from '@/lib/conversation/classify';
@@ -15,13 +15,15 @@ import {
   spokenFollowUpAcknowledgement,
   spokenFollowUpClosing,
   spokenFollowUpNotUnderstood,
+  spokenFinalNotice,
   spokenFollowUpSummary,
   spokenHandover,
   spokenNotUnderstood,
   type PromptStyle,
 } from '@/lib/conversation/voice-script';
-import { UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from '@/lib/conversation/engine';
+import { canSend, UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from '@/lib/conversation/engine';
 import { recordFollowUpChoice } from '@/lib/conversation/follow-up-state';
+import { finalNoticeFacts, sendFinalNotice } from '@/lib/conversation/followup';
 import { followUpAcknowledgement, type FollowUpChoice } from '@/lib/conversation/flow';
 import { halfOfDay, type Meaning } from '@/lib/mapping/meanings';
 import { answerQuestion } from '@/lib/knowledge';
@@ -46,8 +48,10 @@ export type CallRow = typeof calls.$inferSelect;
  * `first_contact` asks about the absence itself. `follow_up` is the day-2
  * reminder: it asks whether the action the employee was given has been done,
  * so the keypad means something different and the script must say so.
+ * `final_notice` is the last follow-up: it warns of loss of pay, says who the case
+ * has gone to, and hangs up.
  */
-export type CallPurpose = 'first_contact' | 'follow_up' | 'manager_approval' | 'approval_outcome';
+export type CallPurpose = 'first_contact' | 'follow_up' | 'final_notice' | 'manager_approval' | 'approval_outcome';
 
 /** One spoken turn: what the agent says, and what happens next. */
 export type CallTurn = {
@@ -122,9 +126,7 @@ async function pendingFollowUps(ctx: VoiceContext, employeeId: string, excludeCa
  * been answered asks the next question rather than repeating the last one.
  */
 export function callPurposeFor(caseRow: CaseRow): CallPurpose {
-  return caseRow.status === 'answered' && caseRow.replyOption && !caseRow.followUpReply
-    ? 'follow_up'
-    : 'first_contact';
+  return caseRow.status === 'answered' && caseRow.replyOption ? 'follow_up' : 'first_contact';
 }
 
 /**
@@ -139,15 +141,17 @@ export async function placeCaseCall(
   caseRow: CaseRow,
   employee: EmployeeRow,
   purpose: CallPurpose = callPurposeFor(caseRow),
+  callMode?: 'keypad' | 'agent' | null,
 ) {
   if (employee.deletedAt) return { placed: false as const, reason: 'This employee has been deleted' };
   if (!ctx.settings.sendingEnabled) return { placed: false as const, reason: 'Sending is switched off for this customer' };
   if (employee.callOptOut) return { placed: false as const, reason: 'Employee has opted out of calls' };
   if (!employee.mobileE164) return { placed: false as const, reason: 'No mobile number on record' };
 
-  // Keypad or conversation, per this employee, falling back to the customer's
-  // default. Without an agent provider configured there is only one answer.
-  const wantsAgent = (employee.callMode ?? ctx.settings.callMode) === 'agent';
+  // Keypad or conversation: what this call was set to, else this employee's
+  // setting, else the customer's default. Without an agent provider configured
+  // there is only one answer.
+  const wantsAgent = (callMode ?? employee.callMode ?? ctx.settings.callMode) === 'agent';
   const provider = wantsAgent && ctx.voiceAgent ? ctx.voiceAgent : ctx.voice;
 
   const [call] = await ctx.tx
@@ -188,9 +192,7 @@ export async function placeCaseCall(
     await ctx.tx
       .update(cases)
       .set({
-        ...(purpose === 'first_contact'
-          ? { status: 'asked' as const, askedAt: caseRow.askedAt ?? new Date() }
-          : { followUpSentAt: caseRow.followUpSentAt ?? new Date() }),
+        ...(purpose === 'first_contact' ? { status: 'asked' as const, askedAt: caseRow.askedAt ?? new Date() } : {}),
         channel: 'voice',
         callAttempts: caseRow.callAttempts + 1,
         error: null,
@@ -228,6 +230,20 @@ export async function openingTurn(ctx: VoiceContext, callId: string): Promise<Ca
   await ctx.tx.update(calls).set({ status: 'in_progress' }).where(eq(calls.id, callId));
 
   const greeting = callGreeting(employee.fullName, ctx.companyName);
+
+  if (call.purpose === 'final_notice') {
+    // Every date that reached its last follow-up in the same sweep shares this call.
+    const covered = await ctx.tx
+      .select()
+      .from(cases)
+      .where(and(eq(cases.employeeId, employee.id), eq(cases.followUpSentAt, target.followUpSentAt ?? new Date(0)), ne(cases.status, 'answered')))
+      .orderBy(asc(cases.attDate));
+    const { what, transferee } = await finalNoticeFacts(ctx, target, employee);
+    const speak = `${greeting} ${spokenFinalNotice(what, (covered.length ? covered : [target]).map(spokenFor), transferee)}`;
+    await appendTurn(ctx, callId, 'agent', speak);
+    await finishCall(ctx, callId, 'completed_confirmed');
+    return { speak, nextCaseId: null, done: true };
+  }
 
   if (call.purpose === 'follow_up') {
     // The reminder only makes sense for a date that was answered. If HR has
@@ -519,6 +535,14 @@ export async function recordNoAnswer(ctx: VoiceContext, callId: string, status: 
   // What a missed call about an approval was carrying goes on WhatsApp instead.
   if (call && APPROVAL_CALL_PURPOSES.includes(call.purpose as ApprovalCallPurpose)) {
     await afterApprovalCall(ctx, call, false);
+    return;
+  }
+  // The pay-loss warning must reach them, and the case has already moved on.
+  if (call?.purpose === 'final_notice' && call.caseId) {
+    const caseRow = await ctx.tx.query.cases.findFirst({ where: eq(cases.id, call.caseId) });
+    const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, call.employeeId) });
+    if (!caseRow || !employee || canSend(ctx, employee).blocked) return;
+    await sendFinalNotice(ctx, caseRow, employee).catch((error) => console.error('[voice] final notice failed:', error));
     return;
   }
   if (call?.caseId) {

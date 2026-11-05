@@ -4,6 +4,7 @@ import { getActiveTenantId, getSession, isPlatformAdmin } from '@/lib/auth';
 import { caseCounts, listTenantsForSwitcher, tenantSummary } from '@/lib/queries';
 import { capabilities } from '@/lib/env';
 import { models } from '@/lib/models/gateway';
+import { automaticUploads } from '@/lib/upload-send';
 import { switchTenant, signOutAction } from '@/app/actions';
 import { Nav, Shell } from './shell';
 
@@ -35,7 +36,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <Nav openCases={counts?.open ?? 0} showAdmin={isPlatformAdmin(session)} />
 
       {tenants.length ? (
-        <form action={switchTenant} className="tenant-switch">
+        // Keyed on the customer: React resets a form after its action, which would put the select back on the
+        // option it was first drawn with (the previous customer). A new key draws it again with the new one chosen.
+        <form key={tenantId ?? 'none'} action={switchTenant} className="tenant-switch">
           <label className="caption" htmlFor="tenantId">
             Viewing customer
           </label>
@@ -85,9 +88,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <span className={`flag ${providers.length ? 'ok' : ''}`}>
             {providers.length ? `AI: ${providers.map((p) => p.provider).join(', ')}` : 'AI: rules only'}
           </span>
-          <span className={`flag ${settings.operatingMode === 'automatic' ? 'ok' : ''}`}>
-            {settings.operatingMode === 'automatic'
-              ? `Automatic at ${settings.checkTime.slice(0, 5)} · except rows set to Manual`
+          <span className={`flag ${automaticUploads(settings) ? 'ok' : ''}`}>
+            {automaticUploads(settings)
+              ? 'Automatic · sends after each upload, except rows set to Manual'
               : 'Manual · nothing goes out on its own, whatever the rows say'}
           </span>
           <span className="flag">Calls from {settings.callerId ?? 'no number set'}</span>
