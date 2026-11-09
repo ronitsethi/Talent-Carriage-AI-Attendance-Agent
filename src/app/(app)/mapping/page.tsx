@@ -1,44 +1,43 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { canManageSettings, getActiveTenantId, getSession } from '@/lib/auth';
+import { LeaveBalanceMapping } from '@/components/leave-balance-mapping';
 import { PayrollMapping } from '@/components/payroll-mapping';
 import { mappingOverview } from '@/lib/queries';
-import { meaningLabel, formatTime } from '@/lib/display';
-import { analyseMappingFile, importAttendance, saveMapping, sendAfterUpload, setCodeMeaning } from '@/app/actions';
-import { monthLabel } from '@/lib/locks';
+import { meaningLabel } from '@/lib/display';
+import { analyseMappingFile, saveMapping, setCodeMeaning } from '@/app/actions';
 import { FileDrop } from '@/components/file-drop';
 import { Notice } from '@/components/notice';
 import { Toast } from '@/components/toast';
-import { UploadChoice } from '@/components/upload-choice';
-import { previewUploadSend } from '@/lib/upload-send';
 import { MappingForm, type CodeRow, type MappingDraft } from './editor';
 import { ALL_MEANINGS } from '@/lib/mapping/meanings';
 import type { Analysis } from '@/lib/mapping/analyse';
 import type { FieldMap } from '@/db/schema';
-import type { ImportReport } from '@/db/schema';
 
-/** What an upload settled by itself, in a sentence. Empty when it settled nothing. */
-function settledByUpload(resolved: number, removed: number): string {
-  const parts = [];
-  if (resolved) parts.push(`${resolved} ${resolved === 1 ? 'case' : 'cases'} resolved`);
-  if (removed) parts.push(`${removed} unopened ${removed === 1 ? 'case' : 'cases'} removed`);
-  return parts.length ? `${parts.join(', ')}.` : '';
-}
+/**
+ * Mapping: how each of this customer's files is read, set up once. Attendance
+ * (columns, layout and codes), leave balances and payroll each have a tab. The
+ * files themselves are uploaded on Uploads, and payroll on Month end.
+ */
 
-const startsIn = (minutes: number) => (minutes ? `in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` : 'now');
+const TABS = [
+  { key: 'attendance', label: 'Attendance' },
+  { key: 'leave', label: 'Leave balance' },
+  { key: 'payroll', label: 'Payroll' },
+] as const;
+type Tab = (typeof TABS)[number]['key'];
 
 export default async function MappingPage({
   searchParams,
 }: {
   searchParams: Promise<{
+    tab?: string;
     problem?: string;
     saved?: string;
-    uploaded?: string;
-    resolved?: string;
-    removed?: string;
-    scheduled?: string;
-    after?: string;
     payrollFilled?: string;
     payrollSaved?: string;
+    leaveFilled?: string;
+    leaveSaved?: string;
   }>;
 }) {
   const session = await getSession();
@@ -46,156 +45,87 @@ export default async function MappingPage({
   const tenantId = await getActiveTenantId(session);
   if (!tenantId) redirect('/');
 
-  const [{ profile, draft, codes, unmapped, recentImports }, { problem, saved, uploaded, resolved, removed, scheduled, after, payrollFilled, payrollSaved }] =
-    await Promise.all([mappingOverview(tenantId), searchParams]);
-  const choice = uploaded ? await previewUploadSend(tenantId, uploaded) : null;
-  const settled = settledByUpload(Number(resolved ?? 0), Number(removed ?? 0));
+  const params = await searchParams;
+  const tab: Tab = TABS.some((t) => t.key === params.tab) ? (params.tab as Tab) : 'attendance';
+
+  return (
+    <>
+      <section className="page-head">
+        <div className="eyebrow">Mapping</div>
+        <h1>How this customer&apos;s files are read</h1>
+        <p>
+          Their columns and codes are translated into the platform&apos;s own vocabulary once, for each kind of file.
+          Attendance and leave balances are then uploaded on <Link href="/uploads">Uploads</Link>, and payroll on{' '}
+          <Link href="/month-end">Month end</Link>.
+        </p>
+      </section>
+
+      <nav className="switch-group gap-below" aria-label="Which file">
+        {TABS.map(({ key, label }) => (
+          <Link
+            key={key}
+            href={key === 'attendance' ? '/mapping' : `/mapping?tab=${key}`}
+            className={`switch-option ${tab === key ? 'on' : ''}`}
+            aria-current={tab === key ? 'page' : undefined}
+          >
+            {label}
+          </Link>
+        ))}
+      </nav>
+
+      {params.problem ? (
+        <Notice tone="err" clear={['problem']}>
+          {params.problem}
+        </Notice>
+      ) : null}
+
+      {tab === 'attendance' ? <AttendanceMapping tenantId={tenantId} saved={params.saved} /> : null}
+      {tab === 'leave' ? <LeaveBalanceMapping tenantId={tenantId} filled={params.leaveFilled} saved={params.leaveSaved} /> : null}
+      {tab === 'payroll' ? (
+        <PayrollMapping tenantId={tenantId} admin={canManageSettings(session)} filled={params.payrollFilled} saved={params.payrollSaved} />
+      ) : null}
+    </>
+  );
+}
+
+/** The attendance mapping: fill it from a file, explain new codes, and the form itself. */
+async function AttendanceMapping({ tenantId, saved }: { tenantId: string; saved?: string }) {
+  const { profile, draft, codes, unmapped, recentImports } = await mappingOverview(tenantId);
   const latest = recentImports[0];
   const openUnmapped = unmapped.filter((u) => !u.resolvedAt);
   const analysis = (draft?.detected ?? null) as Analysis | null;
   const editing = toDraft(profile, codes, analysis);
   const suggestions = analysis?.columns.filter((c) => !c.looksLikeDay).map((c) => c.name) ?? [];
 
-  const imports = (
-    <section className="card flush">
-      <div className="card-head">
-        <h2>Recent imports</h2>
-      </div>
-      <div className="table-scroll">
-        <table className="data small">
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Source</th>
-              <th>Covering</th>
-              <th>Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            {recentImports.map((row) => (
-              <tr key={row.id}>
-                <td className="nowrap">{formatTime(row.startedAt)}</td>
-                <td>
-                  {row.source}
-                  <div className="sub mono">{row.filename ?? '—'}</div>
-                </td>
-                <td className="nowrap mono" style={{ fontSize: 'var(--fs-meta)' }}>
-                  {row.dateFrom} → {row.dateTo}
-                </td>
-                <td>
-                  {row.report ? (
-                    <>
-                      {row.report.daysImported} days · {row.report.employeesCreated} new employees
-                      {row.report.rejected.length ? <div className="sub">{row.report.rejected.length} rows rejected</div> : null}
-                    </>
-                  ) : (
-                    row.status
-                  )}
-                </td>
-              </tr>
-            ))}
-            {!recentImports.length ? (
-              <tr>
-                <td className="empty" colSpan={4}>
-                  Nothing imported yet.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-
   return (
     <>
-      <section className="page-head">
-        <div className="eyebrow">Mapping &amp; import</div>
-        <h1>How this customer&apos;s data is read</h1>
-        <p>
-          Their columns and codes are translated into the platform&apos;s own vocabulary once. Everything after that —
-          detection, messaging, actions and reporting — is identical for every customer.
+      {saved ? <Toast clear={['saved']}>Mapping saved and in use.</Toast> : null}
+
+      <section className="card pad gap-below">
+        <div className="section-head">
+          <h2>Fill the form from a file</h2>
+        </div>
+        <p className="card-desc">
+          {profile
+            ? 'Optional. Upload one of their files and the form below is filled in with what it can work out — the column names it recognises and the codes it finds.'
+            : 'This customer has no attendance mapping yet. Upload one of their files and the form below is filled in with what it can work out, or fill it in by hand.'}{' '}
+          Nothing is imported and nothing is saved until you press Save mapping. Attendance is imported on{' '}
+          <Link href="/uploads">Uploads</Link>.
         </p>
+        <form action={analyseMappingFile} className="upload-row">
+          <FileDrop id="mapFile" name="file" accept=".xlsx,.xls,.csv" hint=".xlsx .xls .csv" label="Their file" required />
+          <button className="btn lg" type="submit">
+            Fill in the form
+          </button>
+        </form>
       </section>
 
-      {problem ? (
-        <Notice tone="err" clear={['problem']}>
-          {problem}
-        </Notice>
-      ) : null}
-      {saved ? <Toast clear={['saved']}>Mapping saved and in use.</Toast> : null}
-      {scheduled ? (
-        <Toast clear={['scheduled', 'after']}>
-          {Number(scheduled)
-            ? `${scheduled} ${Number(scheduled) === 1 ? 'person' : 'people'} will be contacted, starting ${startsIn(Number(after))}.`
-            : 'Nobody is due a call or message.'}
-        </Toast>
-      ) : null}
-      {uploaded && !choice?.people ? (
-        <Toast clear={['uploaded', 'resolved', 'removed']}>Attendance updated. {settled}</Toast>
-      ) : null}
-      {uploaded && choice?.people ? (
-        <UploadChoice importId={uploaded} action={sendAfterUpload}>
-          {settled ? <p>{settled}</p> : null}
-          <p>
-            Do you want to send today&apos;s calls/messages, or just update the attendance data?{' '}
-            <strong>
-              {choice.firstContact} to ask about an absence, {choice.followUps} due a follow-up
-            </strong>
-            , starting {startsIn(choice.delayMinutes)}.
-          </p>
-          {choice.sendingEnabled ? null : (
-            <p>
-              <strong>Sending is switched off in Settings, so nothing would reach anyone.</strong>
-            </p>
-          )}
-        </UploadChoice>
-      ) : null}
-
-      {latest ? <ImportOutcome row={latest} /> : null}
-
-      <div className="tiles narrow gap-below">
-        <section className="card pad">
-          <div className="section-head">
-            <h2>Import attendance</h2>
-          </div>
-          <p className="card-desc">
-            {profile
-              ? 'Read with the mapping below. Re-importing is safe: a corrected day overwrites the old one and can close an open case.'
-              : 'This customer has no mapping yet, so the first file is read on screen and you say what its columns and codes mean.'}
-          </p>
-          <form action={profile ? importAttendance : analyseMappingFile} className="upload-row">
-            <FileDrop id="file" name="file" accept=".xlsx,.xls,.csv" hint=".xlsx .xls .csv" label="Choose attendance file" required />
-            <button className="btn primary lg" type="submit">
-              {profile ? 'Import' : 'Read it and show me'}
-            </button>
-          </form>
-        </section>
-
-        <section className="card pad">
-          <div className="section-head">
-            <h2>Fill the form from a file</h2>
-          </div>
-          <p className="card-desc">
-            Optional. Upload one of their files and the form below is filled in with what it can work out — the column
-            names it recognises and the codes it finds. Nothing is imported and nothing is saved until you press Save
-            mapping.
-          </p>
-          <form action={analyseMappingFile} className="upload-row">
-            <FileDrop id="mapFile" name="file" accept=".xlsx,.xls,.csv" hint=".xlsx .xls .csv" label="Their file" required />
-            <button className="btn lg" type="submit">
-              Fill in the form
-            </button>
-          </form>
-        </section>
-      </div>
-
       {openUnmapped.length ? (
-        <section className="card flush danger gap-below">
+        <section className="card flush danger gap-below" id="codes">
           <div className="card-head danger">
             <h2>Codes nobody has explained</h2>
             <span className="hint" style={{ color: 'inherit' }}>
-              never messaged about until they have a meaning
+              from attendance or leave balance files · never messaged about, and no leave type, until they have a meaning
             </span>
           </div>
           {openUnmapped.map((row) => (
@@ -225,7 +155,7 @@ export default async function MappingPage({
           initial={editing}
           suggestions={suggestions}
           resolvedYear={latest?.dateFrom ? Number(latest.dateFrom.slice(0, 4)) : null}
-          heading={profile ? 'The mapping for this customer' : 'Set up the mapping for this customer'}
+          heading={profile ? 'The attendance mapping for this customer' : 'Set up the attendance mapping for this customer'}
           note={
             profile
               ? 'Change anything here and save. Nothing already imported is altered; the next import is read with the new rules.'
@@ -235,36 +165,27 @@ export default async function MappingPage({
       </form>
 
       {profile ? (
-        <div className="layout">
-          {imports}
-          <section className="card pad">
-            <div className="section-head">
-              <h2>Layout</h2>
-            </div>
-            <dl className="kv">
-              <dt>HRMS</dt>
-              <dd>{profile.hrmsHint ?? '—'}</dd>
-              <dt>Dates</dt>
-              <dd>{profile.fieldMap.dateLayout.kind.replace(/_/g, ' ')}</dd>
-              <dt>Status</dt>
-              <dd>{profile.fieldMap.statusLayout.kind.replace(/_/g, ' ')}</dd>
-              <dt>Fields mapped</dt>
-              <dd>{Object.keys(profile.fieldMap.fields).length}</dd>
-            </dl>
-            {profile.notes ? (
-              <p className="hint" style={{ marginTop: 12 }}>
-                {profile.notes}
-              </p>
-            ) : null}
-          </section>
-        </div>
-      ) : (
-        imports
-      )}
-
-      <div className="gap-above">
-        <PayrollMapping tenantId={tenantId} admin={canManageSettings(session)} filled={payrollFilled} saved={payrollSaved} />
-      </div>
+        <section className="card pad">
+          <div className="section-head">
+            <h2>Layout</h2>
+          </div>
+          <dl className="kv">
+            <dt>HRMS</dt>
+            <dd>{profile.hrmsHint ?? '—'}</dd>
+            <dt>Dates</dt>
+            <dd>{profile.fieldMap.dateLayout.kind.replace(/_/g, ' ')}</dd>
+            <dt>Status</dt>
+            <dd>{profile.fieldMap.statusLayout.kind.replace(/_/g, ' ')}</dd>
+            <dt>Fields mapped</dt>
+            <dd>{Object.keys(profile.fieldMap.fields).length}</dd>
+          </dl>
+          {profile.notes ? (
+            <p className="hint" style={{ marginTop: 12 }}>
+              {profile.notes}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
     </>
   );
 }
@@ -325,100 +246,4 @@ function toDraft(
     fields: {},
     codes: [],
   };
-}
-
-/**
- * What the last import did, taken from the import itself rather than carried in
- * the URL - a long message in a redirect is how this page started returning
- * headers too big for the browser to accept.
- */
-/** Within this of finishing, an import is what somebody just did rather than history. */
-const JUST_NOW_MS = 2 * 60_000;
-
-function ImportOutcome({
-  row,
-}: {
-  row: {
-    filename: string | null;
-    status: string;
-    error: string | null;
-    report: ImportReport | null;
-    startedAt: Date;
-    finishedAt: Date | null;
-  };
-}) {
-  if (row.status === 'failed') {
-    return (
-      <Notice tone="err">
-        <strong>{row.filename} was not imported.</strong> {row.error}
-      </Notice>
-    );
-  }
-
-  const report = row.report;
-  if (!report) return null;
-
-  // A file of nothing but locked months: read fine, but that attendance is final.
-  if (report.employeesSeen && !report.daysImported && report.daysLocked && !report.daysHeldBack) {
-    return (
-      <Notice tone="info">
-        <strong>Nothing was imported from {row.filename}.</strong> All of its days are in{' '}
-        {(report.lockedMonths ?? []).map((month) => monthLabel(month)).join(', ')}, whose attendance is locked.
-      </Notice>
-    );
-  }
-
-  // A file of nothing but today: read fine, but today is not over, so nothing went in.
-  if (report.employeesSeen && !report.daysImported && report.daysHeldBack) {
-    return (
-      <Notice tone="info">
-        <strong>Nothing was imported from {row.filename}.</strong> It only has today&rsquo;s attendance, which is left out
-        until the day is over. Upload it again tomorrow.
-      </Notice>
-    );
-  }
-
-  // Nothing read is never a success: it means the mapping does not fit the file.
-  if (!report.employeesSeen || !report.daysImported) {
-    return (
-      <Notice tone="err">
-        <strong>Nothing was read from {row.filename}.</strong> The mapping below does not match it — check the column
-        names and the date layout against the file.
-        {report.rejected.length ? ` Every row was skipped: ${report.rejected[0]!.reason}.` : ''}
-      </Notice>
-    );
-  }
-
-  const unresolved = Object.keys(report.unmappedCodes ?? {});
-  const said = (
-    <>
-      Imported {report.daysImported} days for {report.employeesSeen}{' '}
-      {report.employeesSeen === 1 ? 'employee' : 'employees'} from {row.filename}.
-      {report.rejected.length ? ` ${report.rejected.length} rows skipped.` : ''}
-      {report.daysHeldBack ? ` Today’s attendance was left out (${report.daysHeldBack} days), as the day is not over yet.` : ''}
-      {report.daysLocked
-        ? ` ${report.daysLocked} days in ${(report.lockedMonths ?? []).map((month) => monthLabel(month)).join(', ') || 'a locked month'} were skipped: that attendance is locked.`
-        : ''}
-      {report.employeesRestored
-        ? ` ${report.employeesRestored} deleted ${report.employeesRestored === 1 ? 'employee is' : 'employees are'} back, with any cases that were kept when they were deleted.`
-        : ''}
-    </>
-  );
-
-  // Codes with no meaning are work left to do on this page, so they stay put
-  // until somebody deals with them.
-  if (unresolved.length) {
-    return (
-      <Notice tone="err">
-        {said} {unresolved.join(', ')} {unresolved.length === 1 ? 'has' : 'have'} no meaning yet — nobody is messaged
-        about {unresolved.length === 1 ? 'it' : 'them'} until you add {unresolved.length === 1 ? 'it' : 'them'} below.
-      </Notice>
-    );
-  }
-
-  // An import that went through needs no acknowledging: it is said once, in the
-  // corner, and Recent imports below keeps the record.
-  const finished = row.finishedAt ?? row.startedAt;
-  if (Date.now() - finished.getTime() > JUST_NOW_MS) return null;
-  return <Toast>{said}</Toast>;
 }

@@ -15,6 +15,7 @@ import {
   payrollSummary,
   payrollTable,
   payrollWorkbook,
+  removePayroll,
   resolveExcluded,
   resolveMap,
 } from '@/lib/payroll';
@@ -129,6 +130,18 @@ describe('importing a month', () => {
     expect(await withTenant(scenario.tenantId, (tx) => payrollRefusal(tx, scenario.tenantId, '2026-10'))).toBeNull();
     await upload();
     expect(await withTenant(scenario.tenantId, (tx) => payrollRefusal(tx, scenario.tenantId, '2026-10'))).toContain('already been uploaded');
+  });
+
+  it('can be unlocked, which removes it and its rows, and then uploaded again', async () => {
+    await lockedOctober();
+    await withTenant(scenario.tenantId, (tx) => lockMonth(tx, scenario.tenantId, '2026-10', null));
+    await upload();
+    expect(await withTenant(scenario.tenantId, (tx) => removePayroll(tx, scenario.tenantId, '2026-10'))).toBe(true);
+    expect(await withTenant(scenario.tenantId, (tx) => tx.select().from(payrollRows).where(eq(payrollRows.tenantId, scenario.tenantId)))).toEqual([]);
+    expect(await withTenant(scenario.tenantId, (tx) => payrollSummary(tx, scenario.tenantId, scenario.employeeId))).not.toContain('October 2026');
+    expect(await withTenant(scenario.tenantId, (tx) => payrollRefusal(tx, scenario.tenantId, '2026-10'))).toBeNull();
+    expect(await withTenant(scenario.tenantId, (tx) => removePayroll(tx, scenario.tenantId, '2026-10'))).toBe(false);
+    expect(await upload()).toMatchObject({ matched: 1 });
   });
 
   it('matches by code, keeps no identity or bank details, and agrees with the locked attendance', async () => {

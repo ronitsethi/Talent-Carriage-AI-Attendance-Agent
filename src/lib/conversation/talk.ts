@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { PAYROLL_RULES, payrollSummary } from '@/lib/payroll';
+import { LEAVE_RULES, leaveBalanceSummary } from '@/lib/leave-balance';
 import { fromOpenAIUsage, type OpenAIUsage } from '@/lib/models/types';
 import type { Db } from '@/db';
 import { calls, cases, employees, messages } from '@/db/schema';
@@ -71,7 +72,7 @@ type Verdict = {
  * Grounding: the guidelines and the caller's own record
  * ------------------------------------------------------------------ */
 
-export type Grounding = { passages: Passage[]; attendance: string; payroll?: string };
+export type Grounding = { passages: Passage[]; attendance: string; payroll?: string; leave?: string };
 
 /**
  * Searches the guidelines for what was said, and reads the caller's attendance.
@@ -87,12 +88,13 @@ export async function ground(
   said: string,
   budget: 'call' | 'whatsapp' = 'call',
 ): Promise<Grounding> {
-  const [passages, attendance, payroll] = await Promise.all([
+  const [passages, attendance, payroll, leave] = await Promise.all([
     said.trim() ? findPassages(tx, tenantId, said, 8, budget) : Promise.resolve([]),
     timed('attendance_db', () => attendanceSummary(tx, tenantId, employeeId)),
     timed('attendance_db', () => payrollSummary(tx, tenantId, employeeId)),
+    timed('attendance_db', () => leaveBalanceSummary(tx, tenantId, employeeId)),
   ]);
-  return { passages: passages.filter((p) => p.score >= RELEVANCE_FLOOR), attendance, payroll };
+  return { passages: passages.filter((p) => p.score >= RELEVANCE_FLOOR), attendance, payroll, leave };
 }
 
 const PREPARED_TTL_MS = 15_000;
@@ -248,9 +250,9 @@ On a reminder call, ask whether they have done what they were told last time. Se
 once they say. If not done, remind them kindly of what to do. Then the next date, if any.
 
 QUESTIONS
-If they ask something, answer it from the POLICY EXTRACTS and ATTENDANCE given, and nothing else, then come back to the
+If they ask something, answer it from the POLICY EXTRACTS, ATTENDANCE, LEAVE BALANCE and PAYROLL given, and nothing else, then come back to the
 date. Never guess a number, a deadline, an entitlement or a process. Never mention another employee.
-ANSWER FIRST: when the POLICY EXTRACTS or ATTENDANCE cover any part of what they ask, answer that part from them,
+ANSWER FIRST: when the POLICY EXTRACTS, ATTENDANCE, LEAVE BALANCE or PAYROLL cover any part of what they ask, answer that part from them,
 plainly, even though the extracts are not worded as an answer to their exact question - "how do I resign?" is answered
 by what the extracts say about resignation. Explaining a policy or a process the extracts describe is always yours to do.
 WHAT YOU CANNOT DO: call anyone, call back, check with H R, do something for them in the H R M S (apply leave, raise a
@@ -273,7 +275,7 @@ Somebody who thanks you and then asks something is not finished.
 
 Otherwise action is "continue". note: the reason in their own words, in English, when they gave one; otherwise null.`;
 
-const SYSTEM = `${RULES.replace('{outcomes}', outcomeGuide())}\n\n${PAYROLL_RULES}`;
+const SYSTEM = `${RULES.replace('{outcomes}', outcomeGuide())}\n\n${LEAVE_RULES}\n\n${PAYROLL_RULES}`;
 
 /** The same conversation, written on WhatsApp. */
 export const CHAT_SYSTEM = SYSTEM.replace('on a phone call with one of its employees', 'in a WhatsApp chat with one of its employees')
@@ -529,6 +531,7 @@ function describe(ctx: TalkContext, s: Situation): string {
     lines.push('', `POLICY EXTRACTS\n${s.grounding.passages.map((p) => `[${p.title}] ${p.text}`).join('\n\n')}`);
   }
   if (s.grounding?.attendance) lines.push('', `ATTENDANCE\n${s.grounding.attendance}`);
+  if (s.grounding?.leave) lines.push('', `LEAVE BALANCE\n${s.grounding.leave}`);
   if (s.grounding?.payroll) lines.push('', `PAYROLL\n${s.grounding.payroll}`);
   const reply = spokenLanguage(s.said ?? '', preferred, languageSoFar(s.history, preferred));
   if (chat) {

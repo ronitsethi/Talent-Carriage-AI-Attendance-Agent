@@ -14,6 +14,7 @@ import {
   Menu,
   MessagesSquare,
   SlidersHorizontal,
+  Upload,
   UserCheck,
   Users,
   type LucideIcon,
@@ -31,8 +32,9 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/queries', label: 'Queries', icon: MessagesSquare },
   { href: '/employees', label: 'Employees', icon: ContactRound },
   { href: '/managers', label: 'Managers', icon: UserCheck },
-  { href: '/mapping', label: 'Mapping & import', icon: ArrowLeftRight },
+  { href: '/uploads', label: 'Uploads', icon: Upload },
   { href: '/month-end', label: 'Month end', icon: CalendarCheck },
+  { href: '/mapping', label: 'Mapping', icon: ArrowLeftRight },
   { href: '/knowledge', label: 'Guidelines', icon: BookOpen },
   { href: '/settings', label: 'Settings', icon: SlidersHorizontal },
 ];

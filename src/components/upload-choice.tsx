@@ -29,7 +29,7 @@ export function UploadChoice({
 
   const justUpdate = () => {
     dialog.current?.close();
-    router.replace('/mapping', { scroll: false });
+    router.replace('/uploads', { scroll: false });
   };
 
   return (

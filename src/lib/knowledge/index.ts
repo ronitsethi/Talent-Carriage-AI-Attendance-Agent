@@ -1,5 +1,7 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { PAYROLL_RULES, payrollSummary } from '@/lib/payroll';
+import { LEAVE_RULES, leaveBalanceSummary } from '@/lib/leave-balance';
+import { isLeaveKind, leaveTakenLines, loadCodeBook } from '@/lib/leave-types';
 import { fromOpenAIUsage, type OpenAIUsage } from '@/lib/models/types';
 import { RAISE_TICKET } from '@/lib/conversation/flow';
 import type { Db } from '@/db';
@@ -206,17 +208,23 @@ export async function findPassages(
  */
 export async function attendanceSummary(tx: Db, tenantId: string, employeeId: string): Promise<string> {
   const rows = await tx
-    .select({ date: attendanceDays.attDate, meaning: attendanceDays.meaning })
+    .select({ date: attendanceDays.attDate, meaning: attendanceDays.meaning, rawStatus: attendanceDays.rawStatus })
     .from(attendanceDays)
     .where(and(eq(attendanceDays.tenantId, tenantId), eq(attendanceDays.employeeId, employeeId)))
     .orderBy(attendanceDays.attDate);
 
   if (!rows.length) return 'No attendance has been imported for this employee.';
 
+  // Leave by its kind (Earned, Casual, Sick...), from each day's own code, so it
+  // can be set against the leave balance type by type. Leave days are then told
+  // only there, where a half day of leave counts half, not again below as days.
+  const taken = leaveTakenLines(rows, await loadCodeBook(tx, tenantId));
+
   const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const byMonth = new Map<string, Map<string, string[]>>();
 
   for (const row of rows) {
+    if (taken.length && isLeaveKind(row.meaning)) continue;
     const [year, month, day] = row.date.split('-');
     const key = `${MONTHS[Number(month) - 1]} ${year}`;
     const label = MEANING_LABELS[row.meaning as Meaning] ?? row.meaning;
@@ -239,6 +247,7 @@ export async function attendanceSummary(tx: Db, tenantId: string, employeeId: st
     `Attendance on record from ${rows[0]!.date} to ${rows[rows.length - 1]!.date}.`,
     'Each line is a separate kind of day. A weekly off or a holiday is not an absence.',
     ...lines,
+    ...taken,
   ].join('\n');
 }
 
@@ -253,8 +262,9 @@ export type Answer = {
 
 const ANSWER_RULES = `You answer an employee's question on a phone call, on behalf of their employer.
 
-Answer ONLY from the policy extracts and the attendance record given to you. They are the
-company's own documents and this employee's own record; nothing else is true here.
+Answer ONLY from the policy extracts, the attendance record, the leave balance and the payroll
+given to you. They are the company's own documents and this employee's own records; nothing
+else is true here.
 
 Refuse only when the extracts genuinely do not cover the question, or it asks for something
 you cannot do (call back, check with HR, give a number, an amount or a date you were not
@@ -278,6 +288,8 @@ finished.
 
 Set answered to false only when you had to send them to HR because nothing given to you
 covers it.
+
+${LEAVE_RULES}
 
 ${PAYROLL_RULES}`;
 
@@ -348,13 +360,14 @@ async function prepareAnswer(tx: Db, tenantId: string, question: string, opts: A
   }
 
   // Neither lookup needs the other, and on a call both are silence.
-  const [passages, attendance, payroll] = await Promise.all([
+  const [passages, attendance, payroll, leave] = await Promise.all([
     findPassages(tx, tenantId, question, 10, opts.budget),
     opts.employeeId ? timed('attendance_db', () => attendanceSummary(tx, tenantId, opts.employeeId!)) : '',
     opts.employeeId ? timed('attendance_db', () => payrollSummary(tx, tenantId, opts.employeeId!)) : '',
+    opts.employeeId ? timed('attendance_db', () => leaveBalanceSummary(tx, tenantId, opts.employeeId!)) : '',
   ]);
   const relevant = passages.filter((p) => p.score >= RELEVANCE_FLOOR);
-  if (!relevant.length && !attendance) {
+  if (!relevant.length && !attendance && !leave && !payroll) {
     return {
       ready: {
         text: RAISE_TICKET,
@@ -368,6 +381,7 @@ async function prepareAnswer(tx: Db, tenantId: string, question: string, opts: A
   const context = [
     relevant.length ? `POLICY EXTRACTS\n${relevant.map((p) => `[${p.title}] ${p.text}`).join('\n\n')}` : '',
     attendance ? `THIS EMPLOYEE'S OWN ATTENDANCE${opts.employeeName ? ` (${opts.employeeName})` : ''}\n${attendance}` : '',
+    leave ? `LEAVE BALANCE\n${leave}` : '',
     payroll ? `PAYROLL\n${payroll}` : '',
   ]
     .filter(Boolean)

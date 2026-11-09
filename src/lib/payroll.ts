@@ -20,7 +20,7 @@ import { isLocked, monthLabel } from '@/lib/locks';
  * the final attendance and the salary actually paid.
  *
  * Every payroll system names its columns its own way, so each customer has a
- * payroll mapping, set up on Mapping & import like the attendance one: which
+ * payroll mapping, set up on Mapping like the attendance one: which
  * heading is the employee code, days in the month, paid days, the monthly rate,
  * gross, deductions, net and arrears, and which headings are not kept. A sample
  * file can fill the form in (`detectFields`), and nothing counts until HR saves
@@ -248,7 +248,20 @@ export async function payrollRefusal(tx: Db, tenantId: string, month: string): P
     .from(payrollUploads)
     .where(and(eq(payrollUploads.tenantId, tenantId), eq(payrollUploads.month, month)))
     .limit(1);
-  return already ? `${monthLabel(month)}'s payroll has already been uploaded.` : null;
+  return already ? `${monthLabel(month)}'s payroll has already been uploaded. To replace it, unlock its payroll in the Months table first.` : null;
+}
+
+/**
+ * Unlocks a month's payroll for a fresh upload: the upload and every row read
+ * from it go, so the agent has no salary for that month until the right file is
+ * in. The attendance lock stays. False when the month had no payroll.
+ */
+export async function removePayroll(tx: Db, tenantId: string, month: string): Promise<boolean> {
+  const removed = await tx
+    .delete(payrollUploads)
+    .where(and(eq(payrollUploads.tenantId, tenantId), eq(payrollUploads.month, month)))
+    .returning({ id: payrollUploads.id });
+  return removed.length > 0;
 }
 
 export async function payrollProfile(tx: Db, tenantId: string) {

@@ -6,6 +6,9 @@ import {
   attendanceLocks,
   payrollProfiles,
   payrollUploads,
+  leaveBalanceProfiles,
+  leaveBalanceUploads,
+  leaveBalances,
   users,
   coePeople,
   actions,
@@ -763,7 +766,50 @@ export async function monthEndOverview(tenantId: string) {
   });
 }
 
-/** The payroll mapping for Mapping & import: saved, and a sample read in and not saved, if any. */
+/**
+ * Uploads: attendance and leave balances, the files sent most often. Whether
+ * each has a mapping to be read with, what the last few uploads did, and the
+ * codes an attendance file brought in that nobody has explained.
+ */
+export async function uploadsOverview(tenantId: string) {
+  return withTenant(tenantId, async (tx) => {
+    const profile = await tx.query.mappingProfiles.findFirst({
+      where: and(eq(mappingProfiles.tenantId, tenantId), eq(mappingProfiles.status, 'active')),
+      columns: { id: true },
+    });
+    const unmapped = await tx
+      .select({ code: unmappedCodes.code })
+      .from(unmappedCodes)
+      .where(and(eq(unmappedCodes.tenantId, tenantId), isNull(unmappedCodes.resolvedAt)));
+    const recentImports = await tx.select().from(imports).where(eq(imports.tenantId, tenantId)).orderBy(desc(imports.startedAt)).limit(5);
+    const leave = await tx.query.leaveBalanceProfiles.findFirst({ where: eq(leaveBalanceProfiles.tenantId, tenantId), columns: { fieldMap: true } });
+    const leaveUploads = await tx
+      .select()
+      .from(leaveBalanceUploads)
+      .where(eq(leaveBalanceUploads.tenantId, tenantId))
+      .orderBy(desc(leaveBalanceUploads.uploadedAt))
+      .limit(5);
+    const [held] = await tx
+      .select({ people: sql<number>`count(distinct ${leaveBalances.employeeId})::int` })
+      .from(leaveBalances)
+      .where(eq(leaveBalances.tenantId, tenantId));
+    return {
+      attendanceMapped: Boolean(profile),
+      unmapped: unmapped.map((u) => u.code),
+      recentImports,
+      leaveMapped: Boolean(leave?.fieldMap),
+      leaveUploads,
+      peopleWithBalances: held?.people ?? 0,
+    };
+  });
+}
+
+/** The leave balance mapping for Mapping: saved, and a sample read in and not saved, if any. */
+export async function leaveMappingOverview(tenantId: string) {
+  return withTenant(tenantId, async (tx) => (await tx.query.leaveBalanceProfiles.findFirst({ where: eq(leaveBalanceProfiles.tenantId, tenantId) })) ?? null);
+}
+
+/** The payroll mapping for Mapping: saved, and a sample read in and not saved, if any. */
 export async function payrollMappingOverview(tenantId: string) {
   return withTenant(tenantId, async (tx) => (await tx.query.payrollProfiles.findFirst({ where: eq(payrollProfiles.tenantId, tenantId) })) ?? null);
 }

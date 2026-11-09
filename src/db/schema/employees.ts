@@ -4,8 +4,8 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
-  smallint,
   text,
   time,
   timestamp,
@@ -13,6 +13,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
+import { leaveBalanceUploads } from './leave';
 
 export const employees = pgTable(
   'employees',
@@ -177,7 +178,13 @@ export const calendarDays = pgTable(
   (t) => [uniqueIndex('calendar_days_key').on(t.calendarId, t.day)],
 );
 
-/** Leave balances as last read from the HRMS, so the agent can answer without a live call. */
+/**
+ * Each employee's leave balance per leave type, so the agent can answer "how
+ * many leaves do I have left?" without a live call. It comes from an uploaded
+ * leave balance file (`source` upload) or as last read from the HRMS (`hrms`).
+ * Half days are kept. `pendingDays` is leave applied and not yet approved, and
+ * `balanceAfterPending` what is left once it is.
+ */
 export const leaveBalances = pgTable(
   'leave_balances',
   {
@@ -189,7 +196,12 @@ export const leaveBalances = pgTable(
       .notNull()
       .references(() => employees.id, { onDelete: 'cascade' }),
     leaveType: text('leave_type').notNull(),
-    balanceDays: smallint('balance_days').notNull(),
+    leaveName: text('leave_name'),
+    balanceDays: numeric('balance_days', { mode: 'number' }).notNull(),
+    pendingDays: numeric('pending_days', { mode: 'number' }),
+    balanceAfterPending: numeric('balance_after_pending', { mode: 'number' }),
+    source: text('source').notNull().default('hrms'),
+    uploadId: uuid('upload_id').references(() => leaveBalanceUploads.id, { onDelete: 'set null' }),
     asOf: timestamp('as_of', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('leave_balances_key').on(t.employeeId, t.leaveType)],

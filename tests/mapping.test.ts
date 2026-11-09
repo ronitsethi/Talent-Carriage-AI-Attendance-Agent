@@ -131,7 +131,7 @@ describe('a completely different shape: one row per day, single codes, split nam
 
   it('maps single codes, including a half day', () => {
     const meera = result.records.find((r) => r.employee.empCode === 'E-1')!;
-    expect(meera.days.map((d) => d.meaning)).toEqual(['absent_full', 'leave_approved', 'absent_half_unspecified']);
+    expect(meera.days.map((d) => d.meaning)).toEqual(['absent_full', 'leave_casual', 'absent_half_unspecified']);
   });
 
   it('reports an unknown code instead of guessing at it', () => {

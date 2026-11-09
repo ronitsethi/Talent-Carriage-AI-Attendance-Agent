@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { withPlatformScope, withTenant, type Db } from '@/db';
-import type { FollowUpContact, PayrollFieldMap } from '@/db/schema';
+import type { FollowUpContact, LeaveFieldMap, PayrollFieldMap } from '@/db/schema';
 import {
   actions,
   approvals,
@@ -21,6 +21,8 @@ import {
   managers,
   employees,
   imports,
+  leaveBalanceProfiles,
+  leaveBalanceUploads,
   mappingProfiles,
   messages,
   policyDocuments,
@@ -65,9 +67,19 @@ import {
   payrollProfile,
   payrollRefusal,
   payrollTable,
+  removePayroll,
   resolveExcluded,
   resolveMap,
 } from '@/lib/payroll';
+import {
+  LEAVE_FIELDS,
+  detectLeaveFields,
+  importLeaveBalances,
+  leaveProfile,
+  leaveTable,
+  missingLeaveFields,
+  resolveLeaveMap,
+} from '@/lib/leave-balance';
 import { listQueryTypes, parseQueryTypeSheet, replaceQueryTypes } from '@/lib/query-types';
 import { PRIORITIES, closeTicket, queueAssignmentWork, type Priority } from '@/lib/tickets';
 import { sendApprovalRequest } from '@/lib/approvals';
@@ -330,11 +342,12 @@ export async function importAttendance(formData: FormData) {
     );
   }
 
+  revalidatePath('/uploads');
   revalidatePath('/mapping');
   revalidatePath('/cases');
   revalidatePath('/');
   // The page asks what to do next from here, when this customer sends after uploads.
-  if (outcome?.importId) redirect(`/mapping?uploaded=${outcome.importId}&resolved=${outcome.closed}&removed=${outcome.removed}`);
+  if (outcome?.importId) redirect(`/uploads?uploaded=${outcome.importId}&resolved=${outcome.closed}&removed=${outcome.removed}`);
 }
 
 /** HR chose to send after an upload: everything due goes out once the customer's time period is up. */
@@ -343,7 +356,7 @@ export async function sendAfterUpload(formData: FormData) {
   const { people, delayMinutes } = await startUploadSend(tenantId, String(formData.get('importId') ?? ''));
   revalidatePath('/');
   revalidatePath('/cases');
-  redirect(`/mapping?scheduled=${people}&after=${delayMinutes}`);
+  redirect(`/uploads?scheduled=${people}&after=${delayMinutes}`);
 }
 
 /**
@@ -823,12 +836,12 @@ export async function unlockAttendance(formData: FormData) {
  * ------------------------------------------------------------------ */
 
 const back = (params: Record<string, string>) => `/month-end?${new URLSearchParams(params).toString()}#payroll`;
-const toMapping = (params: Record<string, string>) => `/mapping?${new URLSearchParams(params).toString()}#payroll-mapping`;
+const toMapping = (params: Record<string, string>) => `/mapping?${new URLSearchParams({ tab: 'payroll', ...params }).toString()}`;
 
 /**
  * A month's payroll file, read with this customer's saved payroll mapping. A
  * file that does not fit the mapping is refused with what is missing, and the
- * mapping is fixed on Mapping & import.
+ * mapping is fixed on Mapping.
  */
 export async function uploadPayroll(formData: FormData) {
   const { session, tenantId } = await requireTenant();
@@ -841,7 +854,7 @@ export async function uploadPayroll(formData: FormData) {
 
   const outcome = await withTenant(tenantId, async (tx) => {
     const profile = await payrollProfile(tx, tenantId);
-    if (!profile?.fieldMap) return { problem: 'Set up the payroll mapping on Mapping & import first.' };
+    if (!profile?.fieldMap) return { problem: 'Set up the payroll mapping on Mapping first.' };
     const refused = await payrollRefusal(tx, tenantId, month);
     if (refused) return { problem: refused };
     let table;
@@ -856,7 +869,7 @@ export async function uploadPayroll(formData: FormData) {
     if (wrongCompany) return { problem: wrongCompany };
     const fits = resolveMap(profile.fieldMap, table.columns);
     if ('missing' in fits) {
-      return { problem: `${file.name} does not match the payroll mapping. It has no column ${fits.missing.join(', ')}. Fix the mapping on Mapping & import, or check the file.` };
+      return { problem: `${file.name} does not match the payroll mapping. It has no column ${fits.missing.join(', ')}. Fix the mapping on Mapping, or check the file.` };
     }
     const fileMonth = monthInFile(table);
     if (fileMonth && fileMonth !== month) return { problem: `${file.name} is the payroll for ${monthLabel(fileMonth)}, not ${monthLabel(month)}.` };
@@ -873,6 +886,21 @@ export async function uploadPayroll(formData: FormData) {
   revalidatePath('/month-end');
   if ('problem' in outcome && outcome.problem) redirect(back({ problem: outcome.problem }));
   redirect(back({ payroll: (outcome as { imported: string }).imported }));
+}
+
+/**
+ * Unlocks a month's payroll so it can be uploaded again, when the wrong file
+ * went in or it had mistakes. Its rows are removed; the attendance stays locked.
+ */
+export async function unlockPayroll(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can unlock payroll');
+  const month = String(formData.get('month') ?? '');
+  if (!isMonth(month)) redirect(back({ problem: 'Choose the month whose payroll to unlock.' }));
+  const removed = await withTenant(tenantId, (tx) => removePayroll(tx, tenantId, month));
+  revalidatePath('/month-end');
+  if (!removed) redirect(back({ problem: `${monthLabel(month)} has no payroll to unlock.` }));
+  redirect(back({ payrollUnlocked: month }));
 }
 
 /**
@@ -938,7 +966,100 @@ export async function discardPayrollDraft() {
   if (!canManageSettings(session)) throw new Error('Only an admin can set up the payroll mapping');
   await withTenant(tenantId, (tx) => tx.update(payrollProfiles).set({ draft: null }).where(eq(payrollProfiles.tenantId, tenantId)));
   revalidatePath('/mapping');
-  redirect('/mapping#payroll-mapping');
+  redirect('/mapping?tab=payroll');
+}
+
+/* ------------------------------------------------------------------ *
+ * Leave balances: uploaded on Uploads, read with the mapping on Mapping
+ * ------------------------------------------------------------------ */
+
+const toLeaveMapping = (params: Record<string, string>) => `/mapping?${new URLSearchParams({ tab: 'leave', ...params }).toString()}`;
+const toUploads = (params: Record<string, string>) => `/uploads?${new URLSearchParams(params).toString()}#leave-balance`;
+
+/**
+ * A leave balance file, read with this customer's saved leave balance mapping.
+ * Everyone in it has their balances replaced; the agent answers from them next.
+ */
+export async function uploadLeaveBalances(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  const file = formData.get('file');
+  if (!(file instanceof File) || file.size === 0) redirect(toUploads({ leaveProblem: 'Choose the leave balance file.' }));
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  const outcome = await withTenant(tenantId, async (tx) => {
+    const profile = await leaveProfile(tx, tenantId);
+    if (!profile?.fieldMap) return { problem: 'Set up the leave balance mapping on Mapping first.' };
+    let table;
+    try {
+      table = leaveTable(buffer);
+    } catch (error) {
+      return { problem: `${file.name} could not be read: ${(error as Error).message}` };
+    }
+    const customer = await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId), columns: { name: true } });
+    const wrongCompany = customer ? companyRefusal(table, customer.name, file.name, 'leave balance') : null;
+    if (wrongCompany) return { problem: wrongCompany };
+    const fits = resolveLeaveMap(profile.fieldMap, table.columns);
+    if ('missing' in fits) {
+      return { problem: `${file.name} does not match the leave balance mapping. It has no column ${fits.missing.join(', ')}. Fix the mapping on Mapping, or check the file.` };
+    }
+    const [upload] = await tx.insert(leaveBalanceUploads).values({ tenantId, filename: file.name, uploadedBy: session.userId }).returning();
+    const report = await importLeaveBalances(tx, tenantId, upload!.id, table, fits.map);
+    await tx.update(leaveBalanceUploads).set({ report }).where(eq(leaveBalanceUploads.id, upload!.id));
+    return { uploadId: upload!.id };
+  });
+
+  revalidatePath('/uploads');
+  if ('problem' in outcome && outcome.problem) redirect(toUploads({ leaveProblem: outcome.problem }));
+  redirect(toUploads({ leave: (outcome as { uploadId: string }).uploadId }));
+}
+
+/** "Fill the form from a file" for the leave balance mapping. Nothing is saved until HR presses Save. */
+export async function analyseLeaveFile(formData: FormData) {
+  const { tenantId } = await requireTenant();
+  const file = formData.get('file');
+  if (!(file instanceof File) || file.size === 0) redirect(toLeaveMapping({ problem: 'Choose a leave balance file.' }));
+  let table;
+  try {
+    table = leaveTable(Buffer.from(await file.arrayBuffer()));
+  } catch (error) {
+    redirect(toLeaveMapping({ problem: `${file.name} could not be read: ${(error as Error).message}` }));
+  }
+  const draft = { fieldMap: detectLeaveFields(table.columns), columns: table.columns, filename: file.name };
+  await withTenant(tenantId, (tx) =>
+    tx.insert(leaveBalanceProfiles).values({ tenantId, draft }).onConflictDoUpdate({ target: leaveBalanceProfiles.tenantId, set: { draft } }),
+  );
+  revalidatePath('/mapping');
+  redirect(toLeaveMapping({ leaveFilled: '1' }));
+}
+
+/** Saves the leave balance mapping. Every upload from then on is read with it. */
+export async function saveLeaveMapping(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  const map = Object.fromEntries(
+    LEAVE_FIELDS.map((field) => [field.key, String(formData.get(`leave_${field.key}`) ?? '').replace(/\s+/g, ' ').trim() || null]),
+  ) as unknown as LeaveFieldMap;
+  const missing = missingLeaveFields(map);
+  if (missing.length) redirect(toLeaveMapping({ problem: `Fill in the leave balance column for: ${missing.join(', ')}.` }));
+  const chosen = Object.values(map).filter((heading): heading is string => Boolean(heading)).map((heading) => heading.toLowerCase());
+  if (new Set(chosen).size !== chosen.length) redirect(toLeaveMapping({ problem: 'Each leave balance column can only be used for one thing.' }));
+
+  await withTenant(tenantId, async (tx) => {
+    const current = await leaveProfile(tx, tenantId);
+    const columns = current?.draft?.columns ?? current?.columns ?? [];
+    const values = { fieldMap: map, columns, draft: null, savedAt: new Date(), savedBy: session.userId };
+    await tx.insert(leaveBalanceProfiles).values({ tenantId, ...values }).onConflictDoUpdate({ target: leaveBalanceProfiles.tenantId, set: values });
+  });
+  revalidatePath('/mapping');
+  revalidatePath('/uploads');
+  redirect(toLeaveMapping({ leaveSaved: '1' }));
+}
+
+/** Throws away a leave balance mapping filled from a file and not saved. */
+export async function discardLeaveDraft() {
+  const { tenantId } = await requireTenant();
+  await withTenant(tenantId, (tx) => tx.update(leaveBalanceProfiles).set({ draft: null }).where(eq(leaveBalanceProfiles.tenantId, tenantId)));
+  revalidatePath('/mapping');
+  redirect('/mapping?tab=leave');
 }
 
 /** HR chose Send after unlocking: what is due goes out, as after an upload. */

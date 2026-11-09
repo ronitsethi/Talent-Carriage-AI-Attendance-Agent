@@ -225,6 +225,20 @@
       "when": 1791347199269,
       "tag": "0031_payroll",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791433599269,
+      "tag": "0032_leave_balances",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791519999269,
+      "tag": "0033_leave_kinds",
+      "breakpoints": true
     }
   ]
 }

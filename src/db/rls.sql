@@ -39,7 +39,8 @@ DECLARE
     'actions', 'approvals',
     'policy_packs', 'policy_sources', 'policy_chunks', 'managers', 'cost_lines',
     'ai_decisions', 'calls', 'queries', 'usage_events', 'consent_events',
-    'attendance_locks', 'payroll_profiles', 'payroll_uploads', 'payroll_rows'
+    'attendance_locks', 'payroll_profiles', 'payroll_uploads', 'payroll_rows',
+    'leave_balance_profiles', 'leave_balance_uploads'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

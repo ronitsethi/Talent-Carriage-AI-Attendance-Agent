@@ -7,7 +7,7 @@ import { PAYROLL_FIELDS, isSensitive } from '@/lib/payroll';
 import { payrollMappingOverview } from '@/lib/queries';
 
 /**
- * The payroll mapping, on Mapping & import beside the attendance one: which
+ * The payroll mapping, on Mapping beside the attendance and leave balance ones: which
  * column of this customer's payroll file is which, and which columns the agent
  * may read. A sample file can fill the form in; nothing is used until it is
  * saved. Payroll uploads on Month end are read with the saved mapping.

@@ -29,7 +29,7 @@ export type PayrollReport = {
 export type PayrollDraft = { fieldMap: Partial<PayrollFieldMap>; columns: string[]; excluded: string[]; filename: string };
 
 /**
- * How one customer's payroll file reads, set up on Mapping & import like the
+ * How one customer's payroll file reads, set up on Mapping like the
  * attendance mapping: which heading is which of the few columns the platform
  * works with, and which headings are not kept. `fieldMap` is null until it is
  * first saved. `columns` are the headings of the sample it was set up from, for
@@ -47,7 +47,7 @@ export const payrollProfiles = pgTable('payroll_profiles', {
   savedBy: uuid('saved_by').references(() => users.id, { onDelete: 'set null' }),
 });
 
-/** One payroll file for one month, read with the customer's payroll mapping. A month's payroll goes in once. */
+/** One payroll file for one month, read with the customer's payroll mapping. A month has one at a time; unlocking it removes it for a fresh upload. */
 export const payrollUploads = pgTable(
   'payroll_uploads',
   {

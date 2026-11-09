@@ -140,11 +140,12 @@ async function pickLeaveType(ctx: ActionContext, employee: EmployeeRow) {
         tenantId: ctx.tenantId,
         employeeId: employee.id,
         leaveType: balance.leaveType,
-        balanceDays: Math.floor(balance.balanceDays),
+        balanceDays: balance.balanceDays,
+        source: 'hrms',
       })
       .onConflictDoUpdate({
         target: [leaveBalances.employeeId, leaveBalances.leaveType],
-        set: { balanceDays: Math.floor(balance.balanceDays), asOf: new Date() },
+        set: { balanceDays: balance.balanceDays, source: 'hrms', uploadId: null, asOf: new Date() },
       });
   }
 

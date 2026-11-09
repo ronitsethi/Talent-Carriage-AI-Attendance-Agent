@@ -1,7 +1,7 @@
 /**
  * A customer's files are only ever imported into that customer.
  *
- * Attendance registers and salary registers name the company on every row. That
+ * Attendance registers, salary registers and leave balance files name the company on every row. That
  * column is found by its heading - nothing to map - and every name in it must be
  * the customer being viewed. Names are compared loosely, because the portal
  * calls a customer "DPOD Lifestyle" while its files say "Dpod Lifestyle Private
@@ -48,7 +48,7 @@ export function companyRefusal(
   table: { columns: string[]; rows: Record<string, unknown>[] },
   customer: string,
   filename: string,
-  kind: 'attendance' | 'payroll',
+  kind: 'attendance' | 'payroll' | 'leave balance',
 ): string | null {
   const column = companyColumn(table.columns);
   if (!column) return null;

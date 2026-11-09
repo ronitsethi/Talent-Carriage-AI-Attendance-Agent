@@ -4,7 +4,8 @@ import { monthEndOverview } from '@/lib/queries';
 import { formatTime } from '@/lib/display';
 import { monthLabel } from '@/lib/locks';
 import Link from 'next/link';
-import { uploadPayroll } from '@/app/actions';
+import { unlockPayroll, uploadPayroll } from '@/app/actions';
+import { ConfirmSubmit } from '@/components/confirm';
 import { AttendanceLockCard, type LockParams } from '@/components/attendance-lock-card';
 import { FileDrop } from '@/components/file-drop';
 import { Notice } from '@/components/notice';
@@ -13,12 +14,13 @@ import type { PayrollReport } from '@/db/schema';
 /**
  * Month end: a month's attendance is locked once it is final, and only then can
  * its payroll go in - once. The agent answers salary questions from the two
- * together. Final attendance and payroll can be downloaded month by month.
+ * together. A payroll uploaded wrong can be unlocked, which removes it, and
+ * uploaded again. Final attendance and payroll can be downloaded month by month.
  */
 export default async function MonthEndPage({
   searchParams,
 }: {
-  searchParams: Promise<LockParams & { problem?: string; payroll?: string }>;
+  searchParams: Promise<LockParams & { problem?: string; payroll?: string; payrollUnlocked?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -48,6 +50,12 @@ export default async function MonthEndPage({
         </Notice>
       ) : null}
       {imported?.report ? <PayrollOutcome month={imported.month} report={imported.report} /> : null}
+      {params.payrollUnlocked ? (
+        <Notice tone="ok" clear={['payrollUnlocked']}>
+          <strong>{monthLabel(params.payrollUnlocked)}&apos;s payroll is unlocked.</strong> The old file and its rows are removed, and
+          the agent has no salary for that month until the right file is uploaded below.
+        </Notice>
+      ) : null}
 
       <AttendanceLockCard tenantId={tenantId} admin={admin} params={params} />
 
@@ -57,13 +65,13 @@ export default async function MonthEndPage({
         </div>
         <p className="card-desc">
           One payroll file per month, uploaded after that month&apos;s attendance is locked, and read with the payroll
-          mapping set up on Mapping &amp; import. Only an employee&apos;s own row is read to them when they ask. PAN, Aadhaar and
+          mapping set up on Mapping. Only an employee&apos;s own row is read to them when they ask. PAN, Aadhaar and
           bank details are never kept.{admin ? '' : ' Only an admin can upload payroll.'}
         </p>
 
         {admin && !mapped ? (
           <p className="hint">
-            Set up the payroll mapping on <Link href="/mapping#payroll-mapping">Mapping &amp; import</Link> first: which
+            Set up the payroll mapping on <Link href="/mapping?tab=payroll">Mapping</Link> first: which
             column of the payroll file is which, as for attendance. Payroll can be uploaded once it is saved.
           </p>
         ) : admin ? (
@@ -71,7 +79,12 @@ export default async function MonthEndPage({
             <form action={uploadPayroll} className="upload-row payroll-upload">
               <div className="field" style={{ minWidth: 200 }}>
                 <label htmlFor="payroll-month">Month</label>
-                <select className="input" id="payroll-month" name="month" defaultValue={open[0]}>
+                <select
+                  className="input"
+                  id="payroll-month"
+                  name="month"
+                  defaultValue={params.payrollUnlocked && open.includes(params.payrollUnlocked) ? params.payrollUnlocked : open[0]}
+                >
                   {open.map((month) => (
                     <option key={month} value={month}>
                       {monthLabel(month)}
@@ -140,9 +153,28 @@ export default async function MonthEndPage({
                           <span className="sub">Lock to download</span>
                         )}
                         {payroll && admin ? (
-                          <a className="btn small" href={`/api/exports/payroll?month=${month}`}>
-                            Payroll
-                          </a>
+                          <>
+                            <a className="btn small" href={`/api/exports/payroll?month=${month}`}>
+                              Payroll
+                            </a>
+                            <form action={unlockPayroll}>
+                              <input type="hidden" name="month" value={month} />
+                              <ConfirmSubmit
+                                label="Unlock payroll"
+                                className="btn small"
+                                tone="danger"
+                                title={`Unlock ${monthLabel(month, new Date(0))}'s payroll?`}
+                                message={
+                                  <p>
+                                    The uploaded file{payroll.filename ? ` (${payroll.filename})` : ''} and every salary row read from it
+                                    are removed, so the right file can be uploaded again. Until then the agent cannot answer salary
+                                    questions for this month. The attendance stays locked.
+                                  </p>
+                                }
+                                confirmLabel="Unlock payroll"
+                              />
+                            </form>
+                          </>
                         ) : null}
                       </div>
                     </td>
@@ -174,6 +206,7 @@ function PayrollOutcome({ month, report }: { month: string; report: PayrollRepor
         <> {report.unmatched.length} codes are not employees here, so nobody can be told about those rows: {report.unmatched.slice(0, 10).join(', ')}{report.unmatched.length > 10 ? '…' : ''}.</>
       ) : null}
       {report.dropped.length ? <> Not kept: {report.dropped.join(', ')}.</> : null}
+      <> Wrong file or mistakes in it? Use Unlock payroll in the Months table below and upload it again.</>
       {report.warnings.length ? (
         <details className="payroll-warnings">
           <summary>
