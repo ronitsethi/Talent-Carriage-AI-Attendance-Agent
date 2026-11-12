@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { claimLockReply, LOCKED_REASON, managerLockReply, monthOf } from '@/lib/locks';
 import { waitForLine } from '@/lib/voice/waiting';
 import type { Db } from '@/db';
@@ -13,6 +13,7 @@ import { decisionSentence, placeApprovalCall } from '@/lib/voice/approval-calls'
 import type { VoiceContext } from '@/lib/voice/session';
 import { instructionFor, OUTCOMES, type ApplicationStage, type LeaveChoice, type OutcomeCode } from '@/lib/conversation/outcomes';
 import { executeAction } from '@/lib/actions/engine';
+import { requestCases, requestDates, type ActionRow } from '@/lib/approval-dates';
 
 /**
  * The manager's side of every leave, regularisation, On-Duty and comp-off.
@@ -121,6 +122,8 @@ type Request = {
   via: 'whatsapp' | 'call';
   /** With `overdue`: how many follow-ups went unanswered by action. */
   followUps?: number;
+  /** Other dates answered together with this one: one request decides them all. */
+  alsoCases?: CaseRow[];
 };
 
 /**
@@ -190,11 +193,38 @@ export async function requestManagerApproval(
     })
     .returning();
 
+  // The other dates answered with this one: an action each, decided by the same request.
+  const also: ActionRow[] = [];
+  for (const other of request.alsoCases ?? []) {
+    if (other.id === caseRow.id) continue;
+    const key = `${application.action}:${employee.id}:${other.attDate}`;
+    const [row] = await ctx.tx
+      .insert(actions)
+      .values({
+        tenantId: ctx.tenantId,
+        caseId: other.id,
+        employeeId: employee.id,
+        type: application.action,
+        status: 'awaiting_approval',
+        inputs: { ...inputs, date: other.attDate },
+        requestedVia: request.via === 'call' ? 'voice' : 'whatsapp',
+        idempotencyKey: key,
+        connector: agentApplies ? ctx.hrms!.name : null,
+      })
+      .onConflictDoUpdate({
+        target: [actions.tenantId, actions.idempotencyKey],
+        set: { status: 'awaiting_approval', inputs: { ...inputs, date: other.attDate }, caseId: other.id, updatedAt: at },
+      })
+      .returning();
+    also.push(row!);
+  }
+  const allCaseIds = [caseRow.id, ...also.map((row) => row.caseId!)];
+
   if (!manager) {
     await ctx.tx
       .update(cases)
       .set({ status: 'needs_hr', needsHrReason: 'No manager in the file to approve it', followUpDueAt: null, updatedAt: at })
-      .where(eq(cases.id, caseRow.id));
+      .where(inArray(cases.id, allCaseIds));
     return { managerReached: false, manager: null, approvalId: null };
   }
 
@@ -202,7 +232,7 @@ export async function requestManagerApproval(
   await ctx.tx
     .update(approvals)
     .set({ decision: 'expired', respondedAt: at })
-    .where(and(eq(approvals.actionId, action!.id), eq(approvals.decision, 'pending')));
+    .where(and(inArray(approvals.actionId, [action!.id, ...also.map((row) => row.id)]), eq(approvals.decision, 'pending')));
   const [approval] = await ctx.tx
     .insert(approvals)
     .values({
@@ -212,12 +242,13 @@ export async function requestManagerApproval(
       approverManagerId: manager.id,
       channel: 'whatsapp',
       timeoutAt: new Date(at.getTime() + ctx.settings.approvalTimeoutHours * 3600_000),
+      covers: also.map((row) => row.id),
     })
     .returning();
   await ctx.tx
     .update(cases)
     .set({ status: 'awaiting_approval', followUpDueAt: null, updatedAt: at })
-    .where(eq(cases.id, caseRow.id));
+    .where(inArray(cases.id, allCaseIds));
 
   // A manager set to manual waits for HR to send it, from the Managers page.
   if (manager.operatingMode === 'automatic') await sendApprovalRequest(ctx, approval!.id);
@@ -270,7 +301,7 @@ export async function sendApprovalRequest(
   }
 
   const inputs = action.inputs as { what: string; stage: ApplicationStage; leaveType?: string; reason?: string; followUps?: number };
-  const date = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
+  const date = requestDates(await requestCases(ctx.tx, approval));
   const one = (text: string) => text.replace(/\s+/g, ' ').trim().slice(0, 300) || '-';
   const variables = [`${employee.fullName} (${employee.empCode})`, requestPhrase(inputs.stage, inputs.what, inputs.leaveType, inputs.followUps), date, inputs.reason ?? '-'].map(one);
   const preview = managerRequestBody(variables);
@@ -320,7 +351,7 @@ export async function sendApprovalRequest(
  * template when it is not, as after deciding on a call. `caseId` is the case it is about, kept on
  * the message so its cost is counted with that case.
  */
-async function tellManager(ctx: Ctx, manager: ManagerRow, body: string, caseId?: string, justWrote = false) {
+export async function tellManager(ctx: Ctx, manager: ManagerRow, body: string, caseId?: string, justWrote = false) {
   const since = new Date(Date.now() - 24 * 3600_000);
   const [lastWord] = await ctx.tx
     .select({ at: messages.createdAt })
@@ -394,7 +425,11 @@ export async function decideApproval(
   }
 
   const inputs = action.inputs as { what: string; stage: ApplicationStage; leaveType?: string };
-  const date = dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
+  // Every date this one request decides: answered together, decided together.
+  const covered = await requestCases(ctx.tx, approval);
+  const date = requestDates(covered);
+  const decidedCaseIds = covered.length ? covered.map((row) => row.caseRow.id) : [caseRow.id];
+  const decidedActionIds = covered.length ? covered.map((row) => row.action.id) : [action.id];
   const who = firstName(manager.fullName);
   const what = inputs.leaveType && inputs.what === 'leave' ? inputs.leaveType : inputs.what;
 
@@ -410,11 +445,11 @@ export async function decideApproval(
     .where(eq(approvals.id, approval.id));
 
   if (decision === 'reject') {
-    await ctx.tx.update(actions).set({ status: 'rejected', updatedAt: at }).where(eq(actions.id, action.id));
+    await ctx.tx.update(actions).set({ status: 'rejected', updatedAt: at }).where(inArray(actions.id, decidedActionIds));
     await ctx.tx
       .update(cases)
       .set({ status: 'resolved', resolvedAt: at, closeReason: `Not approved by ${manager.fullName}`, updatedAt: at })
-      .where(eq(cases.id, caseRow.id));
+      .where(inArray(cases.id, decidedCaseIds));
     await tellEmployee(ctx, caseRow, employee);
     await tellManager(ctx, manager, `Noted - not approved. ${employee.fullName} has been told on WhatsApp.`, caseRow.id, via === 'whatsapp');
     return { handled: true };
@@ -422,12 +457,19 @@ export async function decideApproval(
 
   // The agent was asked to apply it: it does so now, and says so to the employee.
   if (inputs.stage === 'apply_for_me' && action.connector && ctx.hrms) {
-    await ctx.tx.update(actions).set({ status: 'approved', updatedAt: at }).where(eq(actions.id, action.id));
+    await ctx.tx.update(actions).set({ status: 'approved', updatedAt: at }).where(inArray(actions.id, decidedActionIds));
     const approver = manager.employeeId ? await ctx.tx.query.employees.findFirst({ where: eq(employees.id, manager.employeeId) }) : undefined;
-    const result = await executeAction({ ...ctx, hrms: ctx.hrms }, { ...action, status: 'approved' }, caseRow, employee, approver ?? undefined, {
-      chain: false,
-      notify: false,
-    });
+    // Applied date by date; it only counts as done when every one of them went in.
+    const pairs = covered.length ? covered : [{ action, caseRow }];
+    let ok = true;
+    for (const pair of pairs) {
+      const done = await executeAction({ ...ctx, hrms: ctx.hrms }, { ...pair.action, status: 'approved' }, pair.caseRow, employee, approver ?? undefined, {
+        chain: false,
+        notify: false,
+      });
+      ok = ok && done.ok;
+    }
+    const result = { ok };
     await tellEmployee(ctx, caseRow, employee);
     await tellManager(
       ctx,
@@ -441,11 +483,11 @@ export async function decideApproval(
     return { handled: true };
   }
 
-  await ctx.tx.update(actions).set({ status: 'approved', updatedAt: at }).where(eq(actions.id, action.id));
+  await ctx.tx.update(actions).set({ status: 'approved', updatedAt: at }).where(inArray(actions.id, decidedActionIds));
   await ctx.tx
     .update(cases)
     .set({ status: 'resolved', resolvedAt: at, closeReason: `Approved by ${manager.fullName}`, updatedAt: at })
-    .where(eq(cases.id, caseRow.id));
+    .where(inArray(cases.id, decidedCaseIds));
   await tellEmployee(ctx, caseRow, employee);
   await tellManager(ctx, manager, `Noted - approved. ${employee.fullName} has been told on WhatsApp.`, caseRow.id, via === 'whatsapp');
   return { handled: true };

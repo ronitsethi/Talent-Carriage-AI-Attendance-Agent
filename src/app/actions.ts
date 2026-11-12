@@ -80,6 +80,7 @@ import {
   missingLeaveFields,
   resolveLeaveMap,
 } from '@/lib/leave-balance';
+import { scheduleAllAbsenceWatches } from '@/lib/conversation/absence-group';
 import { listQueryTypes, parseQueryTypeSheet, replaceQueryTypes } from '@/lib/query-types';
 import { PRIORITIES, closeTicket, queueAssignmentWork, type Priority } from '@/lib/tickets';
 import { sendApprovalRequest } from '@/lib/approvals';
@@ -279,16 +280,27 @@ export async function updateSettings(formData: FormData) {
     };
   });
 
-  await withTenant(tenantId, (tx) =>
-    tx
+  const channelOf = (name: string) => (formData.get(name) === 'voice' ? 'voice' : 'whatsapp');
+  const styleOf = (name: string) => (formData.get(name) === 'agent' ? 'agent' : 'keypad');
+  const days = (name: string, max: number) => Math.min(max, Math.max(0, Math.round(int(name, 0))));
+
+  await withTenant(tenantId, async (tx) => {
+    await tx
       .update(tenantSettings)
       .set({
         operatingMode: formData.get('operatingMode') === 'automatic' ? 'automatic' : 'manual',
+        // First contact and reminders: the defaults; an employee's own setting wins.
+        defaultChannel: channelOf('defaultChannel'),
+        callMode: styleOf('callMode'),
+        reminderChannel: channelOf('reminderChannel'),
+        reminderCallMode: styleOf('reminderCallMode'),
+        reminderIntervalDays: days('reminderIntervalDays', 60),
+        remindersBeforeEscalation: days('remindersBeforeEscalation', 10),
+        escalateAfterDays: days('escalateAfterDays', 90),
         sendDelayMinutes: Math.min(1440, Math.max(0, Math.round(int('sendDelayMinutes', 60)))),
         sendingEnabled: bool('sendingEnabled'),
         attendanceSource: formData.get('attendanceSource') === 'hrms' ? 'hrms' : 'csv',
         sendBacklogSummary: bool('sendBacklogSummary'),
-        maxOutstandingQuestions: int('maxOutstandingQuestions', 0),
         maxFollowUps,
         followUpContacts,
         approvalTimeoutHours: int('approvalTimeoutHours', 24),
@@ -302,8 +314,10 @@ export async function updateSettings(formData: FormData) {
         ),
         updatedAt: new Date(),
       })
-      .where(eq(tenantSettings.tenantId, tenantId)),
-  );
+      .where(eq(tenantSettings.tenantId, tenantId));
+    // Reminders and escalation apply to dates already waiting, not only to new messages.
+    await scheduleAllAbsenceWatches(await buildContext(tx, tenantId));
+  });
   revalidatePath('/settings');
   revalidatePath('/');
 }
@@ -527,13 +541,9 @@ export async function contactSelected(formData: FormData) {
       }
       if (!created.length) continue;
 
-      if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') {
-        // One call, about the most recent date; the older ones follow inside it.
-        plan.push(created[created.length - 1]!.id);
-      } else {
-        // WhatsApp stacks in a chat, so each date gets its own message.
-        plan.push(...created.map((c) => c.id));
-      }
+      // One contact per person: a call naming every date, or one WhatsApp
+      // message listing every date they have not answered.
+      plan.push(created[0]!.id);
     }
     return plan;
   });
@@ -552,9 +562,9 @@ export async function contactSelected(formData: FormData) {
 /**
  * Contacts the cases ticked in Follow-up cases, each on their employee's channel.
  *
- * The same rule as the dashboard: several dates ticked for someone on Call ring
- * them once, about the newest, and the call sweeps the rest; on WhatsApp each
- * date gets its own message. A case whose employee has been deleted is skipped.
+ * The same rule as the dashboard: one contact per person, whatever is ticked -
+ * a call naming every date, or one WhatsApp message listing every date they
+ * have not answered. A case whose employee has been deleted is skipped.
  */
 export async function contactSelectedCases(formData: FormData) {
   // Each tick is "employeeId|caseId", the shape the selection counts people by.
@@ -580,13 +590,8 @@ export async function contactSelectedCases(formData: FormData) {
       if (row.employee.deletedAt) continue;
       byEmployee.set(row.employee.id, [...(byEmployee.get(row.employee.id) ?? []), row]);
     }
-    const chosen: string[] = [];
-    for (const list of byEmployee.values()) {
-      const employee = list[0]!.employee;
-      if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') chosen.push(list[list.length - 1]!.caseRow.id);
-      else chosen.push(...list.map((row) => row.caseRow.id));
-    }
-    return chosen;
+    // One contact per person, about their oldest ticked date: the message or call covers the rest.
+    return [...byEmployee.values()].map((list) => list[0]!.caseRow.id);
   });
 
   for (const caseId of plan) {

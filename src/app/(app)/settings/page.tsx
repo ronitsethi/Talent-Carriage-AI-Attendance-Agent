@@ -164,18 +164,60 @@ export default async function SettingsPage() {
             </div>
 
             <div className="form-section">
-              <h2>Backlog and escalation</h2>
-              <div className="field-grid">
+              <h2>Contacting employees</h2>
+              <div className="table-scroll">
+                <table className="data small">
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th>Contact by</th>
+                      <th>Call style</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(
+                      [
+                        { label: 'First message or call', note: 'Every unanswered absence, together', channel: 'defaultChannel', style: 'callMode', channelValue: settings.defaultChannel, styleValue: settings.callMode },
+                        { label: 'Reminders', note: 'And the last warning before the manager', channel: 'reminderChannel', style: 'reminderCallMode', channelValue: settings.reminderChannel, styleValue: settings.reminderCallMode },
+                      ] as const
+                    ).map((row) => (
+                      <tr key={row.channel}>
+                        <td className="nowrap">
+                          {row.label}
+                          <div className="sub">{row.note}</div>
+                        </td>
+                        <td>
+                          <select className="input" name={row.channel} aria-label={`${row.label} contact by`} defaultValue={row.channelValue}>
+                            <option value="whatsapp">WhatsApp</option>
+                            <option value="voice">Call</option>
+                          </select>
+                        </td>
+                        <td>
+                          <select className="input" name={row.style} aria-label={`${row.label} call style`} defaultValue={row.styleValue}>
+                            <option value="keypad">Keypad</option>
+                            <option value="agent">Talk</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="field-help" style={{ maxWidth: '70ch' }}>
+                The defaults. An employee given their own Contact by or call style keeps it. Call style only matters on Call.
+              </p>
+              <div className="field-grid" style={{ marginTop: 16 }}>
                 <div className="field">
-                  <label htmlFor="maxOutstandingQuestions">Outstanding questions cap</label>
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    id="maxOutstandingQuestions"
-                    name="maxOutstandingQuestions"
-                    defaultValue={settings.maxOutstandingQuestions}
-                  />
+                  <label htmlFor="reminderIntervalDays">Remind after (days)</label>
+                  <input className="input" type="number" min={0} max={60} id="reminderIntervalDays" name="reminderIntervalDays" defaultValue={settings.reminderIntervalDays} />
+                </div>
+                <div className="field">
+                  <label htmlFor="remindersBeforeEscalation">Reminders before the manager</label>
+                  <input className="input" type="number" min={0} max={10} id="remindersBeforeEscalation" name="remindersBeforeEscalation" defaultValue={settings.remindersBeforeEscalation} />
+                </div>
+                <div className="field">
+                  <label htmlFor="escalateAfterDays">Days before the manager</label>
+                  <input className="input" type="number" min={0} max={90} id="escalateAfterDays" name="escalateAfterDays" defaultValue={settings.escalateAfterDays} />
                 </div>
                 <div className="field">
                   <label htmlFor="approvalTimeoutHours">Approval timeout (hours)</label>
@@ -183,8 +225,13 @@ export default async function SettingsPage() {
                 </div>
               </div>
               <p className="field-help" style={{ maxWidth: '70ch' }}>
-                0 means no cap: every absent date is asked as it is found, and unanswered dates pile up until the employee
-                starts answering. With a cap, the extras wait and are asked one at a time as earlier dates are answered.
+                A first message or call nobody answers gets a reminder this many days later, by the clock, whether or not a
+                file is uploaded. A new absence message moves the clock on and does not count as a reminder. After the set
+                number of reminders, or the set number of days since the oldest date was first asked, whichever comes
+                first, the employee is warned and their manager is asked to speak to them or mark the days as Loss of Pay.
+                0 switches each one off. Employees set to Manual are left to you: their reminders show as due on the
+                dashboard. Switching this on applies to dates already waiting, so long-ignored ones are reminded or sent to
+                the manager at once.
               </p>
               <div className="checks">
                 <label className="check">

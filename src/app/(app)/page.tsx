@@ -242,6 +242,7 @@ export default async function DashboardPage({
                           <td>
                             {row.caseStatus && row.caseStatus !== 'unresolved' ? <StatusPill status={row.caseStatus} /> : <span className="sub">Not contacted</span>}
                             {rowLocked ? <div className="sub">Attendance locked</div> : null}
+                            {row.reminderDue && !rowLocked ? <div className="sub">Reminder due</div> : null}
                           </td>
                           <td className="nowrap">
                             <div className={`switch-group ${rowLocked ? 'muted' : ''}`} role="group" aria-label={`Contact ${row.employeeName} by`}>
@@ -251,7 +252,7 @@ export default async function DashboardPage({
                                   action={setChannelFromRow.bind(null, row.employeeId, option)}
                                   on={row.preferredChannel === option}
                                   disabled={rowLocked}
-                                  title={rowLocked ? 'Attendance for this month is locked' : undefined}
+                                  title={rowLocked ? 'Attendance for this month is locked' : row.ownChannel ? 'Set for this person, whatever the customer default is' : 'Following the customer default'}
                                 >
                                   {option === 'voice' ? 'Call' : 'WhatsApp'}
                                 </RowSwitch>

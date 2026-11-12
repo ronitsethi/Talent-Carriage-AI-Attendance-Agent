@@ -115,6 +115,8 @@ export const approvals = pgTable(
     nudges: smallint('nudges').notNull().default(0),
     /** After this, escalate per the tenant's approval chain. */
     timeoutAt: timestamp('timeout_at', { withTimezone: true }),
+    /** Further actions this one request decides: one request for several dates answered together. */
+    covers: jsonb('covers').$type<string[]>().notNull().default([]),
     escalatedTo: text('escalated_to'),
     delegatedToEmployeeId: uuid('delegated_to_employee_id'),
   },
@@ -122,4 +124,31 @@ export const approvals = pgTable(
     index('approvals_action_idx').on(t.actionId, t.sequence),
     index('approvals_pending_idx').on(t.tenantId, t.decision, t.timeoutAt),
   ],
+);
+
+/**
+ * A team member who never answered about their absences, told to their manager:
+ * the dates, why it went to them (reminders used up, or too many days), and
+ * what the manager chose - "speak" (they will talk to them) or "loss_of_pay"
+ * (the dates are closed as absent without pay).
+ */
+export const absenceEscalations = pgTable(
+  'absence_escalations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    employeeId: uuid('employee_id')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'cascade' }),
+    managerId: uuid('manager_id').references(() => managers.id, { onDelete: 'set null' }),
+    caseIds: jsonb('case_ids').$type<string[]>().notNull().default([]),
+    reason: text('reason').notNull(),
+    decision: text('decision').$type<'speak' | 'loss_of_pay'>(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('absence_escalations_employee_idx').on(t.employeeId, t.createdAt)],
 );

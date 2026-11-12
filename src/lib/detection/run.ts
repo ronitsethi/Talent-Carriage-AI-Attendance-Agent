@@ -68,7 +68,7 @@ export async function findGaps(
       exitDate: employees.exitDate,
       optOut: employees.whatsappOptOut,
       operatingMode: employees.operatingMode,
-      preferredChannel: employees.preferredChannel,
+      preferredChannel: sql<string>`coalesce(${employees.preferredChannel}, (select ts.default_channel from tenant_settings ts where ts.tenant_id = ${employees.tenantId}), 'whatsapp')`,
       attDate: attendanceDays.attDate,
       meaning: attendanceDays.meaning,
       rawStatus: attendanceDays.rawStatus,
@@ -374,7 +374,7 @@ export async function closeCasesExplainedByData(tx: Db, tenantId: string, date?:
     .where(
       and(
         eq(cases.tenantId, tenantId),
-        inArray(cases.status, ['queued', 'asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval', 'needs_hr']),
+        inArray(cases.status, ['queued', 'asked', 'delivered', 'read', 'answered', 'awaiting_action', 'awaiting_approval', 'needs_hr', 'escalated']),
         date ? eq(cases.attDate, date) : sql`true`,
       ),
     );

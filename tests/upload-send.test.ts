@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { withTenant } from '@/db';
-import { actions, approvals, cases, employees, imports, jobs, tenantSettings } from '@/db/schema';
+import { actions, approvals, calls, cases, employees, imports, jobs, tenantSettings } from '@/db/schema';
+import { handleTurn, openingTurn } from '@/lib/voice/session';
 import { closeCasesExplainedByData } from '@/lib/detection/run';
 import { scheduleDueWork } from '@/lib/jobs/scheduler';
 import type { TenantSettings } from '@/lib/conversation/engine';
@@ -290,5 +291,38 @@ describe('the clock', () => {
     scenario = await automatic();
     const { queued } = await scheduleDueWork(new Date('2026-11-01T06:00:00Z'));
     expect(queued.some((job) => /daily_check|send_follow_up|upload_contact/.test(job))).toBe(false);
+  });
+});
+
+describe('one call, not two', () => {
+  it('asks about the new absence, then the follow-up, on the same call', async () => {
+    // On Call for everything: a new absence on the 19th, and a follow-up due on the 17th.
+    scenario = await automatic({ defaultChannel: 'voice', callerId: '+912269871077' }, { preferredChannel: 'voice' });
+    const onThe20th = new Date('2026-08-20T06:00:00Z');
+    const followUp = await addCase({ status: 'answered', replyOption: 4, answeredAt: new Date('2026-08-18T06:00:00Z'), followUpDueAt: new Date('2026-08-19T06:00:00Z') });
+    await addCase({ attDate: '2026-08-19', status: 'queued' });
+
+    // The follow-up's own turn leaves its call to the absence call.
+    const placed = () => withTenant(scenario.tenantId, (tx) => tx.select().from(calls).where(eq(calls.employeeId, scenario.employeeId)));
+    await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'follow_up', onThe20th);
+    expect(await placed()).toHaveLength(0);
+    await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'first_contact', onThe20th);
+    expect(await placed()).toHaveLength(1);
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const [call] = await tx.select().from(calls).where(eq(calls.employeeId, scenario.employeeId));
+      expect(call!.thenFollowUps).toEqual([followUp.id]);
+      // Counted as followed up, as a follow-up call would be.
+      expect((await tx.query.cases.findFirst({ where: eq(cases.id, followUp.id) }))!.followUpCount).toBe(1);
+
+      const opening = await openingTurn(ctx, call!.id);
+      // The 19th: weekly off - and then, on the same call, the follow-up.
+      let turn = await handleTurn(ctx, call!.id, opening.nextCaseId!, { digits: '4' });
+      turn = await handleTurn(ctx, call!.id, opening.nextCaseId!, { digits: '1' });
+      expect(turn.intro).toContain('Also, a quick check on what you were asked to do earlier');
+      expect(turn.nextCaseId).toBe(followUp.id);
+      expect((await tx.query.calls.findFirst({ where: eq(calls.id, call!.id) }))!.purpose).toBe('follow_up');
+    });
   });
 });

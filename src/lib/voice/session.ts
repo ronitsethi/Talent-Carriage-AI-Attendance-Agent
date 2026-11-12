@@ -25,6 +25,8 @@ import {
   type PromptStyle,
 } from '@/lib/conversation/voice-script';
 import { canSend, UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from '@/lib/conversation/engine';
+import { groupMembers, setGroup } from '@/lib/conversation/absence-group';
+import { managerFirstName } from '@/lib/approvals';
 import { recordFollowUpChoice } from '@/lib/conversation/follow-up-state';
 import { finalNoticeFacts, sendFinalNotice } from '@/lib/conversation/followup';
 import { followUpAcknowledgement, type FollowUpChoice } from '@/lib/conversation/flow';
@@ -54,7 +56,7 @@ export type CallRow = typeof calls.$inferSelect;
  * `final_notice` is the last follow-up: it warns of loss of pay, says who the case
  * has gone to, and hangs up.
  */
-export type CallPurpose = 'first_contact' | 'follow_up' | 'final_notice' | 'manager_approval' | 'approval_outcome';
+export type CallPurpose = 'first_contact' | 'follow_up' | 'final_notice' | 'escalation_notice' | 'manager_approval' | 'approval_outcome';
 
 /** One spoken turn: what the agent says, and what happens next. */
 export type CallTurn = {
@@ -75,6 +77,30 @@ export type CallTurn = {
 
 export const spokenFor = (row: { attDate: string; meaning: string }) =>
   spokenDate(row.attDate, halfOfDay(row.meaning as Meaning) as 'first' | 'second' | null);
+
+/** Several dates said aloud: "the third, the fourth and the sixth of November". */
+export const spokenList = (rows: { attDate: string; meaning: string }[]) => {
+  const said = rows.map(spokenFor);
+  return said.length <= 1 ? (said[0] ?? '') : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`;
+};
+
+/** The date a question is about, or every date of the group it leads. */
+export const spokenDates = (row: CaseRow) => {
+  const members = groupMembers(row);
+  return members.length > 1 ? spokenList(members.map((m) => ({ attDate: m.date, meaning: m.meaning }))) : spokenFor(row);
+};
+
+/** Whether a call about several dates is waiting on "the same for all of them?". */
+const askingSame = (row: CaseRow) => Boolean((row.context as { sameAsk?: boolean } | null)?.sameAsk);
+
+async function setAskingSame(ctx: VoiceContext, row: CaseRow, on: boolean) {
+  const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, row.id), columns: { context: true } }))?.context ?? {};
+  const { sameAsk: _old, ...rest } = fresh as Record<string, unknown>;
+  await ctx.tx.update(cases).set({ context: on ? { ...rest, sameAsk: true } : rest }).where(eq(cases.id, row.id));
+}
+
+const SAME_QUESTION_KEYPAD = 'Was it the same for all of these days? Press 1 if it was the same, or 2 to go through them one by one.';
+const SAME_QUESTION_SPOKEN = 'Was it the same for all of these days, or different?';
 
 /**
  * How this call's questions should be worded.
@@ -145,6 +171,7 @@ export async function placeCaseCall(
   employee: EmployeeRow,
   purpose: CallPurpose = callPurposeFor(caseRow),
   callMode?: 'keypad' | 'agent' | null,
+  opts: { thenFollowUps?: string[] } = {},
 ) {
   if (employee.deletedAt) return { placed: false as const, reason: 'This employee has been deleted' };
   if (!ctx.settings.sendingEnabled) return { placed: false as const, reason: 'Sending is switched off for this customer' };
@@ -177,6 +204,7 @@ export async function placeCaseCall(
       attempt: caseRow.callAttempts + 1,
       status: 'queued',
       transcript: [],
+      thenFollowUps: opts.thenFollowUps ?? [],
     })
     .returning();
 
@@ -255,6 +283,22 @@ export async function openingTurn(ctx: VoiceContext, callId: string): Promise<Ca
     return { speak, nextCaseId: null, done: true };
   }
 
+  if (call.purpose === 'escalation_notice') {
+    // The last word before the manager is told: every date still unanswered, and who has them now.
+    const covered = await ctx.tx
+      .select()
+      .from(cases)
+      .where(and(eq(cases.employeeId, employee.id), inArray(cases.status, ['asked', 'delivered', 'read', 'escalated'])))
+      .orderBy(asc(cases.attDate));
+    const manager = await managerFirstName(ctx.tx, ctx.tenantId, employee);
+    const speak =
+      `${greeting} We have not heard from you about your absence on ${spokenList(covered.length ? covered : [target])}, despite our messages and calls. ` +
+      `This has now been passed to ${manager ? `your manager, ${manager}` : 'your manager'}. Please speak to them about it.`;
+    await appendTurn(ctx, callId, 'agent', speak);
+    await finishCall(ctx, callId, 'completed_confirmed');
+    return { speak, nextCaseId: null, done: true };
+  }
+
   if (call.purpose === 'follow_up') {
     // The reminder only makes sense for a date that was answered. If HR has
     // since reopened it, fall through to the first question instead of asking
@@ -273,11 +317,48 @@ export async function openingTurn(ctx: VoiceContext, callId: string): Promise<Ca
   }
 
   const outstanding = await pending(ctx, employee.id);
+  // Several dates: name them all, then ask whether one answer does for all of them.
+  // Asked before and not answered: this call is the reminder.
+  const reminding = outstanding.length > 0 && outstanding.every((row) => row.status !== 'queued');
+  const again = reminding ? ' This is a reminder, as we have not heard from you yet.' : '';
+  if (outstanding.length > 1) {
+    const intro = `${greeting}${again} I am calling about your attendance on ${spokenList(outstanding)}. Our records show you were absent.`;
+    const question = styleOf(call) === 'keypad' ? SAME_QUESTION_KEYPAD : SAME_QUESTION_SPOKEN;
+    await setAskingSame(ctx, target, true);
+    await appendTurn(ctx, callId, 'agent', `${intro} ${question}`);
+    return { speak: question, intro, nextCaseId: target.id, done: false };
+  }
   const question = datePrompt(spokenFor(target), styleOf(call));
-  const intro = [greeting, callBacklogOpening(outstanding.length)].filter(Boolean).join(' ');
+  const intro = [greeting + again, callBacklogOpening(outstanding.length)].filter(Boolean).join(' ');
 
   await appendTurn(ctx, callId, 'agent', `${intro} ${question}`);
   return { speak: question, intro, nextCaseId: target.id, done: false };
+}
+
+/**
+ * A call about new absences that also carries follow-ups: the first of them
+ * still waiting on its answer, once the absences are done. Null when there is
+ * none, and the call says goodbye as usual.
+ */
+export async function carriedFollowUp(ctx: VoiceContext, call: CallRow): Promise<CaseRow | null> {
+  const ids = call.thenFollowUps ?? [];
+  if (!ids.length || call.purpose !== 'first_contact') return null;
+  const [next] = await ctx.tx
+    .select()
+    .from(cases)
+    .where(and(inArray(cases.id, ids), eq(cases.status, 'answered'), sql`${cases.followUpReply} is null`, sql`${cases.replyOption} is not null`))
+    .orderBy(asc(cases.attDate))
+    .limit(1);
+  return next ?? null;
+}
+
+/** From the absences to the follow-ups, on the same call: one call, not two. */
+export async function turnToFollowUps(ctx: VoiceContext, call: CallRow, next: CaseRow, told: string): Promise<CallTurn> {
+  await ctx.tx.update(calls).set({ purpose: 'follow_up' }).where(eq(calls.id, call.id));
+  const intro = `${told} Also, a quick check on what you were asked to do earlier.`.trim();
+  const question = followUpPrompt(next.replyOption as OptionNumber, spokenFor(next), styleOf(call));
+  await appendTurn(ctx, call.id, 'agent', `${intro} ${question}`);
+  return { speak: question, intro, nextCaseId: next.id, done: false };
 }
 
 /** Said once when more than one date is waiting on its action. */
@@ -312,6 +393,33 @@ export async function handleTurn(
     return followUpTurn(ctx, call, caseRow, employee, input);
   }
 
+  // "The same for all of these days?" - yes asks once for all of them, no goes date by date.
+  if (askingSame(caseRow)) {
+    const said = (input.speech ?? '').toLowerCase();
+    const yes = input.digits === '1' || /\b(yes|same|haan|ha|ji|all|sab|sabhi|ek hi)\b/.test(said);
+    const no = input.digits === '2' || /\b(no|different|nahi|nahin|alag|one by one)\b/.test(said);
+    const style = styleOf(call);
+    if (!yes && !no) {
+      // Once, the question again; twice, H R takes it, as with any other question.
+      const retried = (call.transcript ?? []).some((t) => t.role === 'agent' && t.text.startsWith('Sorry'));
+      if (retried) {
+        await setAskingSame(ctx, caseRow, false);
+        await appendTurn(ctx, callId, 'agent', spokenHandover());
+        await finishCall(ctx, callId, 'needs_help');
+        return { speak: spokenHandover(), nextCaseId: null, done: true };
+      }
+      const question = style === 'keypad' ? SAME_QUESTION_KEYPAD : SAME_QUESTION_SPOKEN;
+      await appendTurn(ctx, callId, 'agent', `${spokenNotUnderstood(style)} ${question}`);
+      return { speak: question, intro: spokenNotUnderstood(style), nextCaseId: caseRow.id, done: false, retry: true };
+    }
+    await setAskingSame(ctx, caseRow, false);
+    const others = yes ? await pending(ctx, employee.id, caseRow.id) : [];
+    const lead = await setGroup(ctx, caseRow, [caseRow, ...others]);
+    const question = datePrompt(spokenDates(lead), style);
+    await appendTurn(ctx, callId, 'agent', question);
+    return { speak: question, nextCaseId: lead.id, done: false };
+  }
+
   // Inside the flow-sheet menus: a key for each choice, as on WhatsApp.
   const inMenu = await keypadMenuTurn(ctx, call, caseRow, employee, input);
   if (inMenu) return inMenu;
@@ -341,7 +449,7 @@ export async function handleTurn(
         employeeName: employee.fullName,
         budget: 'call',
       });
-      const question = datePrompt(spokenFor(caseRow), styleOf(call));
+      const question = datePrompt(spokenDates(caseRow), styleOf(call));
       await appendTurn(ctx, callId, 'agent', `${answer.text} ${question}`);
       return { speak: question, intro: answer.text, nextCaseId: caseId, done: false, retry: true };
     }
@@ -365,7 +473,7 @@ export async function handleTurn(
       return { speak: spokenHandover(), nextCaseId: null, done: true };
     }
     const style = styleOf(call);
-    const question = datePrompt(spokenFor(caseRow), style);
+    const question = datePrompt(spokenDates(caseRow), style);
     await appendTurn(ctx, callId, 'agent', `${spokenNotUnderstood(style)} ${question}`);
     return { speak: question, intro: spokenNotUnderstood(style), nextCaseId: caseId, done: false, retry: true };
   }

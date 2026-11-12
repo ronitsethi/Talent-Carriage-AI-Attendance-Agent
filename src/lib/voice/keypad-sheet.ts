@@ -9,7 +9,8 @@ import { MENUS, setState, sheetState, STEPS, type Menu, type SheetState, type St
 import { DAYS_TO_ACT } from '@/lib/conversation/flow';
 import { addDays, recordOutcome } from '@/lib/conversation/talk';
 import { datePrompt, spokenBacklogSummary, spokenClosing, spokenDate, spokenHandover, spokenNotUnderstood } from '@/lib/conversation/voice-script';
-import { appendTurn, finishCall, pending, spokenFor, type CallRow, type CallTurn, type VoiceContext } from './session';
+import { appendTurn, carriedFollowUp, finishCall, pending, spokenDates, turnToFollowUps, type CallRow, type CallTurn, type VoiceContext } from './session';
+import { liveGroup, setGroup } from '@/lib/conversation/absence-group';
 
 /**
  * The flow sheet on a keypad call: the same menus as WhatsApp (`sheet.ts`), read
@@ -36,10 +37,35 @@ function keys(steps: StepName[]): string {
 }
 
 const spokenFacts = async (ctx: VoiceContext, caseRow: CaseRow, employee: EmployeeRow) => ({
-  date: spokenFor(caseRow),
+  date: spokenDates(caseRow),
   deadline: spokenDate(addDays(today(ctx.settings.timezone), DAYS_TO_ACT)),
   manager: await managerFirstName(ctx.tx, ctx.tenantId, employee),
 });
+
+/**
+ * Writes one outcome on every date this call asked about together - "the same
+ * for all of them" - each on its own case, lead first.
+ */
+async function recordOnGroup(
+  ctx: VoiceContext,
+  caseRow: CaseRow,
+  employee: EmployeeRow,
+  code: OutcomeCode,
+  choice: LeaveChoice | null,
+  note: string | null,
+  manager: string | null,
+): Promise<CaseRow[]> {
+  const group = await liveGroup(ctx, caseRow);
+  const recorded: CaseRow[] = [];
+  for (const row of group) {
+    await setState(ctx, row.id, null);
+    const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, row.id) })) ?? row;
+    await recordOutcome(ctx, fresh, employee, code, choice, note, manager, 'call');
+    recorded.push(fresh);
+  }
+  if (group.length > 1) await setGroup(ctx, caseRow, [caseRow]);
+  return recorded;
+}
 
 /** Reads a menu out, and remembers it is open. */
 async function openMenu(
@@ -53,7 +79,7 @@ async function openMenu(
 ): Promise<CallTurn> {
   const spec = MENUS[menu];
   const variant = spec.hrms && agentCanApply(ctx as ApplyContext) ? spec.hrms : spec;
-  const question = `${aloud(body ?? variant.body(spokenFor(caseRow)))} ${keys(variant.steps)}`;
+  const question = `${aloud(body ?? variant.body(spokenDates(caseRow)))} ${keys(variant.steps)}`;
   await setState(ctx, caseRow.id, { menu, pendingOutcome: null, note: null, application: null, chatTurns: 0, ...state });
   await appendTurn(ctx, call.id, 'agent', [lead, question].filter(Boolean).join(' '));
   return { speak: question, intro: lead, nextCaseId: caseRow.id, done: false };
@@ -76,6 +102,10 @@ async function moveOn(ctx: VoiceContext, call: CallRow, caseRow: CaseRow, employ
     .where(and(eq(cases.employeeId, employee.id), gte(cases.answeredAt, since)));
   const cleared = Math.max(row?.cleared ?? 0, 1);
   const cap = ctx.settings.maxDatesPerCall;
+  if (!outstanding.length) {
+    const followUp = await carriedFollowUp(ctx, call);
+    if (followUp) return turnToFollowUps(ctx, call, followUp, told);
+  }
   if (!outstanding.length || (cap > 0 && cleared >= cap)) {
     const closing = `${told} ${spokenClosing(cleared, outstanding.length)}`;
     await appendTurn(ctx, call.id, 'agent', closing);
@@ -84,7 +114,7 @@ async function moveOn(ctx: VoiceContext, call: CallRow, caseRow: CaseRow, employ
   }
   const next = outstanding[0]!;
   const intro = `${told} ${spokenBacklogSummary(outstanding.length)}`;
-  const question = datePrompt(spokenFor(next), 'keypad');
+  const question = datePrompt(spokenDates(next), 'keypad');
   await appendTurn(ctx, call.id, 'agent', `${intro} ${question}`);
   return { speak: question, intro, nextCaseId: next.id, done: false };
 }
@@ -113,9 +143,7 @@ async function settle(
     return settleApplication(ctx, call, caseRow, employee, code, choice, note, known);
   }
   const facts = await spokenFacts(ctx, caseRow, employee);
-  await setState(ctx, caseRow.id, null);
-  const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseRow.id) })) ?? caseRow;
-  await recordOutcome(ctx, fresh, employee, code, choice, note, facts.manager, 'call');
+  await recordOnGroup(ctx, caseRow, employee, code, choice, note, facts.manager);
   return moveOn(ctx, call, caseRow, employee, aloud(instructionFor(code, choice, facts)), code);
 }
 
@@ -134,7 +162,7 @@ async function settleApplication(
   if (stage === 'apply_for_me' && agentCanApply(apply) && OUTCOMES[code].application!.action === 'apply_leave' && !leaveType) {
     const types = (await leaveTypesFor(apply, employee)).slice(0, 9);
     if (types.length) {
-      const question = `Which leave shall I apply for ${spokenFor(caseRow)}? ${types
+      const question = `Which leave shall I apply for ${spokenDates(caseRow)}? ${types
         .map((t, index) => `Press ${index + 1} for ${t.type}, ${t.days} days left.`)
         .join(' ')}`;
       await setState(ctx, caseRow.id, { menu: 'leave_type', application: { code, choice, stage }, note, chatTurns: 0 });
@@ -144,10 +172,8 @@ async function settleApplication(
     stage = 'not_applied';
   }
   const facts = await spokenFacts(ctx, caseRow, employee);
-  await setState(ctx, caseRow.id, null);
-  const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseRow.id) })) ?? caseRow;
-  await recordOutcome(ctx, fresh, employee, code, choice, note, facts.manager, 'call');
-  const reply = await submitApplication(apply, fresh, employee, { code, choice, stage, leaveType, note, via: 'call', facts });
+  const [fresh, ...alsoCases] = await recordOnGroup(ctx, caseRow, employee, code, choice, note, facts.manager);
+  const reply = await submitApplication(apply, fresh!, employee, { code, choice, stage, leaveType, note, via: 'call', facts, alsoCases });
   return moveOn(ctx, call, caseRow, employee, aloud(reply), code);
 }
 
@@ -233,7 +259,7 @@ async function notUnderstood(ctx: VoiceContext, call: CallRow, caseRow: CaseRow,
       ? 'Please press the number for the leave you want.'
       : state.menu === 'apply'
         ? `Please press a key. ${keys(variant.steps)}`
-        : `${aloud(variant.body(spokenFor(caseRow)))} ${keys(variant.steps)}`;
+        : `${aloud(variant.body(spokenDates(caseRow)))} ${keys(variant.steps)}`;
   await appendTurn(ctx, call.id, 'agent', `${sorry} ${question}`);
   return { speak: question, intro: sorry, nextCaseId: caseRow.id, done: false, retry: true };
 }

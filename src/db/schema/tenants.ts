@@ -107,8 +107,21 @@ export const tenantSettings = pgTable('tenant_settings', {
   approvalTimeoutHours: integer('approval_timeout_hours').notNull().default(24),
   approvalEscalatesTo: text('approval_escalates_to').notNull().default('hr'), // hr | skip_level | none
 
-  /** Channel used for employees with no explicit preference. */
+  /** First contact: the channel for employees with no channel of their own. */
   defaultChannel: text('default_channel').notNull().default('whatsapp'),
+  /**
+   * Reminders, when a first message or call goes unanswered, and the last
+   * warning before the manager is told: the channel and call style for
+   * employees with none of their own.
+   */
+  reminderChannel: text('reminder_channel').notNull().default('whatsapp'),
+  reminderCallMode: text('reminder_call_mode').notNull().default('keypad'),
+  /** Days after the last absence message or call before a reminder; 0 = no reminders. */
+  reminderIntervalDays: integer('reminder_interval_days').notNull().default(0),
+  /** Reminders after which the manager is told; 0 = never on count. */
+  remindersBeforeEscalation: integer('reminders_before_escalation').notNull().default(2),
+  /** Days after the first message about the oldest unanswered date before the manager is told, whatever the count; 0 = never on days. */
+  escalateAfterDays: integer('escalate_after_days').notNull().default(0),
   /**
    * How many days after the absence the agent makes contact. 1 means an absence
    * on the 21st is chased on the 22nd - attendance for a day is not final until

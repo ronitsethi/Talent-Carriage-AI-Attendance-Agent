@@ -205,6 +205,8 @@ describe('asking where it stands, with attendance from a file', () => {
 });
 
 describe('typing instead of tapping', () => {
+  // The second day's message asks about both days, oldest first, so what they
+  // type is about the oldest open date unless they say otherwise.
   it('asks where it stands under what the conversation wrote', async () => {
     await twoAbsences();
     const seen: { menu: string | null; text: string }[] = [];
@@ -213,7 +215,7 @@ describe('typing instead of tapping', () => {
       conversing({ outcome: 'on_duty_client_visit', note: 'client site in Gurgaon', reply: 'Got it, a client visit.' }, seen),
     );
     expect(seen[0]!.text).toBe('I was at a client site in Gurgaon that day');
-    expect(sent()[0]!.body).toBe('Got it, a client visit.\n\nHave you applied the On-Duty (client visit) for 18-Aug-2026 yet?');
+    expect(sent()[0]!.body).toBe('Got it, a client visit.\n\nHave you applied the On-Duty (client visit) for 17-Aug-2026 yet?');
   });
 
   it('takes "already applied" said unasked, without asking it again', async () => {
@@ -222,9 +224,9 @@ describe('typing instead of tapping', () => {
       typeText(scenario.mobile, 'I was on leave, already applied it'),
       conversing({ outcome: 'leave_pending_approval', application: 'applied', reply: 'Okay.' }),
     );
-    expect((await caseOn('2026-08-18'))!.status).toBe('awaiting_approval');
+    expect((await caseOn('2026-08-17'))!.status).toBe('awaiting_approval');
     // Not asked again; told plainly that the manager has been asked.
-    expect(sent()[0]!.body).toBe('Okay. I have asked Deepak to approve your leave for 18-Aug-2026.');
+    expect(sent()[0]!.body).toBe('Okay. I have asked Deepak to approve your leave for 17-Aug-2026.');
   });
 
   it('puts the leave buttons under a typed absence, and remembers the reason', async () => {
@@ -236,7 +238,7 @@ describe('typing instead of tapping', () => {
     const seen: { menu: string | null; text: string }[] = [];
     await inbound(typeText(scenario.mobile, 'leave le lunga'), conversing({ leaveChoice: 'leave', reply: 'Theek hai.' }, seen));
     expect(seen[0]!.menu).toContain('Absent - unwell');
-    expect(sent().at(-1)!.body).toBe('Theek hai.\n\nHave you applied the leave for 18-Aug-2026 yet?');
+    expect(sent().at(-1)!.body).toBe('Theek hai.\n\nHave you applied the leave for 17-Aug-2026 yet?');
   });
 
   it('tells the conversation where they are in the menus', async () => {
@@ -252,7 +254,7 @@ describe('typing instead of tapping', () => {
     await twoAbsences();
     const outcome = await inbound(typeText(scenario.mobile, 'please call me, this is confusing'), conversing({ action: 'handover', handoverReason: 'Wants a call', reply: 'Sure, HR will call you.' }));
     expect(outcome).toMatchObject({ action: 'handed_to_hr' });
-    expect((await caseOn('2026-08-18'))!.status).toBe('needs_hr');
+    expect((await caseOn('2026-08-17'))!.status).toBe('needs_hr');
   });
 });
 

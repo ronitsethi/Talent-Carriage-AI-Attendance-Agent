@@ -28,6 +28,14 @@ export function needsApplication(code: OutcomeCode, choice: LeaveChoice | null):
   return !outcome.asksLeaveOrLossOfPay || choice === 'leave';
 }
 
+/**
+ * "I was on leave, not applied yet" is what a model falls back on when someone
+ * only says they were on leave - a guess, so until they say where it stands it
+ * is asked, as the buttons ask it. "Already applied" is never a guess: they
+ * said it, and it goes straight on.
+ */
+export const isOnLeave = (code: OutcomeCode) => code === 'leave_not_applied';
+
 /** The leave types the agent can apply, with what is left of each, from the HRMS. */
 export async function leaveTypesFor(ctx: ApplyContext, employee: EmployeeRow): Promise<{ type: string; days: number }[]> {
   if (!ctx.hrms) return [];
@@ -56,6 +64,8 @@ export async function submitApplication(
     note: string | null;
     via: 'whatsapp' | 'call';
     facts: { date: string; deadline: string; manager: string | null };
+    /** Other dates answered together with this one, decided by the same request. */
+    alsoCases?: CaseRow[];
   },
 ): Promise<string> {
   // Without an HRMS to write to, "apply it for me" is the employee applying it after all.

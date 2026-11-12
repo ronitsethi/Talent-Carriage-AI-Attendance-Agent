@@ -2,6 +2,31 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-12 21:45
+- **Files:** none changed (deploy)
+- **Change:** Deployed the multi-date reply fix (`per_date` sorted by code) and the "applied yet?" fix to production; health check passed. No migration.
+- **Why:** The faults were live.
+
+## 2026-11-12 21:30
+- **Files:** src/lib/conversation/apply.ts, CURRENT_STATE.md
+- **Change:** The "applied yet?" check now only holds back `leave_not_applied` (the model's fallback when someone just says they were on leave); `leave_pending_approval` (they said it is applied) goes straight to the manager again. Checked jumping ahead on the live model across branches: 9 of 10 one-message replies understood in full; the miss only asks a question again.
+- **Why:** "I have already applied leave" said at the start should not be asked again.
+
+## 2026-11-12 21:00
+- **Files:** src/lib/conversation/talk.ts, src/lib/conversation/sheet.ts, src/lib/conversation/apply.ts, src/lib/conversation/multi-date.ts, tests/absence-group.test.ts, CURRENT_STATE.md
+- **Change:** Fixed two faults seen live: (1) "I was on leave on 3rd and was working on 4th" put both dates on leave - the model was asked to judge which dates were "the same" and lumped different answers together; it now only lists `per_date` (each date with its own answer, "none" when incomplete) and code sorts same from different (`sortDates`), with worked examples in the prompt and WhatsApp temperature 0.6 → 0.3. Checked against the live model (gpt-4.1-mini), 12/12 runs split correctly. (2) A typed "I was on leave" was told to apply leave without being asked whether it was already applied, because `leave_not_applied` carries a preset stage; on-leave outcomes now count as known only when said (`isOnLeave`), so WhatsApp sends the "applied yet?" buttons and calls ask - the same for other dates in one reply.
+- **Why:** Live test: a mixed reply was recorded as leave for both days, and the applied-yet step was skipped.
+
+## 2026-11-12 19:00
+- **Files:** CURRENT_STATE.md
+- **Change:** Production migrated through 0034 (35 migration records; `absence_escalations`, `calls.then_follow_ups`, nullable `employees.preferred_channel` with no 'whatsapp' left) and deployed with one message per person, reminders, escalation, multi-date answers and merged calls. Laptop firewall rule added for the migration and removed afterwards.
+- **Why:** Put the new contact flow live.
+
+## 2026-11-12 18:30
+- **Files:** src/db/migrations/0034_absence_reminders.sql (new), src/db/migrations/meta/_journal.json, src/db/schema/{enums,tenants,employees,actions,ops}.ts, src/db/rls.sql, src/lib/conversation/absence-templates.ts (new), src/lib/conversation/absence-group.ts (new), src/lib/conversation/absence-reminders.ts (new), src/lib/conversation/multi-date.ts (new), src/lib/approval-dates.ts (new), src/lib/conversation/{engine,sheet,talk,flow,apply,followup}.ts, src/lib/approvals.ts, src/lib/voice/{session,keypad-sheet,approval-calls}.ts, src/lib/contact.ts, src/lib/upload-send.ts, src/lib/detection/run.ts, src/lib/jobs/{queue,handlers}.ts, src/lib/queries.ts, src/lib/display.ts, src/app/actions.ts, src/app/(app)/{page,settings/page,cases/page,cases/[id]/page,employees/page}.tsx, src/components/{upload-choice,follow-up-contacts}.tsx, scripts/create-ticket-templates.ts, tests/absence-group.test.ts (new), tests/absence-reminders.test.ts (new), tests/{chaining,calls,talking-call,whatsapp-sheet,upload-send}.test.ts, CURRENT_STATE.md
+- **Change:** One message or call per person for every unanswered absence, reminders for ignored first contacts, escalation to the manager, multi-date answers, and merged calls. (1) A send lists every unanswered date in one WhatsApp message (`attendance_absent_v3`) or one call naming them all; a tap answers every date its message listed (per-message `g2:` payloads); keypad calls ask "the same for all of these days?". (2) One typed or spoken reply can cover several dates (`same_dates`, `other_dates` in the conversation verdict); each is recorded on its own case, and an application goes to the manager as one request for all of them (`approvals.covers`). (3) Reminders (`attendance_absent_reminder`) every N days by the clock (`absence_watch` job), reset by a new absence message (not counted), nothing at night; after X reminders or Y days the employee is warned (`attendance_absent_escalated` / spoken notice) and the manager gets `manager_no_response` with "I'll speak to them" / "Mark as Loss of Pay"; cases become `escalated` ("With manager"). Manual employees: dashboard shows "Reminder due". (4) Someone due an absence call and follow-up calls gets one call (absences, then follow-ups). (5) Settings: first contact and reminders contact by + call style, remind after (days), reminders before the manager, days before the manager; the outstanding-questions cap is removed. Employee Contact by can now be blank (= customer default), and existing WhatsApp values were cleared to blank. Templates submitted and approved by Meta. Old tests updated for the new opening and oldest-first behaviour; the outstanding-cap tests removed.
+- **Why:** Many first messages and calls were ignored and then abandoned, and people with several absences got one message per date; the customer wants one combined message, reminders, and escalation to the manager.
+
 ## 2026-11-09 15:30
 - **Files:** CURRENT_STATE.md
 - **Change:** Production migrated through 0033 (34 migration records; the eight leave kinds are in `attendance_meaning`) and deployed with kinds of leave. Laptop firewall rule added for the migration and removed afterwards.

@@ -102,7 +102,12 @@ describe('how a talking call words its questions', () => {
       expect(said).not.toContain('Press 1');
       expect(said).not.toContain('press');
       expect(said).toContain('23 September');
-      expect(said).toContain('did you not come in');
+      expect(said).toContain('the same for all of these days, or different');
+
+      // "Different": then the date itself, asked the way a person would.
+      const next = await handleTurn(ctx, call!.id, opening.nextCaseId!, { speech: 'alag alag the' });
+      expect(heard(next)).toContain('did you not come in');
+      expect(heard(next)).not.toContain('Press');
     });
   });
 
@@ -124,6 +129,8 @@ describe('answering out loud', () => {
       const call = await tx.query.calls.findFirst({ where: eq(calls.caseId, newest!.id) });
 
       const opening = await openingTurn(ctx, call!.id);
+      // Each day was different, so one by one.
+      await handleTurn(ctx, call!.id, opening.nextCaseId!, { speech: 'alag alag' });
       // Said, not pressed - and in the Hinglish people actually speak.
       let turn = await handleTurn(ctx, call!.id, opening.nextCaseId!, { speech: 'haan main bimaar tha' });
       const answered: string[] = ['2026-09-23'];

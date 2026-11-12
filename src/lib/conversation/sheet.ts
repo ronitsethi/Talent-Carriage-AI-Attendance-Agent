@@ -12,10 +12,12 @@ import {
   type EmployeeRow,
   type EngineContext,
 } from './engine';
-import { dateLabel, DAYS_TO_ACT, formatDate, LEGACY_OPTIONS, leaveTypeSelectionId, type OptionNumber } from './flow';
+import { DAYS_TO_ACT, formatDate, LEGACY_OPTIONS, leaveTypeSelectionId, type OptionNumber } from './flow';
+import { caseDatesLabel, liveGroup, setGroup } from './absence-group';
+import { openCasesFor, settleOtherDates } from './multi-date';
 import { instructionFor, OUTCOMES, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
 import { recordOutcome } from './talk';
-import { agentCanApply, leaveTypesFor, needsApplication, submitApplication, type ApplyContext } from './apply';
+import { agentCanApply, isOnLeave, leaveTypesFor, needsApplication, submitApplication, type ApplyContext } from './apply';
 import { managerFirstName } from '@/lib/approvals';
 
 /**
@@ -200,7 +202,34 @@ export function describeMenu(state: SheetState | null): string | null {
   return `${MENUS[state.menu].where}${pending}`;
 }
 
-const label = (caseRow: CaseRow) => dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
+/** The date or dates a menu is about: a message about several dates is answered for all of them. */
+const label = (caseRow: CaseRow) => caseDatesLabel(caseRow);
+
+/**
+ * Writes one outcome on every date the lead's message asked about that is still
+ * unanswered - one answer, recorded on each date as if it had been asked alone -
+ * and returns them, lead first. The lead then stops speaking for the others.
+ */
+async function recordOnGroup(
+  ctx: EngineContext,
+  caseRow: CaseRow,
+  employee: EmployeeRow,
+  code: OutcomeCode,
+  choice: LeaveChoice | null,
+  note: string | null,
+  manager: string | null,
+): Promise<CaseRow[]> {
+  const group = await liveGroup(ctx, caseRow);
+  const recorded: CaseRow[] = [];
+  for (const row of group) {
+    await setState(ctx, row.id, null);
+    const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, row.id) })) ?? row;
+    await recordOutcome(ctx, fresh, employee, code, choice, note, manager, 'whatsapp');
+    recorded.push(fresh);
+  }
+  if (group.length > 1) await setGroup(ctx, caseRow, [caseRow]);
+  return recorded;
+}
 
 export async function setState(ctx: EngineContext, caseId: string, state: SheetState | null) {
   const fresh = await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseId), columns: { context: true } });
@@ -286,9 +315,7 @@ export async function settle(
     return settleApplication(ctx, caseRow, employee, code, choice, note, known);
   }
   const facts = await writtenFacts(ctx, caseRow, employee);
-  await setState(ctx, caseRow.id, null);
-  const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseRow.id) })) ?? caseRow;
-  await recordOutcome(ctx, fresh, employee, code, choice, note, facts.manager, 'whatsapp');
+  await recordOnGroup(ctx, caseRow, employee, code, choice, note, facts.manager);
   await sendPlainText(ctx, employee, reply ?? instructionFor(code, choice, facts), caseRow.id);
 
   // Somebody who has left needs HR, not their other dates.
@@ -355,10 +382,9 @@ async function settleApplication(
   }
 
   const facts = await writtenFacts(ctx, caseRow, employee);
-  await setState(ctx, caseRow.id, null);
-  const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseRow.id) })) ?? caseRow;
-  await recordOutcome(ctx, fresh, employee, code, choice, note, facts.manager, 'whatsapp');
-  const reply = await submitApplication(apply, fresh, employee, { code, choice, stage, leaveType, note, via: 'whatsapp', facts });
+  const [fresh, ...alsoCases] = await recordOnGroup(ctx, caseRow, employee, code, choice, note, facts.manager);
+  // One request to the manager for every date answered together.
+  const reply = await submitApplication(apply, fresh!, employee, { code, choice, stage, leaveType, note, via: 'whatsapp', facts, alsoCases });
   await sendPlainText(ctx, employee, reply, caseRow.id);
   await chainNextPending(ctx, employee, caseRow.id);
 }
@@ -478,7 +504,26 @@ export async function handleTyped(
   // A choice of leave or Loss of Pay typed in answer to that menu belongs to the absence it asked about.
   const code = verdict.outcome ?? (state?.menu === 'leave_or_lop' && verdict.leaveChoice ? state.pendingOutcome ?? null : null);
   const note = verdict.note ?? state?.note ?? null;
+
+  // Other dates answered in the same message, each its own way, are written down
+  // first, so the next question asked is about a date still open.
+  // A date given an answer of its own is that answer's, even if it was also put with the others.
+    const ownAnswer = new Set((verdict.otherDates ?? []).flatMap((entry) => entry.dates));
+    const same = new Set((verdict.sameDates ?? []).filter((date) => !ownAnswer.has(date)));
+  const others = (verdict.otherDates ?? [])
+    .map((entry) => ({ ...entry, dates: entry.dates.filter((date) => date !== caseRow.attDate && !same.has(date)) }))
+    .filter((entry) => entry.dates.length);
+  if (others.length) await settleOtherDates(ctx, employee, others, 'whatsapp');
+
   if (code) {
+    // The dates this answer is for: this one, and any it said were the same.
+    const alike = (await openCasesFor(ctx, employee.id, [...same])).filter((row) => row.id !== caseRow.id);
+    caseRow = await setGroup(ctx, caseRow, [caseRow, ...alike]);
+    // "I was on leave" without saying whether it is applied: asked with the buttons, never guessed.
+    if (isOnLeave(code) && !verdict.application) {
+      await openMenu(ctx, caseRow, employee, 'on_leave', { note });
+      return 'clarified';
+    }
     if (OUTCOMES[code].asksLeaveOrLossOfPay && !verdict.leaveChoice) {
       // Their words, with the two buttons under them.
       await openMenu(ctx, caseRow, employee, 'leave_or_lop', { body: verdict.reply, pendingOutcome: code, note });

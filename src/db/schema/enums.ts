@@ -116,6 +116,7 @@ export const caseStatus = pgEnum('case_status', [
   'awaiting_approval',
   'resolved',
   'needs_hr',
+  'escalated',
   'failed',
   'cancelled',
   'unresolved',

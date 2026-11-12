@@ -180,51 +180,8 @@ describe('answering one date moves the chain along', () => {
   });
 });
 
-describe('the outstanding-question cap', () => {
-  it('holds extra dates back and releases one as each is answered', async () => {
-    await setupFourAbsences({ maxOutstandingQuestions: 2 });
-
-    // Only two questions go out; the rest wait in `queued`.
-    expect(scenario.channel.history()).toHaveLength(2);
-    await withTenant(scenario.tenantId, async (tx) => {
-      const rows = await tx.select().from(cases).orderBy(asc(cases.attDate));
-      expect(rows.map((r) => r.status)).toEqual(['asked', 'asked', 'queued', 'queued']);
-    });
-
-    scenario.channel.clear();
-    await withTenant(scenario.tenantId, async (tx) => {
-      const [first] = await tx.select().from(cases).where(eq(cases.attDate, '2026-08-17'));
-      await settleDate(tx, first!.id);
-
-      const rows = await tx.select().from(cases).orderBy(asc(cases.attDate));
-      // The chain asks one date at a time: the next-oldest is re-offered inside
-      // the conversation, and the held-back dates stay queued until their turn.
-      // Releasing them early would push out questions the employee never asked
-      // for, which is the noise the cap exists to prevent.
-      expect(rows.map((r) => (UNSETTLED.includes(r.status) ? r.status : 'settled'))).toEqual(['settled', 'asked', 'queued', 'queued']);
-    });
-
-    // The summary still names the full backlog, so nothing is hidden from them.
-    const list = scenario.channel.history().find((s) => s.message.kind === 'list')!;
-    const body = (list.message as { body: string }).body;
-    expect(body).toContain('3 days');
-    expect(body).toContain('18-Aug-2026');
-  });
-
-  it('asks a queued date once it becomes the next in line', async () => {
-    await setupFourAbsences({ maxOutstandingQuestions: 2 });
-
-    // Answer the two that were asked; the third should then be offered.
-    await withTenant(scenario.tenantId, async (tx) => {
-      for (const date of ['2026-08-17', '2026-08-18']) {
-        const [row] = await tx.select().from(cases).where(eq(cases.attDate, date));
-        await settleDate(tx, row!.id);
-      }
-      const third = await tx.query.cases.findFirst({ where: eq(cases.attDate, '2026-08-19') });
-      expect(third!.status).toBe('asked');
-    });
-  });
-});
+// The outstanding-question cap is retired: every unanswered date now goes in
+// one message per person (tests/absence-group.test.ts), so nothing is held back.
 
 describe('typed replies and duplicates', () => {
   it('understands a bare "2" without calling a model', async () => {

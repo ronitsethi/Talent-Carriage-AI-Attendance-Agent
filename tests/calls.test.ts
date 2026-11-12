@@ -127,9 +127,14 @@ describe('the call that is finally answered', () => {
       expect(call).toBeDefined();
 
       const opening = await openingTurn(ctx, latest.id);
-      expect(heard(opening)).toContain('5 days of attendance still to be confirmed');
-      expect(heard(opening)).toContain('25 September');
+      // Every date named at the start, and whether one answer does for all of them.
+      expect(heard(opening)).toContain('21 September, 22 September, 23 September, 24 September and 25 September');
+      expect(heard(opening)).toContain('Was it the same for all of these days');
       expect(opening.done).toBe(false);
+
+      // Different days, different reasons: one by one, starting with the date it rang about.
+      const oneByOne = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '2' });
+      expect(heard(oneByOne)).toContain('About 25 September');
 
       // 25 September: did not come, unwell - then the menus that follow.
       const reason = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
@@ -173,6 +178,8 @@ describe('the call that is finally answered', () => {
       const ctx = scenario.context(tx);
       const latest = await callAbout(tx, '2026-09-25');
       const opening = await openingTurn(ctx, latest.id);
+      // One by one, said rather than pressed.
+      await handleTurn(ctx, latest.id, opening.nextCaseId!, { speech: 'different' });
 
       // No key pressed; they just said it. Handled by the same classifier that
       // reads typed WhatsApp replies.
@@ -181,6 +188,26 @@ describe('the call that is finally answered', () => {
       expect(heard(turn)).toContain('Press 1 for');
       const asked = await tx.query.cases.findFirst({ where: eq(cases.id, opening.nextCaseId!) });
       expect((asked!.context as { sheet?: { menu?: string } }).sheet?.menu).toBe('working');
+    });
+  });
+
+  it('asks once for every date when the employee says it was the same for all of them', async () => {
+    await absentAllWeek();
+
+    await withTenant(scenario.tenantId, async (tx) => {
+      const ctx = scenario.context(tx);
+      const latest = await callAbout(tx, '2026-09-25');
+      const opening = await openingTurn(ctx, latest.id);
+
+      // Same for all: the question is asked once, naming every date.
+      const same = await handleTurn(ctx, latest.id, opening.nextCaseId!, { digits: '1' });
+      expect(heard(same)).toContain('21 September, 22 September, 23 September, 24 September and 25 September');
+
+      // Did not come, unwell, Loss of Pay - once, for the whole week.
+      const done = await press(ctx, latest.id, same.nextCaseId!, ['1', '1', '2']);
+      expect(done.done).toBe(true);
+      const rows = await tx.select().from(cases).orderBy(asc(cases.attDate));
+      expect(rows.map((r) => r.closeReason)).toEqual(Array(5).fill('Employee chose Loss of Pay'));
     });
   });
 

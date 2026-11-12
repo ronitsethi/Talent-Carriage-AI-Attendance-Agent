@@ -7,6 +7,7 @@ import type { Meaning } from '@/lib/mapping/meanings';
 import { halfOfDay } from '@/lib/mapping/meanings';
 import { dateLabel, firstName } from '@/lib/conversation/flow';
 import { spokenDate } from '@/lib/conversation/voice-script';
+import { requestCases, requestDates } from '@/lib/approval-dates';
 import type { CaseRow, EmployeeRow } from '@/lib/conversation/engine';
 import type { ApplicationStage } from '@/lib/conversation/outcomes';
 import type { VoiceContext, CallRow, CallTurn } from './session';
@@ -124,7 +125,7 @@ async function managerScript(ctx: VoiceContext, call: CallRow) {
   const keypad = call.provider !== 'livekit';
   const intro =
     `Hello ${firstName(request.manager.fullName)}, this is the attendance assistant from ${ctx.companyName}. ` +
-    `${employee.fullName} ${STAGE_PHRASE[inputs.stage] ?? 'has asked about'} ${what.replace(/HRMS/g, 'H R M S')} for ${spokenFor(caseRow)}.` +
+    `${employee.fullName} ${STAGE_PHRASE[inputs.stage] ?? 'has asked about'} ${what.replace(/HRMS/g, 'H R M S')} for ${requestDates(await requestCases(ctx.tx, request.approval), spokenFor) || spokenFor(caseRow)}.` +
     (inputs.reason ? ` The reason given is: ${inputs.reason}.` : '');
   const question = agentApplies
     ? keypad
@@ -156,7 +157,9 @@ export async function decisionSentence(
   if (!row || !employee) return null;
   const inputs = row.action.inputs as { what: string; leaveType?: string };
   const what = inputs.leaveType && inputs.what === 'leave' ? inputs.leaveType : inputs.what;
-  const date = spoken ? spokenFor(caseRow) : dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
+  // Every date the request decided, not just the one it was asked from.
+  const covered = await requestCases(ctx.tx, row.approval);
+  const date = covered.length > 1 ? requestDates(covered, spoken ? spokenFor : undefined) : spoken ? spokenFor(caseRow) : dateLabel(caseRow.attDate, caseRow.meaning as Meaning);
   return {
     sentence: outcomeSentence({
       approved: row.approval.decision === 'approved',

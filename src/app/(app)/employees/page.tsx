@@ -105,6 +105,12 @@ export default async function EmployeesPage({
                       {person.preferredChannel === 'voice'
                         ? `Call · ${person.callMode === 'agent' ? 'Talk' : 'Keypad'}`
                         : 'WhatsApp'}
+                      {person.ownChannel ? null : (
+                        <span className="sub" title="Following the customer default">
+                          {' '}
+                          · Default
+                        </span>
+                      )}
                     </td>
                     <td className="nowrap">
                       {person.operatingMode ? (

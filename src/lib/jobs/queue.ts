@@ -4,6 +4,7 @@ import { jobs } from '@/db/schema';
 
 export type JobKind =
   | 'upload_contact'
+  | 'absence_watch'
   | 'place_call'
   | 'approval_timeout'
   | 'verify_action'

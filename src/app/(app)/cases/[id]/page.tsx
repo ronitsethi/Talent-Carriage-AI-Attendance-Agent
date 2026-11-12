@@ -37,7 +37,7 @@ export default async function CaseDetailPage({
 
   const { caseRow, employee, transcript, calls, actions, approvals, manager, otherPending, lines, company, costs } = detail;
   const staleSummary = summaryIsStale(caseRow.summarisedAt, lines);
-  const onCall = caseRow.channel === 'voice' || employee.preferredChannel === 'voice';
+  const onCall = caseRow.channel === 'voice' || (employee.preferredChannel ?? settings?.defaultChannel) === 'voice';
   // Contacting someone about a date they have already answered means the day-2
   // reminder, so the button should not promise to ask the first question again.
   const reminder = callPurposeFor(caseRow) === 'follow_up';

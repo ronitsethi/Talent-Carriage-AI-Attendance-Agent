@@ -48,11 +48,12 @@ export const employees = pgTable(
 
     language: text('language'),
     /**
-     * How this person is contacted: 'whatsapp' or 'voice'. Set per employee in
-     * the portal, and copied onto each case so a later change never rewrites
-     * the history of how someone was actually reached.
+     * How this person is contacted: 'whatsapp' or 'voice', or null to follow the
+     * customer's defaults (first contact, reminders). Set per employee in the
+     * portal only when they need their own; each case keeps the channel it
+     * actually went by, so a later change never rewrites that history.
      */
-    preferredChannel: text('preferred_channel').notNull().default('whatsapp'),
+    preferredChannel: text('preferred_channel'),
     /** Channel for the day-2 follow-up; falls back to preferredChannel. */
     followUpChannel: text('follow_up_channel'),
     /**
@@ -72,6 +73,10 @@ export const employees = pgTable(
      * differs, which is why this is a separate switch rather than a channel.
      */
     callMode: text('call_mode'),
+    /** When this person was last sent a first message, call or reminder about unanswered absences. */
+    absenceContactAt: timestamp('absence_contact_at', { withTimezone: true }),
+    /** Reminders sent since they last answered; enough of them and the manager is told. */
+    absenceReminders: integer('absence_reminders').notNull().default(0),
     whatsappOptOut: boolean('whatsapp_opt_out').notNull().default(false),
     callOptOut: boolean('call_opt_out').notNull().default(false),
     consentAt: timestamp('consent_at', { withTimezone: true }),

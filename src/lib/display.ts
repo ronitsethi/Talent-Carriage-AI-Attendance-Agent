@@ -18,6 +18,7 @@ export const STATUS_DISPLAY: Record<string, { label: string; tone: Tone }> = {
   awaiting_approval: { label: 'With the manager', tone: 'pending' },
   resolved: { label: 'Resolved', tone: 'done' },
   needs_hr: { label: 'Needs HR', tone: 'call' },
+  escalated: { label: 'With manager', tone: 'call' },
   failed: { label: 'Send failed', tone: 'call' },
   cancelled: { label: 'Cancelled', tone: 'idle' },
   // Its month's attendance was locked while it was still open.
@@ -40,7 +41,7 @@ type FollowUpFields = {
  * follow-up's - unless the case has since been settled, or gone to the manager.
  */
 export function caseStatus(row: FollowUpFields): string {
-  if (!row.followUpSentAt || ['resolved', 'needs_hr', 'failed', 'cancelled', 'awaiting_approval', 'unresolved'].includes(row.status)) return row.status;
+  if (!row.followUpSentAt || ['resolved', 'needs_hr', 'escalated', 'failed', 'cancelled', 'awaiting_approval', 'unresolved'].includes(row.status)) return row.status;
   if (!row.followUpReply) return 'follow_up_awaiting';
   if (row.followUpReply === 'not_done') return 'follow_up_not_done';
   return row.status;

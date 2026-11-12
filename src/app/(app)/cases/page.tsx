@@ -249,7 +249,11 @@ export default async function CasesPage({
                                     action={setChannelFromRow.bind(null, row.employeeId, option)}
                                     on={row.preferredChannel === option}
                                     disabled={locked}
-                                    title={locked ? 'Attendance for this month is locked' : `Contact ${row.employeeName} by ${option === 'voice' ? 'call' : 'WhatsApp'}`}
+                                    title={
+                                      locked
+                                        ? 'Attendance for this month is locked'
+                                        : `Contact ${row.employeeName} by ${option === 'voice' ? 'call' : 'WhatsApp'}${row.ownChannel ? '' : ' (now following the customer default)'}`
+                                    }
                                   >
                                     {option === 'voice' ? 'Call' : 'WhatsApp'}
                                   </RowSwitch>

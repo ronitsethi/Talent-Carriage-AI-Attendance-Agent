@@ -37,6 +37,8 @@ export type CaseListItem = {
   employeeId: string;
   channel: string;
   preferredChannel: string;
+  /** Null when they follow the customer's default. */
+  ownChannel: string | null;
   callMode: string | null;
   operatingMode: string | null;
   attDate: string;
@@ -133,6 +135,8 @@ export const CASE_FILTERS = [
   // Open when its month's attendance was locked: frozen there until it is unlocked.
   { key: 'unresolved', label: 'Unresolved', statuses: ['unresolved'] },
   { key: 'needs_hr', label: 'Needs HR', statuses: ['needs_hr'] },
+  // Never answered, so passed to the manager: "I'll speak to them", or Loss of Pay.
+  { key: 'escalated', label: 'With manager', statuses: ['escalated'] },
   { key: 'failed', label: 'Send failed', statuses: ['failed'] },
   { key: 'resolved', label: 'Resolved', statuses: ['resolved'] },
   { key: 'all', label: 'All', statuses: null },
@@ -186,7 +190,9 @@ export async function listCases(
         id: cases.id,
         employeeId: cases.employeeId,
         channel: cases.channel,
-        preferredChannel: employees.preferredChannel,
+        // Their own channel, else the customer's default for first contact.
+        preferredChannel: sql<string>`coalesce(${employees.preferredChannel}, (select ts.default_channel from tenant_settings ts where ts.tenant_id = ${employees.tenantId}), 'whatsapp')`,
+        ownChannel: employees.preferredChannel,
         callMode: employees.callMode,
         operatingMode: employees.operatingMode,
         attDate: cases.attDate,
@@ -491,11 +497,15 @@ export type FlaggedRow = {
   meaning: string;
   rawStatus: string | null;
   preferredChannel: string;
+  /** Null when they follow the customer's default. */
+  ownChannel: string | null;
   callMode: string | null;
   operatingMode: string | null;
   caseId: string | null;
   caseStatus: string | null;
   caseLockedFrom: string | null;
+  /** Asked, not answered, and reminded by hand: someone on Manual whose reminder interval has passed. */
+  reminderDue: boolean;
 };
 
 /**
@@ -524,7 +534,9 @@ export async function flaggedInRange(
         employeeCode: employees.empCode,
         department: employees.department,
         mobile: employees.mobileE164,
-        preferredChannel: employees.preferredChannel,
+        // Their own channel, else the customer's default for first contact.
+        preferredChannel: sql<string>`coalesce(${employees.preferredChannel}, (select ts.default_channel from tenant_settings ts where ts.tenant_id = ${employees.tenantId}), 'whatsapp')`,
+        ownChannel: employees.preferredChannel,
         callMode: employees.callMode,
         operatingMode: employees.operatingMode,
         attDate: attendanceDays.attDate,
@@ -535,6 +547,13 @@ export async function flaggedInRange(
         caseStatus: cases.status,
         /** For a case in a locked month: the status it was locked in. */
         caseLockedFrom: sql<string | null>`${cases.lockState}->>'status'`,
+        reminderDue: sql<boolean>`coalesce((
+          select ${cases.status} in ('asked', 'delivered', 'read')
+            and coalesce(${employees.operatingMode}, ts.operating_mode) = 'manual'
+            and ts.reminder_interval_days > 0
+            and coalesce(${employees.absenceContactAt}, ${cases.askedAt}) + make_interval(days => ts.reminder_interval_days) <= now()
+          from tenant_settings ts where ts.tenant_id = ${employees.tenantId}
+        ), false)`,
       })
       .from(attendanceDays)
       .innerJoin(employees, eq(employees.id, attendanceDays.employeeId))
@@ -563,6 +582,8 @@ export type EmployeeListItem = {
   department: string | null;
   mobile: string | null;
   preferredChannel: string;
+  /** Null when they follow the customer's default. */
+  ownChannel: string | null;
   callMode: string | null;
   operatingMode: string | null;
   /** Open cases with a conversation behind them: what deleting them would offer to keep. */
@@ -586,7 +607,9 @@ export async function listEmployees(tenantId: string, opts: { search?: string } 
         empCode: employees.empCode,
         department: employees.department,
         mobile: employees.mobileE164,
-        preferredChannel: employees.preferredChannel,
+        // Their own channel, else the customer's default for first contact.
+        preferredChannel: sql<string>`coalesce(${employees.preferredChannel}, (select ts.default_channel from tenant_settings ts where ts.tenant_id = ${employees.tenantId}), 'whatsapp')`,
+        ownChannel: employees.preferredChannel,
         callMode: employees.callMode,
         operatingMode: employees.operatingMode,
       })

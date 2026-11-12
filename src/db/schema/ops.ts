@@ -156,6 +156,8 @@ export const calls = pgTable(
     transcript: jsonb('transcript').$type<{ role: 'agent' | 'employee'; text: string; at: string; heard?: string }[]>(),
     recordingUri: text('recording_uri'),
     usedKeypadFallback: boolean('used_keypad_fallback').notNull().default(false),
+    /** Follow-ups this call asks about once the absences are done, so nobody is rung twice. */
+    thenFollowUps: jsonb('then_follow_ups').$type<string[]>().notNull().default([]),
     durationSeconds: integer('duration_seconds'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     endedAt: timestamp('ended_at', { withTimezone: true }),

@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { runAbsenceWatch } from '@/lib/conversation/absence-reminders';
 import { withPlatformScope, withTenant } from '@/db';
 import { approvals, actions, cases, employees, tenants, tenantSettings } from '@/db/schema';
 import { contactAfterUpload, type SendStage } from '@/lib/upload-send';
@@ -51,8 +52,13 @@ const approvalTimeout: JobHandler = async (job) => {
         .update(approvals)
         .set({ decision: 'expired', escalatedTo: ctx.settings.approvalEscalatesTo })
         .where(eq(approvals.id, approval.id));
-      const action = await tx.query.actions.findFirst({ where: eq(actions.id, approval.actionId) });
-      if (action?.caseId) {
+      // Every date the request decided goes to HR, not only the one it was asked from.
+      const decided = await tx
+        .select({ caseId: actions.caseId })
+        .from(actions)
+        .where(inArray(actions.id, [approval.actionId, ...(approval.covers ?? [])]));
+      const caseIds = decided.map((row) => row.caseId).filter((id): id is string => Boolean(id));
+      if (caseIds.length) {
         await tx
           .update(cases)
           .set({
@@ -60,7 +66,7 @@ const approvalTimeout: JobHandler = async (job) => {
             needsHrReason: `Manager did not respond within ${ctx.settings.approvalTimeoutHours} hours`,
             updatedAt: new Date(),
           })
-          .where(eq(cases.id, action.caseId));
+          .where(inArray(cases.id, caseIds));
       }
       escalated++;
     }
@@ -202,8 +208,16 @@ const placeCall: JobHandler = async (job) => {
   return { skipped: 'voice provider not configured', caseId: job.payload.caseId };
 };
 
+/** One person's unanswered absences: a reminder, or the manager, when due. */
+const absenceWatch: JobHandler = async (job) => {
+  const tenantId = job.tenantId!;
+  const employeeId = String(job.payload.employeeId ?? '');
+  return withTenant(tenantId, async (tx) => runAbsenceWatch(await buildContext(tx, tenantId), employeeId));
+};
+
 export const handlers: Record<JobKind, JobHandler> = {
   upload_contact: uploadContact,
+  absence_watch: absenceWatch,
   approval_timeout: approvalTimeout,
   verify_action: verifyAction,
   refresh_leave_balances: refreshLeaveBalances,

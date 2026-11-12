@@ -1,10 +1,11 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { withTenant } from '@/db';
 import { cases, employees, imports } from '@/db/schema';
-import { capAllows, outstandingCount, type TenantSettings } from '@/lib/conversation/engine';
-import { followUpDueOnUpload, sendFollowUpsAfterUpload } from '@/lib/conversation/followup';
-import { channelFor } from '@/lib/channel';
+import { type TenantSettings } from '@/lib/conversation/engine';
+import { followUpDueOnUpload, nextFollowUp, sendFollowUpsAfterUpload } from '@/lib/conversation/followup';
+import { channelFor, followUpChannel } from '@/lib/channel';
 import { contactCaseById } from '@/lib/contact';
+import { askGroup, noteAbsenceContact, unansweredCases } from '@/lib/conversation/absence-group';
 import { MAX_RANGE_DAYS, datesInRange } from '@/lib/dates';
 import { contactDateFor, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { enqueue } from '@/lib/jobs/queue';
@@ -201,6 +202,13 @@ export async function startUnlockSend(tenantId: string, months: string[], at = n
   });
 }
 
+/** Whether this person is due a call about new absences from this send, which their follow-ups then join. */
+async function absenceCallDue(ctx: FullContext, employee: typeof employees.$inferSelect, at: Date) {
+  if (channelFor(employee, ctx.settings.defaultChannel) !== 'voice') return false;
+  const unanswered = await unansweredCases(ctx, employee.id, { upTo: contactDateFor(ctx.settings, at) });
+  return unanswered.some((row) => row.status === 'queued');
+}
+
 /**
  * One person's turn. Everything is checked again, because the time period can be
  * long: the switch may be off now, they may have been set to Manual, or a date
@@ -213,26 +221,42 @@ export async function contactAfterUpload(tenantId: string, employeeId: string, s
     if (!employee || employee.deletedAt) return { skipped: 'employee is gone' };
     if (!followsUploads(employee, ctx.settings)) return { skipped: 'no longer automatic' };
 
-    if (stage === 'follow_up') return { followUps: await sendFollowUpsAfterUpload(ctx, employeeId, at) };
+    // Someone also due a call about new absences hears their follow-ups on that call, not a second one.
+    if (stage === 'follow_up') {
+      const merged = await absenceCallDue(ctx, employee, at);
+      return { followUps: await sendFollowUpsAfterUpload(ctx, employeeId, at, true, merged) };
+    }
 
-    const unopened = await tx
-      .select({ id: cases.id })
-      .from(cases)
-      .where(and(eq(cases.employeeId, employeeId), eq(cases.status, 'queued'), lte(cases.attDate, contactDateFor(ctx.settings, at))))
-      .orderBy(asc(cases.attDate));
-    const outstanding = await outstandingCount(ctx, employeeId);
-    if (!unopened.length || !capAllows(ctx.settings, outstanding)) return { caseIds: [] };
+    // Everything they have not answered, asked before or not, in one message or
+    // one call. Only a new date sends anything: dates already asked and ignored
+    // wait for their reminder.
+    const unanswered = await unansweredCases(ctx, employeeId, { upTo: contactDateFor(ctx.settings, at) });
+    if (!unanswered.some((row) => row.status === 'queued')) return { caseIds: [] };
 
-    // One call, about the newest date, which sweeps the rest; on WhatsApp each date
-    // has its own message, as many as the cap leaves room for.
-    if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') return { caseIds: [unopened[unopened.length - 1]!.id] };
-    const cap = ctx.settings.maxOutstandingQuestions;
-    return { caseIds: (cap > 0 ? unopened.slice(0, cap - outstanding) : unopened).map((row) => row.id) };
+    if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') {
+      // One call, opening on the oldest date and naming them all, which sweeps the
+      // rest - and then any follow-ups due by call, so they are not rung twice.
+      const followUps = await tx
+        .select()
+        .from(cases)
+        .where(and(followUpDueOnUpload(ctx.settings.timezone, at), eq(cases.employeeId, employeeId)))
+        .orderBy(asc(cases.attDate));
+      const carried = followUps.filter((row) => followUpChannel(employee, ctx.settings, nextFollowUp(row, ctx.settings).number) === 'voice');
+      return { caseIds: [unanswered[0]!.id], call: true, thenFollowUps: carried.map((row) => row.id) };
+    }
+    const result = await askGroup(ctx, employee, unanswered, 'first');
+    for (const row of unanswered) await tx.update(cases).set({ channel: 'whatsapp' }).where(eq(cases.id, row.id));
+    return { caseIds: [], grouped: result.sent ? unanswered.length : 0, reason: result.sent ? undefined : result.reason };
   });
 
-  let contacted = 0;
+  let contacted = 'grouped' in plan && plan.grouped ? 1 : 0;
   for (const caseId of plan.caseIds ?? []) {
-    const outcome = await withTenant(tenantId, async (tx) => contactCaseById(await buildContext(tx, tenantId), caseId));
+    const outcome = await withTenant(tenantId, async (tx) => {
+      const ctx = await buildContext(tx, tenantId);
+      const result = await contactCaseById(ctx, caseId, { thenFollowUps: 'thenFollowUps' in plan ? plan.thenFollowUps : [] });
+      if (result?.contacted) await noteAbsenceContact(ctx, employeeId, at);
+      return result;
+    });
     if (outcome?.contacted) contacted++;
   }
   return { ...plan, contacted };

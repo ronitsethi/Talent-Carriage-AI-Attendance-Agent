@@ -174,9 +174,9 @@ export function allClearedMessage(count: number): string {
 }
 
 /** The list rows for the four options, tagged with the case they belong to. */
-export function optionRows(caseId: string): ListRow[] {
+export function optionRows(caseId: string, groupId?: string): ListRow[] {
   return OPTION_NUMBERS.map((n) => ({
-    id: selectionId(caseId, n),
+    id: groupId ? groupSelectionId(caseId, groupId, n) : selectionId(caseId, n),
     title: OPTIONS[n].listTitle,
     description: OPTIONS[n].listDescription,
   }));
@@ -191,8 +191,21 @@ export function selectionId(caseId: string, option: OptionNumber): string {
   return `c2:${caseId}:${option}`;
 }
 
-/** Reads a button or list payload back into the case and option it names. */
-export function parseSelectionId(value: string | undefined | null): { caseId: string; option: OptionNumber; legacy: boolean } | null {
+/**
+ * A button on a message about several dates: the case that leads them, which
+ * message it was (the dates it listed are kept on that case), and the option.
+ * A tap answers exactly the dates its own message listed.
+ */
+export function groupSelectionId(caseId: string, groupId: string, option: OptionNumber): string {
+  return `g2:${caseId}:${groupId}:${option}`;
+}
+
+/** Reads a button or list payload back into the case and option it names, and the message's group if it had one. */
+export function parseSelectionId(
+  value: string | undefined | null,
+): { caseId: string; option: OptionNumber; legacy: boolean; groupId?: string } | null {
+  const grouped = /^g2:([0-9a-f-]{36}):([0-9a-f-]{36}):([1-4])$/i.exec(value ?? '');
+  if (grouped) return { caseId: grouped[1]!, groupId: grouped[2]!, option: Number(grouped[3]) as OptionNumber, legacy: false };
   const match = /^(c2|case):([0-9a-f-]{36}):([1-4])$/i.exec(value ?? '');
   if (!match) return null;
   return { caseId: match[2]!, option: Number(match[3]) as OptionNumber, legacy: match[1]!.toLowerCase() === 'case' };
@@ -292,13 +305,15 @@ export function buildOptionList(args: {
   caseId: string;
   remaining: number;
   body?: string;
+  /** For a message about several dates: which message, so a tap answers the dates it listed. */
+  groupId?: string;
 }): OutboundList {
   return {
     kind: 'list',
     to: args.to,
     body: args.body ?? nextDateQuestion(firstName(args.employeeName), args.label, args.remaining),
     buttonLabel: 'Choose a reason',
-    rows: optionRows(args.caseId),
+    rows: optionRows(args.caseId, args.groupId),
     footer: 'Reply with 1, 2, 3 or 4 if you prefer',
   };
 }

@@ -19,6 +19,9 @@ import { addMessagesToQuery, recentCaseContact, whatsappQuery } from './queries'
 import { answerFeedbackTap, answerFeedbackTyped, parseFeedbackSelection } from './feedback';
 import { handleLeaveType, handleStep, handleTopOption, handleTyped, parseSheetSelectionId, sheetState } from './sheet';
 import { decideApproval, typedManagerReply } from '@/lib/approvals';
+import { groupForTap, groupMembers, setGroup } from './absence-group';
+import { decideEscalation, parseEscalationSelectionId } from './absence-reminders';
+import type { FullContext } from '@/lib/runtime';
 import type { ApplyContext } from './apply';
 import type { ChatVerdict } from './talk';
 import {
@@ -354,9 +357,13 @@ export async function outstandingCount(ctx: EngineContext, employeeId: string): 
   return row?.count ?? 0;
 }
 
-export function capAllows(settings: TenantSettings, outstanding: number): boolean {
-  const cap = settings.maxOutstandingQuestions;
-  return cap <= 0 || outstanding < cap;
+/**
+ * The outstanding questions cap is retired: everything unanswered now goes in
+ * one message per person, so there is nothing to hold back. Kept so callers
+ * read the same; it always allows.
+ */
+export function capAllows(_settings: TenantSettings, _outstanding: number): boolean {
+  return true;
 }
 
 /**
@@ -419,6 +426,12 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
   // A manager deciding a request: by the button, which names the request - a
   // manager may not be an employee at all. Writing instead, a manager who is not
   // also an employee is read as answering the request waiting on them.
+  // A manager answering about a team member who never replied: speak to them, or Loss of Pay.
+  const escalationTap = parseEscalationSelectionId(inbound.selectionId);
+  if (escalationTap) {
+    const decided = await decideEscalation(ctx as FullContext, escalationTap.escalationId, escalationTap.choice, inbound.from);
+    if (decided.handled) return { handled: true, caseId: null, classification: { intent: 'other', option: null, confidence: 1, source: 'rules' }, action: 'logged' };
+  }
   const approvalTap = parseApprovalSelectionId(inbound.selectionId);
   if (approvalTap && approvalTap.choice !== 'details') {
     const decided = await decideApproval(ctx as ApplyContext, approvalTap.approvalId, approvalTap.choice, inbound.from);
@@ -845,6 +858,15 @@ async function resolveCase(
     const row = await ctx.tx.query.cases.findFirst({
       where: and(eq(cases.id, selection.caseId), eq(cases.employeeId, employeeId)),
     });
+    // A button on a message about several dates answers the dates it listed that are still open.
+    if (row && selection.groupId) {
+      const lead = await groupForTap(ctx, row, selection.groupId);
+      if (lead) return { caseRow: lead, option: selection.option, legacy: false };
+    }
+    // A button on a message about one date answers that date alone.
+    if (row && !selection.groupId && (UNANSWERED as readonly string[]).includes(row.status) && groupMembers(row).length) {
+      return { caseRow: await setGroup(ctx, row, [row]), option: selection.option, legacy: selection.legacy };
+    }
     if (row) return { caseRow: row, option: selection.option, legacy: selection.legacy };
   }
 
@@ -902,6 +924,8 @@ export async function recordAnswer(
       updatedAt: at,
     })
     .where(eq(cases.id, caseRow.id));
+  // They are answering: the reminders they ignored no longer count towards telling their manager.
+  await ctx.tx.update(employees).set({ absenceReminders: 0 }).where(eq(employees.id, caseRow.employeeId));
 
   return { label, guidance: systemReply(option, label) };
 }

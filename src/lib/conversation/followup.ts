@@ -132,7 +132,7 @@ export async function sendFinalNotice(ctx: EngineContext, caseRow: CaseRow, empl
  * Counts a follow-up as gone and sets the next one's clock. After the last, the
  * case moves to the manager, or to HR when the file names none.
  */
-async function recordFollowUpSent(ctx: FollowUpContext, caseRow: CaseRow, employee: EmployeeRow, at: Date) {
+export async function recordFollowUpSent(ctx: FollowUpContext, caseRow: CaseRow, employee: EmployeeRow, at: Date) {
   const { number, final } = nextFollowUp(caseRow, ctx.settings);
   const channel = followUpChannel(employee, ctx.settings, number);
   await ctx.tx
@@ -211,8 +211,8 @@ export const sendDueFollowUps = (ctx: FollowUpContext, at = new Date(), employee
   );
 
 /** One person's follow-ups at their turn after an upload. */
-export const sendFollowUpsAfterUpload = (ctx: FollowUpContext, employeeId: string, at = new Date(), queueIfBusy = true) =>
-  sendFollowUps(ctx, and(followUpDueOnUpload(ctx.settings.timezone, at), eq(cases.employeeId, employeeId)), at, { mode: 'upload', queueIfBusy });
+export const sendFollowUpsAfterUpload = (ctx: FollowUpContext, employeeId: string, at = new Date(), queueIfBusy = true, skipCalls = false) =>
+  sendFollowUps(ctx, and(followUpDueOnUpload(ctx.settings.timezone, at), eq(cases.employeeId, employeeId)), at, { mode: 'upload', queueIfBusy, skipCalls });
 
 /**
  * Nothing sweeps these on a clock: HR sends them, or an upload does.
@@ -227,7 +227,13 @@ export const sendFollowUpsAfterUpload = (ctx: FollowUpContext, employeeId: strin
  * nobody should be rung five times in a morning. The dates that call covers
  * each count as followed up, picked up or not, as an ignored message would.
  */
-async function sendFollowUps(ctx: FollowUpContext, which: SQL | undefined, at: Date, opts: { mode: 'due' | 'upload'; queueIfBusy: boolean }) {
+async function sendFollowUps(
+  ctx: FollowUpContext,
+  which: SQL | undefined,
+  at: Date,
+  /** `skipCalls`: the follow-ups due by call go on the absence call instead (`upload-send.ts`). */
+  opts: { mode: 'due' | 'upload'; queueIfBusy: boolean; skipCalls?: boolean },
+) {
   const due = await ctx.tx
     .select()
     .from(cases)
@@ -262,6 +268,7 @@ async function sendFollowUps(ctx: FollowUpContext, which: SQL | undefined, at: D
 
     const next = nextFollowUp(caseRow, ctx.settings);
     const onCall = followUpChannel(employee, ctx.settings, next.number) === 'voice';
+    if (onCall && opts.skipCalls) continue;
     const callKey = `${employee.id}:${next.final}`;
     if (onCall && waitingFor.has(employee.id)) continue;
     if (onCall && rungAlready.has(callKey)) {

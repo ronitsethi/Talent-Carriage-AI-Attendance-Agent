@@ -82,8 +82,8 @@ export function FollowUpContacts({ levels, saved }: { levels: number; saved: Fol
         </table>
       </div>
       <p className="field-help" style={{ maxWidth: '70ch' }}>
-        These apply to everyone at this customer, over each employee&apos;s own Contact by and Call style. The first question
-        still goes the way each employee is set. Leave a level on {OWN.toLowerCase()} to change nothing for it.
+        These apply to everyone at this customer, over each employee&apos;s own Contact by and Call style. Leave a level on{' '}
+        {OWN.toLowerCase()} to change nothing for it.
       </p>
     </div>
   );

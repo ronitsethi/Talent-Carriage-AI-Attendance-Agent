@@ -12,15 +12,17 @@ import { attendanceSummary, findPassages, openai, RELEVANCE_FLOOR, ReplyExtracto
 import { halfOfDay, MEANING_LABELS, type Meaning } from '@/lib/mapping/meanings';
 import { timed } from '@/lib/timing';
 import { agentGender } from '@/lib/voice/voices';
+import { liveGroup } from './absence-group';
+import { openCasesFor, settleOtherDates } from './multi-date';
 import { recordFollowUpChoice } from './follow-up-state';
 import { dateLabel, DAYS_TO_ACT, formatDate, OPTIONS } from './flow';
 import { instructionFor, OUTCOME_CODES, OUTCOMES, outcomeGuide, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
 import { recordAnswer, UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from './engine';
 import { spokenDate } from './voice-script';
-import { agentCanApply, leaveTypesFor, needsApplication, submitApplication, type ApplyContext } from './apply';
+import { agentCanApply, isOnLeave, leaveTypesFor, needsApplication, submitApplication, type ApplyContext } from './apply';
 import { managerFirstName } from '@/lib/approvals';
 import { APPROVAL_CALL_PURPOSES, approvalOpening, approvalTurn, type ApprovalCallPurpose } from '@/lib/voice/approval-calls';
-import type { VoiceContext } from '@/lib/voice/session';
+import { carriedFollowUp, type VoiceContext } from '@/lib/voice/session';
 
 /**
  * The talking call, as a conversation rather than a script.
@@ -65,6 +67,52 @@ type Verdict = {
   leave_type: string | null;
   follow_up: 'done' | 'not_done' | 'none';
   handover_reason: string | null;
+  note: string | null;
+  /** Every date they gave an answer for, each with its answer: the model's job is only this. */
+  per_date?: { date: string; outcome: OutcomeCode | 'none'; leave_choice: LeaveChoice | 'not_said'; application: ApplicationStage | 'not_said'; note: string | null }[];
+  /** Worked out from per_date by `sortDates`: other dates with the same answer as the one discussed. */
+  same_dates?: string[];
+  /** Worked out from per_date by `sortDates`: other dates with an answer of their own. */
+  other_dates?: OtherDates[];
+};
+
+/**
+ * Which other dates share the discussed date's answer, and which have their
+ * own. The model only says what was said for each date; deciding "the same" is
+ * left to code, because a small model given that judgement lumps different
+ * answers together.
+ */
+export function sortDates(verdict: Verdict, discussed: string): Verdict {
+  const entries = (verdict.per_date ?? []).filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date));
+  const mine = entries.find((entry) => entry.date === discussed);
+  // The discussed date's own line fills in what the top-level fields left unsaid.
+  const main = {
+    outcome: verdict.outcome !== 'none' ? verdict.outcome : mine?.outcome ?? 'none',
+    leave_choice: verdict.leave_choice !== 'not_said' ? verdict.leave_choice : mine?.leave_choice ?? 'not_said',
+    application: verdict.application !== 'not_said' ? verdict.application : mine?.application ?? 'not_said',
+  };
+  const agrees = <T extends string>(a: T, b: T, unsaid: T) => a === b || a === unsaid || b === unsaid;
+  const same: string[] = [];
+  const other: OtherDates[] = [];
+  for (const entry of entries) {
+    if (entry.date === discussed) continue;
+    const alike =
+      main.outcome !== 'none' &&
+      entry.outcome === main.outcome &&
+      agrees(entry.leave_choice, main.leave_choice, 'not_said') &&
+      agrees(entry.application, main.application, 'not_said');
+    if (alike) same.push(entry.date);
+    else other.push({ dates: [entry.date], outcome: entry.outcome, leave_choice: entry.leave_choice, application: entry.application, note: entry.note });
+  }
+  return { ...verdict, ...main, same_dates: same, other_dates: other };
+}
+
+/** Dates the employee answered differently, in the same breath: "the 6th I was working, punch missed". */
+export type OtherDates = {
+  dates: string[];
+  outcome: OutcomeCode | 'none';
+  leave_choice: LeaveChoice | 'not_said';
+  application: ApplicationStage | 'not_said';
   note: string | null;
 };
 
@@ -231,6 +279,18 @@ RECORDING
   outcome must be set. Leave outcome "none" only while you do not yet know it.
 - Then, in the same reply, move on: ask about the next date if one is given, otherwise ask if there is anything else.
 - If they correct something already noted, set the corrected outcome.
+- SEVERAL DATES: people answer for more than one date at once, in any way. In per_date, list every date they gave
+  an answer for in this message - the DATE BEING DISCUSSED and any of OTHER DATES - each by its key in brackets, with
+  that date's own outcome, leave_choice and application ("not_said" for what they have not said; outcome "none" when
+  what they said is not yet enough for an outcome). "Both days", "all of them" or "the whole week" names every date
+  listed. Never a date they did not mean. When they speak only of the date being discussed, per_date has just that date.
+  The top-level outcome, leave_choice and application are always for the DATE BEING DISCUSSED.
+  Examples, with 3 Nov [2026-11-03] being discussed and OTHER DATES: 4 Nov [2026-11-04]:
+  "sick both days" -> per_date: 2026-11-03 absent_unwell, 2026-11-04 absent_unwell.
+  "on leave on the 3rd and working on the 4th" -> per_date: 2026-11-03 leave_not_applied (application "not_said"),
+    2026-11-04 "none" (working how is not said yet).
+  "3rd I was unwell, 4th my out-punch was missed" -> per_date: 2026-11-03 absent_unwell, 2026-11-04 missed_out_punch.
+  "I was on leave" (no dates named, the message asked about both) -> per_date: both dates leave_not_applied.
 - For an absence, ask what happened if they have not said, and ask whether they will apply leave or take it as Loss of
   Pay. Do not push either way.
 
@@ -305,7 +365,10 @@ const SCHEMA = {
       additionalProperties: false,
       // The reply comes second, straight after its language, so it can be
       // spoken while the verdict after it is still being written.
-      required: ['reply_language', 'reply', 'action', 'outcome', 'leave_choice', 'application', 'leave_type', 'follow_up', 'handover_reason', 'note'],
+      required: [
+        'reply_language', 'reply', 'action', 'outcome', 'leave_choice', 'application', 'leave_type', 'follow_up', 'handover_reason', 'note',
+        'per_date',
+      ],
       properties: {
         reply_language: {
           type: 'string',
@@ -322,6 +385,22 @@ const SCHEMA = {
         follow_up: { type: 'string', enum: ['done', 'not_done', 'none'] },
         handover_reason: { type: ['string', 'null'] },
         note: { type: ['string', 'null'] },
+        per_date: {
+          type: 'array',
+          description: 'Every date they gave an answer for in this message, each with its own answer',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['date', 'outcome', 'leave_choice', 'application', 'note'],
+            properties: {
+              date: { type: 'string', description: 'The date key, YYYY-MM-DD, from DATE BEING DISCUSSED or OTHER DATES' },
+              outcome: { type: 'string', enum: [...OUTCOME_CODES, 'none'] },
+              leave_choice: { type: 'string', enum: ['leave', 'loss_of_pay', 'not_said'] },
+              application: { type: 'string', enum: ['not_applied', 'applied', 'apply_for_me', 'not_said'] },
+              note: { type: ['string', 'null'] },
+            },
+          },
+        },
       },
     },
   },
@@ -454,6 +533,10 @@ type Situation = {
   grounding: Grounding | null;
   /** On WhatsApp: where they are in the menus, if part-way through. */
   menu?: string | null;
+  /** On WhatsApp: the dates the message they are answering asked about, when it asked about several. */
+  askedTogether?: CaseRow[];
+  /** On a call about new absences: follow-ups to ask about on the same call once the dates are done. */
+  carried?: CaseRow[];
   /** Whether the agent can apply things itself, and the leave types it could apply. */
   applying?: { agent: boolean; leaveTypes: string[] };
 };
@@ -491,7 +574,7 @@ function describe(ctx: TalkContext, s: Situation): string {
 
   if (s.caseRow && s.mode !== 'inbound') {
     const meaning = MEANING_LABELS[s.caseRow.meaning as Meaning] ?? s.caseRow.meaning;
-    lines.push(`DATE BEING DISCUSSED: ${dateOf(s.caseRow)} (attendance shows: ${meaning})`);
+    lines.push(`DATE BEING DISCUSSED: ${dateOf(s.caseRow)} [${s.caseRow.attDate}] (attendance shows: ${meaning})`);
     if (s.menu) lines.push(`WHERE THEY ARE IN THE MENUS: ${s.menu}`);
     const noted = (s.caseRow.context as { outcome?: { code: OutcomeCode; leaveChoice: LeaveChoice | null } }).outcome;
     if (s.mode === 'follow_up' && noted) {
@@ -503,12 +586,26 @@ function describe(ctx: TalkContext, s: Situation): string {
     } else if (noted) {
       lines.push(`ALREADY NOTED FOR THIS DATE: ${noted.code}${noted.leaveChoice ? ` (${noted.leaveChoice})` : ''}`);
     }
-    if (!chat) {
+    // Every other date still open, with the key same_dates and other_dates use for it.
+    lines.push(
+      s.upcoming.length
+        ? `OTHER DATES, OLDEST FIRST, STILL TO COVER: ${s.upcoming.map((row) => `${dateOf(row)} [${row.attDate}]`).join(', ')}`
+        : 'NO OTHER DATES after this one.',
+    );
+    if (chat && s.askedTogether && s.askedTogether.length > 1) {
       lines.push(
-        s.upcoming.length
-          ? `NEXT DATES, OLDEST FIRST, AFTER THIS ONE: ${s.upcoming.map(spokenFor).join(', ')}`
-          : 'NO OTHER DATES after this one.',
+        `THE MESSAGE THEY ARE ANSWERING ASKED ABOUT: ${s.askedTogether.map(dateOf).join(', ')}. One answer with no dates ` +
+          'named is for all of these: list each of them in per_date with it.',
       );
+    }
+    if (!chat && s.mode === 'first_contact' && s.carried?.length) {
+      lines.push(
+        `THEN, ON THIS SAME CALL: once these dates are done, before saying goodbye, check whether they have done what they ` +
+          `were asked to do for ${s.carried.map(dateOf).join(', ')}. Do not end the call before that.`,
+      );
+    }
+    if (!chat && s.mode === 'first_contact' && s.upcoming.length && !s.history.length) {
+      lines.push('OPENING: name every date at the start - this one and all of OTHER DATES - then ask what happened; they may answer for all at once.');
     }
     lines.push(`FACTS FOR WHAT THEY ARE TOLD: date "${dateOf(s.caseRow)}", deadline "${deadline}", manager "${s.manager ?? 'your manager'}"`);
     lines.push(
@@ -626,6 +723,15 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
       ? Promise.resolve(null)
       : ((args.preparedKey ? takePrepared(args.preparedKey) : null) ?? ground(ctx.tx, ctx.tenantId, employee.id, args.said)),
   ]);
+  // Follow-ups this call carries, asked once its dates are done.
+  const carried =
+    call && mode === 'first_contact' && call.thenFollowUps?.length
+      ? await ctx.tx
+          .select()
+          .from(cases)
+          .where(and(inArray(cases.id, call.thenFollowUps), eq(cases.status, 'answered'), sql`${cases.followUpReply} is null`))
+          .orderBy(asc(cases.attDate))
+      : [];
   // What the agent may offer at the apply step: to apply it itself, with an HRMS - and which leave.
   const agent = mode === 'first_contact' && agentCanApply(ctx as ApplyContext);
   const applying = {
@@ -639,7 +745,7 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
       { role: 'system', content: SYSTEM },
       {
         role: 'user',
-        content: describe(ctx, { mode, employee, caseRow, upcoming, manager, history, said: args.said, grounding, applying }),
+        content: describe(ctx, { mode, employee, caseRow, upcoming, manager, history, said: args.said, grounding, applying, carried }),
       },
     ],
     temperature: 0.3,
@@ -679,6 +785,7 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
   let verdict: Verdict;
   try {
     verdict = JSON.parse(raw) as Verdict;
+    if (caseRow) verdict = sortDates(verdict, caseRow.attDate);
   } catch {
     // Whatever was said stands; nothing is recorded from a verdict nobody can read.
     if (!spoke) return giveUp('The conversation model gave an unreadable answer');
@@ -710,6 +817,10 @@ export type ChatVerdict = {
   note: string | null;
   action: Action;
   handoverReason: string | null;
+  /** Other open dates the outcome is also for. */
+  sameDates?: string[];
+  /** Other open dates given a different answer of their own. */
+  otherDates?: OtherDates[];
 };
 
 /**
@@ -737,6 +848,12 @@ export async function chatTurn(
   }
 
   const manager = await managerName(ctx.tx, args.employee);
+  // The other dates still open, which one answer may cover too, and the dates
+  // the message being answered asked about together.
+  const [upcoming, askedTogether] = await Promise.all([
+    remainingDates(ctx, args.employee.id, 'first_contact', args.caseRow.id),
+    liveGroup(ctx, args.caseRow),
+  ]);
   // A savepoint, so a failed search cannot abort the message's own transaction.
   const grounding = await ctx.tx
     .transaction((tx) => ground(tx, ctx.tenantId, args.employee.id, args.said, 'whatsapp'))
@@ -755,16 +872,17 @@ export async function chatTurn(
           mode: 'chat',
           employee: args.employee,
           caseRow: args.caseRow,
-          upcoming: [],
+          upcoming,
           manager,
           history: args.history,
           said: args.said,
           grounding,
           menu: args.menu,
+          askedTogether,
         }),
       },
     ],
-    temperature: 0.6,
+    temperature: 0.3,
     max_tokens: 400,
     response_format: SCHEMA,
   };
@@ -773,7 +891,7 @@ export async function chatTurn(
     const result = await (args.model ?? streamChat)(request, () => {});
     noteModelCost('openai', request.model, fromOpenAIUsage(result.usage), 'Chat reply');
     void chargeBudget('whatsapp', request.model, fromOpenAIUsage(result.usage)).catch((error) => console.error('[budget] could not record the cost:', (error as Error).message));
-    const verdict = JSON.parse(result.raw) as Verdict;
+    const verdict = sortDates(JSON.parse(result.raw) as Verdict, args.caseRow.attDate);
     if (!verdict.reply?.trim()) return null;
     const outcome = verdict.outcome !== 'none' && OUTCOMES[verdict.outcome] ? verdict.outcome : null;
     return {
@@ -784,6 +902,8 @@ export async function chatTurn(
       note: verdict.note,
       action: verdict.action,
       handoverReason: verdict.handover_reason,
+      sameDates: verdict.same_dates ?? [],
+      otherDates: verdict.other_dates ?? [],
     };
   } catch (error) {
     console.error('[talk] a chat turn failed:', (error as Error).message);
@@ -813,15 +933,32 @@ async function apply(
     const code = verdict.outcome;
     const outcome = OUTCOMES[code];
     const choice = verdict.leave_choice === 'not_said' ? null : verdict.leave_choice;
-    const stage = verdict.application === 'not_said' ? outcome?.application?.preset ?? null : verdict.application;
+    // On leave, applied or not, is only known once they say it; any other preset stands.
+    const stage =
+      verdict.application === 'not_said' ? (isOnLeave(code) ? null : outcome?.application?.preset ?? null) : verdict.application;
     // An absence is not settled until they have said leave or Loss of Pay, nor
     // anything applied for until they have said where it stands.
     const waiting = (outcome?.asksLeaveOrLossOfPay && !choice) || (needsApplication(code, choice) && !stage);
+    // Other dates given an answer of their own in the same breath.
+    // A date given an answer of its own is that answer's, even if it was also put with the others.
+    const ownAnswer = new Set((verdict.other_dates ?? []).flatMap((entry) => entry.dates));
+    const same = new Set((verdict.same_dates ?? []).filter((date) => !ownAnswer.has(date)));
+    const others = (verdict.other_dates ?? [])
+      .map((entry) => ({ ...entry, dates: entry.dates.filter((date) => date !== caseRow.attDate && !same.has(date)) }))
+      .filter((entry) => entry.dates.length);
+    const otherWritten = others.length ? await settleOtherDates(ctx, args.employee, others, 'call') : [];
     if (outcome && !waiting) {
+      // This date, and every date they said was the same.
+      const alike = (await openCasesFor(ctx, args.employee.id, [...same])).filter((row) => row.id !== caseRow.id);
       await recordOutcome(ctx, caseRow, args.employee, code, choice, verdict.note, manager);
+      for (const row of alike) await recordOutcome(ctx, row, args.employee, code, choice, verdict.note, manager);
       if (needsApplication(code, choice) && stage) {
         const fresh = (await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseRow.id) })) ?? caseRow;
-        const facts = { date: spokenFor(caseRow), deadline: spokenDate(addDays(today(ctx.settings.timezone), DAYS_TO_ACT)), manager };
+        const facts = {
+          date: alike.length ? [caseRow, ...alike].map(spokenFor).join(', ') : spokenFor(caseRow),
+          deadline: spokenDate(addDays(today(ctx.settings.timezone), DAYS_TO_ACT)),
+          manager,
+        };
         await submitApplication(ctx as ApplyContext, fresh, args.employee, {
           code,
           choice,
@@ -830,9 +967,23 @@ async function apply(
           note: verdict.note,
           via: 'call',
           facts,
+          alsoCases: alike,
         });
       }
-      next = upcoming[0]?.id ?? caseRow.id;
+      // On to the oldest date still open: those answered together are done.
+      const done = new Set([caseRow.id, ...alike.map((row) => row.id), ...otherWritten.map((row) => row.id)]);
+      next = upcoming.find((row) => !done.has(row.id))?.id ?? caseRow.id;
+      // The dates are done: the follow-ups this call carries come next, on the same call.
+      if (next === caseRow.id && args.call) {
+        const followUp = await carriedFollowUp(ctx as unknown as VoiceContext, args.call);
+        if (followUp) {
+          await ctx.tx.update(calls).set({ purpose: 'follow_up' }).where(eq(calls.id, args.call.id));
+          next = followUp.id;
+        }
+      }
+    } else if (otherWritten.length) {
+      const done = new Set(otherWritten.map((row) => row.id));
+      upcoming.splice(0, upcoming.length, ...upcoming.filter((row) => !done.has(row.id)));
     }
   }
   if (caseRow && mode === 'follow_up' && verdict.follow_up !== 'none') {
