@@ -11,6 +11,12 @@ Format:
 - **Impact:** e.g. breaking API change, migration required, new env var
 ```
 
+## 2026-11-16 12:42
+- **Files:** agent/worker.py, CURRENT_STATE.md
+- **Change:** After a filler, a reply that opens with an acknowledgement of its own followed by a comma or stop ("Okay, ...", "Sure! ...", "अच्छा, ...", "ठीक है जी, ...", up to two in a row) loses it, so the caller no longer hears "Okay. Okay, ...". The worker reads the first ~14 characters of the reply while the filler plays before deciding (`drop_opening_ack`, `_without_repeat`). Left alone: "Okay so ...", "जी हाँ, ...", a reply that is only "Okay.", and every reply that had no filler. Filler placement, words and timing are unchanged. Deployed as worker image v22 (revision tc-attendance-worker--0000022); `AGENT_FILLERS` stays `on`.
+- **Why:** Reported by the user: on some incoming (query) calls the filler word was said twice, once as the filler and again at the start of the answer. Cause: the platform prompt (`RULES` in `src/lib/conversation/talk.ts`) lets a reply begin with a short "Okay" / "अच्छा" / "ठीक है", and the model cannot know a filler was already said.
+- **Impact:** Voice worker only (outgoing and incoming talking calls); no platform, API or database change. Redeploy of the worker image, no new env var.
+
 ## 2026-11-12 21:45
 - **Files:** none changed (deploy)
 - **Change:** Deployed the multi-date reply fix (`per_date` sorted by code) and the "applied yet?" fix to production; health check passed. No migration.

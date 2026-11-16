@@ -138,6 +138,30 @@ FILLERS = {
 }
 
 
+# The platform's prompt lets a reply open with a short "Okay," / "अच्छा,", and
+# the model does not know whether a filler went first. After one did, the
+# caller would hear the word twice ("Okay. Okay, your leave..."), so that
+# opening is dropped. Only before a comma or stop: "Okay so" is left alone, and
+# a reply that is nothing else is still said.
+OPENING_ACK = re.compile(
+    r"^\s*(?:okay|ok|sure|alright|achha|accha|acha|ji|जी|अच्छा|ठीक है|हाँ जी|हां जी|हाँ|हां)"
+    r"(?:\s+जी)?\s*[,.!।—–-]+\s*",
+    re.IGNORECASE,
+)
+# How much of the reply is read before deciding; "ठीक है जी," is 10 characters.
+OPENING_ACK_CHARS = 14
+
+
+def drop_opening_ack(text: str) -> str:
+    """The reply without the acknowledgement that opens it (one or two of them), if anything is left."""
+    rest = text
+    for _ in range(2):
+        rest = OPENING_ACK.sub("", rest, count=1)
+    if not rest.strip():
+        return text
+    return rest[:1].upper() + rest[1:] if rest[:1].isascii() else rest
+
+
 async def make_filler_audio(voice: str, pace: float) -> dict[str, list[rtc.AudioFrame]]:
     """
     Every filler as audio in this call's voice, keyed by its words.
@@ -728,6 +752,31 @@ class TalkingAgent(Agent):
             log.info("timing: saying %r through the voice; no audio made in advance", word)
             self.session.say(word)
 
+    async def _without_repeat(self, opening: str, stream, outcome: dict) -> str:  # noqa: ANN001
+        """
+        The reply's start, read up to OPENING_ACK_CHARS while the filler plays,
+        without an "Okay," of its own (`drop_opening_ack`).
+        """
+        while len(opening.strip()) < OPENING_ACK_CHARS:
+            try:
+                piece = await stream.__anext__()
+            except StopAsyncIteration:
+                break
+            except Exception:
+                # As in `rest`: what arrived is still said; the rest is lost.
+                log.exception("the reply broke off part way")
+                break
+            if isinstance(piece, tuple):
+                self._switch_language(piece[1])
+            elif isinstance(piece, dict):
+                outcome.update(piece)
+            elif piece:
+                opening += piece
+        kept = drop_opening_ack(opening)
+        if kept != opening:
+            log.info("dropped %r opening the reply after the filler", opening[: len(opening) - len(kept)].strip())
+        return kept
+
     async def _speak_stream(self, stream, said: str | None = None) -> tuple[dict, str, str | None]:  # noqa: ANN001
         """
         Speaks a reply while it is still being written.
@@ -775,6 +824,8 @@ class TalkingAgent(Agent):
                     else:
                         log.info("timing: no filler for a pleasantry")
             opening = await first
+            if filled and opening is not None:
+                opening = await self._without_repeat(opening, stream, outcome)
             # They paused, the reply got written, and they are talking again:
             # wait to hear whether it is more of the same thought. Half a
             # thought answered and then the other half is the agent saying the
