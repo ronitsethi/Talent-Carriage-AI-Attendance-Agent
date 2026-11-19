@@ -11,6 +11,18 @@ Format:
 - **Impact:** e.g. breaking API change, migration required, new env var
 ```
 
+## 2026-11-19 15:02
+- **Files:** (deploy only) production database, web app tc-attendance-99772
+- **Change:** Migration 0041 (`policy_documents.file_path`) applied to production; 42 migrations recorded, temporary firewall rule removed. Web app deployed with guideline previews and the folded reminder/follow-up rows in Settings. `/api/health` ok; pages send `X-Frame-Options: DENY`, `/api/guidelines/...` sends `SAMEORIGIN` and `frame-ancestors 'self'` and answers 401 when signed out. No call was live. The voice worker is unchanged.
+- **Why:** The user asked to deploy, commit and push.
+- **Impact:** Migration 0041 applied in production. No new env vars.
+
+## 2026-11-19 14:43
+- **Files:** src/db/migrations/0041_guideline_files.sql, src/db/migrations/meta/_journal.json, src/db/schema/knowledge.ts, src/lib/recordings.ts, src/app/actions.ts, src/app/api/guidelines/[id]/route.ts (new), src/components/guideline-preview.tsx (new), src/app/(app)/knowledge/page.tsx, src/app/globals.css, next.config.ts, tests/guideline-preview.test.ts (new), CURRENT_STATE.md
+- **Change:** Guidelines documents open in a preview when their name is clicked. Uploading now also keeps the PDF in the private storage container (`guidelines/<id>.pdf`, path in new column `policy_documents.file_path`, migration 0041); removing a document deletes its file. New route `/api/guidelines/[id]` serves the PDF inline (or `?text`, the text the agent reads) to the signed-in customer only, filtered by customer id as well as RLS. The preview is a large dialog with the browser's PDF viewer and "Open in new tab"; documents added before this have no file, so they show the extracted text with a note to upload again. `next.config.ts`: every page still sends `X-Frame-Options: DENY` except this route, which sends `SAMEORIGIN` and `frame-ancestors 'self'` so the page can frame it. Applied 0041 to the local database. New tests: PDF kept and served inline, another customer gets 404, text for old documents, file removed with the document.
+- **Why:** The user asked for guideline documents to be previewable when clicked.
+- **Impact:** Migration 0041 required (new nullable column). New route `/api/guidelines/[id]`. Uses the existing `RECORDINGS_CONNECTION_STRING` / container; no new env var. Frame headers changed for that route only. Existing documents have no stored file until uploaded again.
+
 ## 2026-11-19 14:17
 - **Files:** (deploy only) production database, web app tc-attendance-99772
 - **Change:** Migration 0040 (`reminder_contacts`, `follow_up_contacts` cleared) applied to production; 41 migrations recorded, temporary firewall rule removed. Web app deployed with reminders only on upload days and the per-level call rows; `/api/health` ok. Two customers had old follow-up rows (one: only Follow-up 4 by call), now cleared to the defaults. No call was live (three call lines held by stale incoming queries, already treated as free). The voice worker is unchanged.

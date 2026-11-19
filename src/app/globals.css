@@ -572,6 +572,25 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 }
 .call-panel details[open] .call-panel-chevron { transform: rotate(180deg); }
 
+/* A folded block in a form: a title, a short note on what is inside, and a chevron. */
+.fold { border: 1px solid var(--line-200); border-radius: var(--r-card); background: var(--surface-0); }
+.fold-head {
+  position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 10px 40px 10px 14px;
+  list-style: none; cursor: pointer; user-select: none; border-radius: var(--r-card);
+}
+.fold-head::-webkit-details-marker { display: none; }
+.fold-head:hover { background: var(--surface-50); }
+.fold-head:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+.fold-title { font-size: var(--fs-small); font-weight: 700; color: var(--ink-900); }
+.fold-note { font-size: var(--fs-meta); color: var(--ink-600); }
+.fold-chevron { position: absolute; top: 12px; right: 14px; color: var(--ink-500); }
+.fold[open] .fold-chevron { transform: rotate(180deg); }
+.fold[open] .fold-head { border-bottom: 1px solid var(--line-200); border-radius: var(--r-card) var(--r-card) 0 0; }
+.fold-body { padding: 4px 14px 10px; }
+@media (prefers-reduced-motion: no-preference) {
+  .fold-chevron { transition: transform 0.15s; }
+}
+
 /*
  * What a call or chat cost, under its transcript: the total on a bar, the
  * groups and their lines inside. Folded by default - it is looked up, not read.
@@ -704,6 +723,18 @@ code { padding: 1px 5px; white-space: normal; overflow-wrap: anywhere; }
 }
 .doc-main { flex: 1; min-width: 180px; }
 .doc-title { font-weight: 600; color: var(--ink-900); }
+/* A guideline's name opens its preview. */
+.doc-open { padding: 0; border: 0; background: none; font: inherit; color: var(--link); text-align: left; cursor: pointer; }
+.doc-open:hover { text-decoration: underline; }
+.doc-open:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
+.modal.doc-preview { width: min(1000px, calc(100vw - 32px)); height: min(88vh, 1100px); padding: 0; overflow: hidden; }
+.modal.doc-preview[open] { display: flex; flex-direction: column; }
+.doc-preview-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 12px 20px; border-bottom: 1px solid var(--line-200); }
+.doc-preview-name { flex: 1; min-width: 0; }
+.doc-preview-name h2 { margin: 0; font-size: var(--fs-body); overflow-wrap: anywhere; }
+.doc-preview-frame { flex: 1; width: 100%; border: 0; background: var(--surface-50); }
+.doc-preview-text { flex: 1; overflow: auto; padding: 4px 20px 20px; }
+.doc-preview-body { margin-top: 14px; white-space: pre-wrap; font-size: var(--fs-small); line-height: 1.6; color: var(--ink-700); }
 
 /* ---------- login ---------- */
 .login-wrap { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 46fr) minmax(0, 54fr); background: var(--surface-0); }

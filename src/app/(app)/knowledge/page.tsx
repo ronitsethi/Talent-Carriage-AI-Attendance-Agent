@@ -7,6 +7,7 @@ import { formatTime } from '@/lib/display';
 import { FileDrop } from '@/components/file-drop';
 import { Pill } from '@/components/status-pill';
 import { askPolicyQuestion, deletePolicyDocument, uploadPolicyDocument } from '@/app/actions';
+import { GuidelinePreview } from '@/components/guideline-preview';
 import { RefreshWhileReading } from './refresh';
 
 const TOPICS = ['attendance', 'leave', 'overtime', 'exit', 'other'];
@@ -108,7 +109,9 @@ export default async function KnowledgePage({
                     PDF
                   </div>
                   <div className="doc-main">
-                    <div className="doc-title">{doc.title}</div>
+                    <div className="doc-title">
+                      <GuidelinePreview id={doc.id} title={doc.title} filename={doc.filename} hasFile={Boolean(doc.filePath)} />
+                    </div>
                     <div className="hint">
                       {doc.filename} · {formatTime(doc.createdAt)}
                     </div>

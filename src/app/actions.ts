@@ -38,6 +38,7 @@ import { closeCasesExplainedByData, findGaps, runDailyCheckAndContact } from '@/
 import { importAttendanceFile } from '@/lib/mapping/import';
 import { analyseFile, buildFieldMap, type Analysis } from '@/lib/mapping/analyse';
 import { PLATFORM_FIELDS, REQUIRED_FIELDS, type PlatformField } from '@/lib/mapping/apply';
+import { deleteFile, recordingsConfigured, saveFile } from '@/lib/recordings';
 import type { Meaning } from '@/lib/mapping/meanings';
 import { answerQuestion, ingestDocument } from '@/lib/knowledge';
 import { buildContext } from '@/lib/runtime';
@@ -1512,6 +1513,20 @@ export async function uploadPolicyDocument(formData: FormData) {
     return row!.id;
   });
 
+  // The PDF itself, for previewing. Without storage, or if it fails, the
+  // document is still read; its preview is then the text the agent reads.
+  if (recordingsConfigured()) {
+    const filePath = `guidelines/${documentId}.pdf`;
+    try {
+      await saveFile(filePath, buffer, 'application/pdf');
+      await withTenant(tenantId, (tx) =>
+        tx.update(policyDocuments).set({ filePath }).where(and(eq(policyDocuments.tenantId, tenantId), eq(policyDocuments.id, documentId))),
+      );
+    } catch (error) {
+      console.error(`guideline ${documentId} could not be stored for previewing`, error);
+    }
+  }
+
   // Reading a scanned document takes a while - minutes, for a long one on a
   // small instance - and it is deliberately not awaited. App Service cuts a
   // request off at 230 seconds, so awaiting it means a document that takes
@@ -1543,9 +1558,16 @@ export async function uploadPolicyDocument(formData: FormData) {
 export async function deletePolicyDocument(formData: FormData) {
   const { tenantId } = await requireTenant();
   const id = String(formData.get('id') ?? '');
-  await withTenant(tenantId, (tx) =>
-    tx.delete(policyDocuments).where(and(eq(policyDocuments.tenantId, tenantId), eq(policyDocuments.id, id))),
+  const [removed] = await withTenant(tenantId, (tx) =>
+    tx
+      .delete(policyDocuments)
+      .where(and(eq(policyDocuments.tenantId, tenantId), eq(policyDocuments.id, id)))
+      .returning({ filePath: policyDocuments.filePath }),
   );
+  // Its stored PDF goes with it; a file left behind is harmless, so a failure is only logged.
+  if (removed?.filePath && recordingsConfigured()) {
+    await deleteFile(removed.filePath).catch((error) => console.error(`guideline file ${removed.filePath} was not deleted`, error));
+  }
   revalidatePath('/knowledge');
 }
 

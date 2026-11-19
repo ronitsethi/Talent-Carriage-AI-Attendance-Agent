@@ -60,6 +60,28 @@ export async function readRecording(path: string, range: { start: number; end?: 
 }
 
 /**
+ * Other private files in the same container - the guideline PDFs, under
+ * `guidelines/`. Like the recordings they are only named by a row and only
+ * served through a route that finds that row for the signed-in customer.
+ */
+export async function saveFile(path: string, data: Buffer, contentType: string): Promise<void> {
+  await bucket().getBlockBlobClient(path).uploadData(data, { blobHTTPHeaders: { blobContentType: contentType } });
+}
+
+export async function readFile(path: string) {
+  const download = await bucket().getBlobClient(path).download();
+  return {
+    body: Readable.toWeb(download.readableStreamBody as Readable) as ReadableStream<Uint8Array>,
+    size: download.contentLength ?? 0,
+    contentType: download.contentType ?? 'application/octet-stream',
+  };
+}
+
+export async function deleteFile(path: string): Promise<void> {
+  await bucket().getBlobClient(path).deleteIfExists();
+}
+
+/**
  * A recording Plivo made, collected from Plivo.
  *
  * Plivo posts where the file is, and anyone can post to that webhook, so only a

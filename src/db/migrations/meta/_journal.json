@@ -288,6 +288,13 @@
       "when": 1792124799269,
       "tag": "0040_level_contacts",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792211199269,
+      "tag": "0041_guideline_files",
+      "breakpoints": true
     }
   ]
 }

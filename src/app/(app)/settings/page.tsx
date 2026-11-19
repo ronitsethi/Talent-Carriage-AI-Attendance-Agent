@@ -128,12 +128,11 @@ export default async function SettingsPage() {
 
             <div className="form-section">
               <h2>Reminders</h2>
-              <div className="settings-grid">
+              <LevelContacts kind="reminder" settings={levelSettings}>
                 <Box id="reminderIntervalDays" label="Remind after (working days)" help="The least gap between a date's reminders. They go only with an upload send, so a day with no upload sends none; 0 switches reminders off.">
                   <input className="input" type="number" min={0} max={30} id="reminderIntervalDays" name="reminderIntervalDays" defaultValue={settings.reminderIntervalDays} />
                 </Box>
-              </div>
-              <LevelContacts kind="reminder" settings={levelSettings} />
+              </LevelContacts>
             </div>
 
             <div className="form-section">

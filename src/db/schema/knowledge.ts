@@ -25,6 +25,8 @@ export const policyDocuments = pgTable(
     /** The whole extracted text, kept so a document can be re-split later. */
     content: text('content'),
     pageCount: text('page_count'),
+    /** The uploaded PDF in the private storage container, for previewing; null for documents added before files were kept. */
+    filePath: text('file_path'),
     uploadedBy: uuid('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     readyAt: timestamp('ready_at', { withTimezone: true }),
