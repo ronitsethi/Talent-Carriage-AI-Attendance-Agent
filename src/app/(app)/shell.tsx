@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   Menu,
   MessagesSquare,
+  ScrollText,
   SlidersHorizontal,
   Upload,
   UserCheck,
@@ -42,6 +43,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
 // Talent Carriage's own pages, which no customer sees.
 const STAFF = [
   { href: '/coe', label: 'COE Teams', icon: Headset },
+  { href: '/prompts', label: 'AI prompts', icon: ScrollText },
   { href: '/admin', label: 'All customers', icon: Users },
 ];
 

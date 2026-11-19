@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getActiveTenantId, getSession, canManageSettings } from '@/lib/auth';
 import { tenantSummary } from '@/lib/queries';
 import { updateSettings } from '@/app/actions';
-import { FollowUpContacts } from '@/components/follow-up-contacts';
+import { LevelContacts } from '@/components/follow-up-contacts';
 import { AGENT_VOICES, agentVoice } from '@/lib/voice/voices';
 import { capabilities, env } from '@/lib/env';
 
@@ -35,6 +35,17 @@ export default async function SettingsPage() {
   const caps = capabilities();
   if (!settings) return <p style={{ paddingTop: 40 }}>This customer has no settings row.</p>;
   const readOnly = !canManageSettings(session);
+  // Only what the per-level rows need, plain enough to hand to the browser.
+  const levelSettings = {
+    reminderContacts: settings.reminderContacts,
+    followUpContacts: settings.followUpContacts,
+    remindersBeforeEscalation: settings.remindersBeforeEscalation,
+    maxFollowUps: settings.maxFollowUps,
+    reminderCallsAllowed: settings.reminderCallsAllowed,
+    followUpCallsAllowed: settings.followUpCallsAllowed,
+    reminderCallMode: settings.reminderCallMode,
+    followUpCallMode: settings.followUpCallMode,
+  };
 
   return (
     <>
@@ -63,11 +74,7 @@ export default async function SettingsPage() {
                 <label className="master-title" htmlFor="sendingEnabled">
                   Let the agent contact employees
                 </label>
-                <p id="sendingEnabled-help">
-                  The master switch for {tenant?.name}. Turn it off and absences are still found and cases still created,
-                  but no WhatsApp message and no call ever goes out — however many times anyone presses Contact. Leave it
-                  off while a new customer is being set up, or use it to stop everything at once.
-                </p>
+                <p id="sendingEnabled-help">The master switch: off, nothing is sent or rung for {tenant?.name}, whatever anyone presses.</p>
               </div>
               <input
                 type="checkbox"
@@ -81,7 +88,7 @@ export default async function SettingsPage() {
             </div>
 
             <div className="form-section">
-              <h2>Automatic sending</h2>
+              <h2>Sending</h2>
               {/* Still the operatingMode radio, drawn as two cards. */}
               <fieldset>
                 <legend className="label">How the agent runs</legend>
@@ -95,24 +102,93 @@ export default async function SettingsPage() {
                   ))}
                 </div>
               </fieldset>
-              <div className="field" style={{ width: 190, marginTop: 16 }}>
-                <label htmlFor="sendDelayMinutes">Start sending after (minutes)</label>
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  max={1440}
-                  id="sendDelayMinutes"
-                  name="sendDelayMinutes"
-                  defaultValue={settings.sendDelayMinutes}
-                />
+              <Help>Manual: HR sends from the dashboard. Automatic: each upload offers to send what is due; employees set to Manual are left out.</Help>
+              <div className="settings-grid" style={{ marginTop: 14 }}>
+                <Box id="sendDelayMinutes" label="Start sending after (minutes)" help="How long after you choose Send following an upload the messages and calls start.">
+                  <input className="input" type="number" min={0} max={1440} id="sendDelayMinutes" name="sendDelayMinutes" defaultValue={settings.sendDelayMinutes} />
+                </Box>
               </div>
-              <p className="field-help">
-                Works with CSV upload only. After each upload you choose whether to send what is due or just update the
-                attendance. Sending starts this long after you choose. Anyone who answered and whose absence the new file
-                still shows gets their follow-up with that upload, one a day. Employees set to Manual are left out. Nothing
-                goes out until a new file is uploaded.
-              </p>
+              <Check name="saturdayWorking" checked={settings.saturdayWorking} label="Saturday is a working day" help="Counts Saturday as a working day; otherwise Monday to Friday. Nothing is sent, and no step counted, on other days." />
+            </div>
+
+            <div className="form-section">
+              <h2>First question</h2>
+              <div className="settings-grid">
+                <Box id="defaultChannel" label="Contact by" help="How the first question goes for employees with no setting of their own.">
+                  <select className="input" id="defaultChannel" name="defaultChannel" defaultValue={settings.defaultChannel}>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="voice">Call</option>
+                  </select>
+                </Box>
+                <Box id="callMode" label="Call style" help="Keypad or talking, for a first-question call.">
+                  <StyleSelect id="callMode" value={settings.callMode} />
+                </Box>
+              </div>
+            </div>
+
+            <div className="form-section">
+              <h2>Reminders</h2>
+              <div className="settings-grid">
+                <Box id="reminderIntervalDays" label="Remind after (working days)" help="The least gap between a date's reminders. They go only with an upload send, so a day with no upload sends none; 0 switches reminders off.">
+                  <input className="input" type="number" min={0} max={30} id="reminderIntervalDays" name="reminderIntervalDays" defaultValue={settings.reminderIntervalDays} />
+                </Box>
+              </div>
+              <LevelContacts kind="reminder" settings={levelSettings} />
+            </div>
+
+            <div className="form-section">
+              <h2>Follow-ups</h2>
+              <LevelContacts kind="follow_up" settings={levelSettings} />
+              <Check name="sendBacklogSummary" checked={settings.sendBacklogSummary} label='Send the "N days still pending" summary after each answer' help="After one date is answered, tells them how many are left and asks about the next." />
+            </div>
+
+            <div className="form-section">
+              <h2>Call rule</h2>
+              <div className="settings-grid">
+                <Box id="ignoredBeforeCall" label="Ignored contacts before a call" help="Messages or calls they must ignore in a row before they are called; any reply resets it.">
+                  <input className="input" type="number" min={0} max={10} id="ignoredBeforeCall" name="ignoredBeforeCall" defaultValue={settings.ignoredBeforeCall} />
+                </Box>
+                <Box id="callGapDays" label="Working days between calls" help="After a call, nobody is called again for this many working days.">
+                  <input className="input" type="number" min={0} max={10} id="callGapDays" name="callGapDays" defaultValue={settings.callGapDays} />
+                </Box>
+              </div>
+              <Help>A reminder or follow-up is a call only when its row says Call and both of these allow it; otherwise WhatsApp. A WhatsApp row is never a call. One call covers all of a person&apos;s due dates. A missed call sends the WhatsApps at once.</Help>
+            </div>
+
+            <div className="form-section">
+              <h2>Escalation</h2>
+              <div className="settings-grid">
+                <Box id="escalationRoute" label="After the employee's last step, send to" help="Who gets dates the employee did not settle: the manager then HR, HR directly, or the manager only.">
+                  <select className="input" id="escalationRoute" name="escalationRoute" defaultValue={settings.escalationRoute}>
+                    <option value="manager_then_hr">Manager, then HR</option>
+                    <option value="hr">HR directly</option>
+                    <option value="manager">Manager only</option>
+                  </select>
+                </Box>
+                <Box id="managerRespondDays" label="Manager has to respond within (working days)" help="Ignored this long on WhatsApp brings a call; ignored as long again sends it to HR.">
+                  <input className="input" type="number" min={1} max={3} id="managerRespondDays" name="managerRespondDays" defaultValue={settings.managerRespondDays} />
+                </Box>
+                <Box id="speakGraceDays" label={'"I\'ll speak to them" gives the employee (working days)'} help="The time the employee has to sort it out before HR, when the manager will speak to them.">
+                  <input className="input" type="number" min={0} max={3} id="speakGraceDays" name="speakGraceDays" defaultValue={settings.speakGraceDays} />
+                </Box>
+                <Box id="payrollCutoffDay" label="Payroll cut-off day of the month" help="Dates with HR are marked urgent from 2 working days before it; leave empty for off.">
+                  <input className="input" type="number" min={1} max={31} id="payrollCutoffDay" name="payrollCutoffDay" placeholder="Off" defaultValue={settings.payrollCutoffDay ?? ''} />
+                </Box>
+              </div>
+              <h3 className="label" style={{ marginTop: 18 }}>HR contact</h3>
+              <div className="settings-grid">
+                <Box id="hrName" label="Name" help="Who at the customer takes dates the manager does not decide.">
+                  <input className="input" id="hrName" name="hrName" defaultValue={settings.hrName ?? ''} />
+                </Box>
+                <Box id="hrMobile" label="WhatsApp number" help="Where HR is told; without it, dates only show on the Needs HR tab.">
+                  <input className="input" id="hrMobile" name="hrMobile" placeholder="98765 43210" defaultValue={settings.hrMobileE164 ? `+${settings.hrMobileE164}` : ''} />
+                </Box>
+                <Box id="hrEmail" label="Email (not used yet)" help="Kept for when email is added; nothing is emailed yet.">
+                  <input className="input" type="email" id="hrEmail" name="hrEmail" defaultValue={settings.hrEmail ?? ''} />
+                </Box>
+              </div>
+              <Check name="hrTellWhatsapp" checked={settings.hrTellWhatsapp} label="Tell HR on WhatsApp as dates reach them" help="A WhatsApp to HR each time dates move to Needs HR." />
+              <Check name="hrDailySummary" checked={settings.hrDailySummary} label="Send HR a daily summary of what is waiting" help="One WhatsApp each working morning with how many dates wait on HR." />
             </div>
 
             <div className="form-section">
@@ -122,9 +198,8 @@ export default async function SettingsPage() {
                   {caps.voiceAgent ? 'LiveKit connected' : 'Not configured — calls use the keypad'}
                 </span>
               </div>
-              <div className="row">
-                <div className="field" style={{ width: 240 }}>
-                  <label htmlFor="agentVoice">Voice</label>
+              <div className="settings-grid">
+                <Box id="agentVoice" label="Voice" help="The voice of talking calls; run npm run voices to hear each one.">
                   <select className="input" id="agentVoice" name="agentVoice" defaultValue={agentVoice(settings.agentVoice)}>
                     <optgroup label="Female">
                       {AGENT_VOICES.filter((v) => v.gender === 'female').map((voice) => (
@@ -141,105 +216,11 @@ export default async function SettingsPage() {
                       ))}
                     </optgroup>
                   </select>
-                </div>
-                <div className="field" style={{ width: 140 }}>
-                  <label htmlFor="agentVoicePace">Speed</label>
-                  <input
-                    className="input"
-                    type="number"
-                    id="agentVoicePace"
-                    name="agentVoicePace"
-                    step="0.05"
-                    min="0.7"
-                    max="1.3"
-                    defaultValue={Number(settings.agentVoicePace)}
-                  />
-                </div>
+                </Box>
+                <Box id="agentVoicePace" label="Speed" help="How fast it speaks; slightly under 1.0 is easier on a poor line.">
+                  <input className="input" type="number" id="agentVoicePace" name="agentVoicePace" step="0.05" min="0.7" max="1.3" defaultValue={Number(settings.agentVoicePace)} />
+                </Box>
               </div>
-              <p className="field-help">
-                Indian voices, for employees set to Call · Talk. Slightly under 1.0 is easier to follow on a poor line.
-                Run <span className="mono" style={{ color: 'var(--ink-900)' }}>npm run voices</span> to hear each one speak
-                the real opening line before choosing.
-              </p>
-            </div>
-
-            <div className="form-section">
-              <h2>Contacting employees</h2>
-              <div className="table-scroll">
-                <table className="data small">
-                  <thead>
-                    <tr>
-                      <th></th>
-                      <th>Contact by</th>
-                      <th>Call style</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(
-                      [
-                        { label: 'First message or call', note: 'Every unanswered absence, together', channel: 'defaultChannel', style: 'callMode', channelValue: settings.defaultChannel, styleValue: settings.callMode },
-                        { label: 'Reminders', note: 'And the last warning before the manager', channel: 'reminderChannel', style: 'reminderCallMode', channelValue: settings.reminderChannel, styleValue: settings.reminderCallMode },
-                      ] as const
-                    ).map((row) => (
-                      <tr key={row.channel}>
-                        <td className="nowrap">
-                          {row.label}
-                          <div className="sub">{row.note}</div>
-                        </td>
-                        <td>
-                          <select className="input" name={row.channel} aria-label={`${row.label} contact by`} defaultValue={row.channelValue}>
-                            <option value="whatsapp">WhatsApp</option>
-                            <option value="voice">Call</option>
-                          </select>
-                        </td>
-                        <td>
-                          <select className="input" name={row.style} aria-label={`${row.label} call style`} defaultValue={row.styleValue}>
-                            <option value="keypad">Keypad</option>
-                            <option value="agent">Talk</option>
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="field-help" style={{ maxWidth: '70ch' }}>
-                The defaults. An employee given their own Contact by or call style keeps it. Call style only matters on Call.
-              </p>
-              <div className="field-grid" style={{ marginTop: 16 }}>
-                <div className="field">
-                  <label htmlFor="reminderIntervalDays">Remind after (days)</label>
-                  <input className="input" type="number" min={0} max={60} id="reminderIntervalDays" name="reminderIntervalDays" defaultValue={settings.reminderIntervalDays} />
-                </div>
-                <div className="field">
-                  <label htmlFor="remindersBeforeEscalation">Reminders before the manager</label>
-                  <input className="input" type="number" min={0} max={10} id="remindersBeforeEscalation" name="remindersBeforeEscalation" defaultValue={settings.remindersBeforeEscalation} />
-                </div>
-                <div className="field">
-                  <label htmlFor="escalateAfterDays">Days before the manager</label>
-                  <input className="input" type="number" min={0} max={90} id="escalateAfterDays" name="escalateAfterDays" defaultValue={settings.escalateAfterDays} />
-                </div>
-                <div className="field">
-                  <label htmlFor="approvalTimeoutHours">Approval timeout (hours)</label>
-                  <input className="input" type="number" min={1} id="approvalTimeoutHours" name="approvalTimeoutHours" defaultValue={settings.approvalTimeoutHours} />
-                </div>
-              </div>
-              <p className="field-help" style={{ maxWidth: '70ch' }}>
-                A first message or call nobody answers gets a reminder this many days later, by the clock, whether or not a
-                file is uploaded. A new absence message moves the clock on and does not count as a reminder. After the set
-                number of reminders, or the set number of days since the oldest date was first asked, whichever comes
-                first, the employee is warned and their manager is asked to speak to them or mark the days as Loss of Pay.
-                0 switches each one off. Employees set to Manual are left to you: their reminders show as due on the
-                dashboard. Switching this on applies to dates already waiting, so long-ignored ones are reminded or sent to
-                the manager at once.
-              </p>
-              <div className="checks">
-                <label className="check">
-                  <input type="checkbox" name="sendBacklogSummary" defaultChecked={settings.sendBacklogSummary} />
-                  Send the &quot;N days still pending&quot; summary after each answer
-                </label>
-              </div>
-              <FollowUpContacts levels={settings.maxFollowUps} saved={settings.followUpContacts} />
             </div>
 
             <div className="form-section">
@@ -263,10 +244,7 @@ export default async function SettingsPage() {
                   ))}
                 </div>
               </fieldset>
-              <p className="field-help">
-                Either way the employee&apos;s manager is asked to approve it - on the number in the file&apos;s manager mobile
-                column, or the manager code&apos;s own mobile. Each manager&apos;s contact settings are on the Managers page.
-              </p>
+              <Help>Either way the manager is asked to approve it: on the file&apos;s manager mobile, or the manager code&apos;s own.</Help>
             </div>
 
             <div className="card-foot">
@@ -300,5 +278,50 @@ export default async function SettingsPage() {
         </div>
       </form>
     </>
+  );
+}
+
+/** One line under a box, saying what it does. */
+function Help({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="field-help" style={{ maxWidth: '70ch', marginTop: 4 }}>
+      {children}
+    </p>
+  );
+}
+
+/** A box: its label, the input, and one line on what it does. */
+function Box({ id, label, help, children }: { id: string; label: string; help: string; children: React.ReactNode }) {
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      {children}
+      <p className="field-help" id={`${id}-help`}>
+        {help}
+      </p>
+    </div>
+  );
+}
+
+/** A tick box with its one line. */
+function Check({ name, checked, label, help }: { name: string; checked: boolean; label: string; help: string }) {
+  return (
+    <div className="checks" style={{ marginTop: 12 }}>
+      <label className="check">
+        <input type="checkbox" name={name} defaultChecked={checked} />
+        {label}
+      </label>
+      <Help>{help}</Help>
+    </div>
+  );
+}
+
+/** Keypad or talking. */
+function StyleSelect({ id, value }: { id: string; value: string }) {
+  return (
+    <select className="input" id={id} name={id} defaultValue={value === 'agent' ? 'agent' : 'keypad'}>
+      <option value="keypad">Keypad</option>
+      <option value="agent">Talk</option>
+    </select>
   );
 }

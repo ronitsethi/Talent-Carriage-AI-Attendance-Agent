@@ -28,4 +28,6 @@ export const callLines = pgTable('call_lines', {
   holderKind: text('holder_kind').$type<'call' | 'query'>(),
   holderId: uuid('holder_id'),
   takenAt: timestamp('taken_at', { withTimezone: true }),
+  /** When the voice worker last said the holder is still going; empty until it first does. */
+  aliveAt: timestamp('alive_at', { withTimezone: true }),
 });

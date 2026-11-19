@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, smallint, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { date, index, integer, jsonb, pgTable, smallint, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { actionStatus, actionType, approvalDecision, channel } from './enums';
 import { cases } from './cases';
 import { employees } from './employees';
@@ -148,6 +148,12 @@ export const absenceEscalations = pgTable(
     decision: text('decision').$type<'speak' | 'loss_of_pay'>(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
+    /** The manager's steps so far: 0 the WhatsApp, 1 the call. */
+    steps: smallint('steps').notNull().default(0),
+    /** When the next step is due: the call, or HR. */
+    nextStepAt: timestamp('next_step_at', { withTimezone: true }),
+    /** "I'll speak to them": the employee has until this day. */
+    speakUntil: date('speak_until'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('absence_escalations_employee_idx').on(t.employeeId, t.createdAt)],

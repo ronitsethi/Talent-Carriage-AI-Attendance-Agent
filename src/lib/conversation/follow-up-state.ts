@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { cases } from '@/db/schema';
+import { addWorkingDays, today } from '@/lib/dates';
 import type { CaseRow, EngineContext } from './engine';
 import type { FollowUpChoice } from './flow';
 
@@ -15,14 +16,14 @@ export async function recordFollowUpChoice(ctx: EngineContext, caseRow: CaseRow,
   const at = new Date();
 
   if (choice === 'done') {
-    // Trust but verify: the HRMS sync confirms it, and closes the case for good.
+    // Taken on trust, but not closed: the follow-ups pause for the next working
+    // day, and the attendance file closes it once it shows it done. If it still
+    // shows absent after that, the follow-ups carry on.
     await ctx.tx
       .update(cases)
       .set({
-        status: 'resolved',
         followUpReply: 'done',
-        resolvedAt: at,
-        closeReason: 'Employee confirmed it is done; pending HRMS verification',
+        followUpPausedUntil: addWorkingDays(today(ctx.settings.timezone, at), 1, ctx.settings),
         updatedAt: at,
       })
       .where(eq(cases.id, caseRow.id));

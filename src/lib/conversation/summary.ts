@@ -43,7 +43,7 @@ export async function callsForCase(tx: Db, caseRow: CaseRow) {
       and(
         eq(calls.employeeId, caseRow.employeeId),
         // A manager rung to approve it is not part of the employee's conversation.
-        sql`${calls.purpose} <> 'manager_approval'`,
+        sql`${calls.purpose} not in ('manager_approval', 'manager_escalation')`,
         or(
           eq(calls.caseId, caseRow.id),
           sql`exists (

@@ -8,7 +8,6 @@ import {
   imports,
   mappingProfiles,
   tenantSettings,
-  tenants,
   unmappedCodes,
   type ImportReport,
 } from '@/db/schema';
@@ -17,7 +16,7 @@ import { isNonWorking, type Meaning } from './meanings';
 import { pickTable, readWorkbook, detectRunDate, type SourceWorkbook } from './source';
 import { today as localToday } from '@/lib/dates';
 import { lockedMonths, monthOf } from '@/lib/locks';
-import { companyRefusal } from '@/lib/company';
+import { companyMapping, companyRefusal } from '@/lib/company';
 
 export type ImportOptions = {
   source: 'upload' | 'sftp' | 'blob' | 'api_pull' | 'db_read' | 'push' | 'seed';
@@ -86,9 +85,8 @@ export async function importAttendanceFile(
   const wb = readWorkbook(buffer);
   const { profile, codes } = await loadActiveProfile(tx, tenantId, opts.profileId);
 
-  // Only this customer's own file: every company the file names must be the customer being viewed.
-  const customer = await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId), columns: { name: true } });
-  const refused = customer ? companyRefusal(pickTable(wb, profile.fieldMap.sheetHint ?? null), customer.name, opts.filename ?? 'This file', 'attendance') : null;
+  // Only this customer's own file: every company it names must be the company name on Mapping, Company tab.
+  const refused = companyRefusal(pickTable(wb, profile.fieldMap.sheetHint ?? null), await companyMapping(tx, tenantId), opts.filename ?? 'This file', 'attendance');
   if (refused) throw new Error(refused);
   const mapped: ApplyResult & { droppedMonths?: string[] } = mapWorkbook(wb, profile.fieldMap, codes);
 

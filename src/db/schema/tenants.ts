@@ -14,7 +14,10 @@ import {
 } from 'drizzle-orm/pg-core';
 import { tenantStatus, userRole } from './enums';
 
-/** How one follow-up level reaches people. Null keeps the employee's own setting. */
+/**
+ * How one reminder or follow-up level reaches people: WhatsApp, or a call in a
+ * call style. Null, or a level with no entry, takes the default (`levelContact`).
+ */
 export type FollowUpContact = { channel: 'whatsapp' | 'voice' | null; callMode: 'keypad' | 'agent' | null };
 
 /** One tenant = one employer that bought the product. */
@@ -101,8 +104,10 @@ export const tenantSettings = pgTable('tenant_settings', {
    * and moves the case to the manager.
    */
   maxFollowUps: integer('max_follow_ups').notNull().default(2),
-  /** One entry per follow-up level, the first for Follow-up 1. */
+  /** One entry per follow-up level, the first for Follow-up 1: WhatsApp or a call, and the call style. */
   followUpContacts: jsonb('follow_up_contacts').$type<FollowUpContact[]>().notNull().default([]),
+  /** One entry per reminder, the first for Reminder 1: WhatsApp or a call, and the call style. */
+  reminderContacts: jsonb('reminder_contacts').$type<FollowUpContact[]>().notNull().default([]),
   callRetries: smallint('call_retries').notNull().default(2),
   approvalTimeoutHours: integer('approval_timeout_hours').notNull().default(24),
   approvalEscalatesTo: text('approval_escalates_to').notNull().default('hr'), // hr | skip_level | none
@@ -117,11 +122,54 @@ export const tenantSettings = pgTable('tenant_settings', {
   reminderChannel: text('reminder_channel').notNull().default('whatsapp'),
   reminderCallMode: text('reminder_call_mode').notNull().default('keypad'),
   /** Days after the last absence message or call before a reminder; 0 = no reminders. */
-  reminderIntervalDays: integer('reminder_interval_days').notNull().default(0),
+  /** Working days between a date's reminders: 1 = every working day; 0 = no reminders. */
+  reminderIntervalDays: integer('reminder_interval_days').notNull().default(1),
+  /** When reminders go on a day no upload send reaches the person (HH:MM, the customer's time). On upload days they go with the send. */
+  reminderTime: text('reminder_time').notNull().default('14:00'),
+  /** Unused since 2026-11-19 (the per-level rows replaced them); still give the defaults for levels with no row saved. */
+  reminderCallsAllowed: boolean('reminder_calls_allowed').notNull().default(true),
+  followUpCallsAllowed: boolean('follow_up_calls_allowed').notNull().default(true),
+  followUpCallMode: text('follow_up_call_mode').notNull().default('keypad'),
+  /** A call is made only after this many contacts in a row were ignored (any reply resets it). */
+  ignoredBeforeCall: integer('ignored_before_call').notNull().default(2),
+  /** After a call, no call to the person for this many working days. */
+  callGapDays: integer('call_gap_days').notNull().default(2),
+  /** Unused since 2026-11-19: the per-level rows cap a date's calls. */
+  maxCallsPerDate: integer('max_calls_per_date').notNull().default(2),
   /** Reminders after which the manager is told; 0 = never on count. */
   remindersBeforeEscalation: integer('reminders_before_escalation').notNull().default(2),
   /** Days after the first message about the oldest unanswered date before the manager is told, whatever the count; 0 = never on days. */
   escalateAfterDays: integer('escalate_after_days').notNull().default(0),
+  /** Working days are Monday to Friday, and Saturday too when this is set. Nothing is sent, and no step counted, on other days. */
+  saturdayWorking: boolean('saturday_working').notNull().default(false),
+  /**
+   * After the employee's last step: 'manager_then_hr' (the manager on WhatsApp,
+   * a call the next working day if they ignore it, then HR), 'hr' (straight to
+   * HR) or 'manager' (the manager only, never HR).
+   */
+  escalationRoute: text('escalation_route').$type<'manager_then_hr' | 'hr' | 'manager'>().notNull().default('manager_then_hr'),
+  /** Working days the manager has at each step before the next. */
+  managerRespondDays: integer('manager_respond_days').notNull().default(1),
+  /** Working days "I'll speak to them" gives the employee before HR. */
+  speakGraceDays: integer('speak_grace_days').notNull().default(1),
+  /** The customer's HR contact, who takes what the manager does not decide. All optional until a customer gives them. */
+  hrName: text('hr_name'),
+  hrMobileE164: text('hr_mobile_e164'),
+  /** Kept for when email is added; nothing is emailed yet. */
+  hrEmail: text('hr_email'),
+  /** Tell HR on WhatsApp as dates reach them, and with a daily summary. The Needs HR tab always shows them. */
+  hrTellWhatsapp: boolean('hr_tell_whatsapp').notNull().default(true),
+  hrDailySummary: boolean('hr_daily_summary').notNull().default(true),
+  /** Day of the month payroll is cut off; dates with HR are urgent from 2 working days before. Null = off. */
+  payrollCutoffDay: integer('payroll_cutoff_day'),
+  /**
+   * The Company tab on Mapping: the heading of the column naming the company in
+   * this customer's files, and the company name itself. Attendance, leave
+   * balance and payroll uploads naming any other company there are refused.
+   * Null until saved; nothing is checked unless both are set.
+   */
+  companyColumn: text('company_column'),
+  companyName: text('company_name'),
   /**
    * How many days after the absence the agent makes contact. 1 means an absence
    * on the 21st is chased on the 22nd - attendance for a day is not final until

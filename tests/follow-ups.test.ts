@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { isWorkingDay, today } from '@/lib/dates';
+import { eq, inArray } from 'drizzle-orm';
 import { withTenant, type Db } from '@/db';
 import { calls, cases, employees } from '@/db/schema';
 import { closeCasesExplainedByData, runDailyCheck } from '@/lib/detection/run';
@@ -19,11 +20,29 @@ import { giveAttendance, makeScenario, tapOption, type Scenario } from './helper
 
 const DATE = '2026-08-17';
 const DAY = 86_400_000;
-const later = (days: number) => new Date(Date.now() + days * DAY);
+/** So many days from now, moved on to a working day: follow-ups only go on working days. */
+const later = (days: number) => {
+  let at = new Date(Date.now() + days * DAY);
+  while (!isWorkingDay(today('Asia/Kolkata', at), { saturdayWorking: false })) at = new Date(at.getTime() + DAY);
+  return at;
+};
+
+/*
+ * The clock is pinned to a Tuesday morning. `later` moves a weekend day on to
+ * Monday, so from a real "now" two different offsets could land on the same
+ * Monday (from a Wednesday, 3 and 5.1 days both do) and a test failed or passed
+ * by the day of the week it was run on.
+ */
+const TUESDAY_MORNING = new Date('2026-11-17T09:00:00+05:30');
 
 let scenario: Scenario;
 let managerMobile: string;
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(TUESDAY_MORNING);
+});
 afterEach(async () => {
+  vi.useRealTimers();
   await scenario?.cleanup();
 });
 
@@ -38,6 +57,9 @@ const sweep = (at: Date) => withTenant(scenario.tenantId, (tx) => sendDueFollowU
 const tap = (payload: string) => withTenant(scenario.tenantId, (tx) => handleInbound(context(tx), tapOption(scenario.mobile, payload)));
 
 /** One absence, its question sent, and a manager in the file unless asked otherwise. */
+/** Follow-up rows, one per level. */
+const rowsOf = (channels: ('whatsapp' | 'voice')[], callMode: 'keypad' | 'agent' = 'keypad') => channels.map((channel) => ({ channel, callMode }));
+
 async function absence(settings: Partial<TenantSettings> = {}, opts: { manager?: boolean; voice?: boolean } = {}) {
   scenario = await makeScenario(settings, opts.voice ? { preferredChannel: 'voice' } : {});
   managerMobile = `9180000${Math.floor(Math.random() * 90000) + 10000}`;
@@ -144,17 +166,23 @@ describe('with two follow-ups', () => {
     expect((await sweep(later(30))).due, 'nothing after the last').toBe(0);
   });
 
-  it('resolves on "Done" at the first, and never reaches the second', async () => {
+  it('pauses on "Done" for the next working day, then carries on if the file still shows absent', async () => {
     await absence({ maxFollowUps: 2 });
     const id = await saidNotApplied();
     await sweep(later(3));
 
     await tap(followUpSelectionId(id, 'done'));
-    expect(await theCase()).toMatchObject({ status: 'resolved', followUpReply: 'done' });
+    const paused = await theCase();
+    expect(paused).toMatchObject({ status: 'answered', followUpReply: 'done' });
+    const pausedUntil = paused.followUpPausedUntil!;
+    expect(pausedUntil > today('Asia/Kolkata')).toBe(true);
 
+    // The paused day: nothing.
     scenario.channel.clear();
-    expect((await sweep(later(30))).due).toBe(0);
-    expect(all()).toEqual([]);
+    expect((await sweep(new Date(`${pausedUntil}T06:00:00Z`))).due).toBe(0);
+    // After it, the file still showing absent: the next (last) follow-up goes.
+    await sweep(later(30));
+    expect(sent().map((m) => m.templateName)).toEqual(['attendance_final_notice']);
   });
 
   it('resolves when the attendance file shows it was done, and hears nothing more', async () => {
@@ -219,7 +247,8 @@ describe('the number of follow-ups', () => {
   });
 
   it('with three, two ordinary follow-ups come first', async () => {
-    await absence({ maxFollowUps: 3 });
+    // Every row WhatsApp: after two ignored follow-ups a Call row would ring for the third.
+    await absence({ maxFollowUps: 3, followUpContacts: rowsOf(['whatsapp', 'whatsapp', 'whatsapp']) });
     await saidNotApplied();
     await sweep(later(3));
     await sweep(later(5.1));
@@ -271,19 +300,29 @@ describe('on WhatsApp', () => {
   });
 });
 
-describe('by call', () => {
-  it('rings once for the final notice, names every date, and hangs up', async () => {
-    await absence({ maxFollowUps: 1 }, { voice: true });
-    await answered(DATE);
-    await answered('2026-08-18');
+describe('by call: the call rule', () => {
+  /** Ready for a call: a second follow-up due (its row set to Call), and the last N contacts ignored. */
+  async function readyForCall(dates: string[], settings: Partial<TenantSettings> = {}) {
+    await absence({ maxFollowUps: 2, followUpContacts: rowsOf(['whatsapp', 'voice', 'voice']), ...settings });
+    for (const date of dates) await answered(date);
+    await withTenant(scenario.tenantId, async (tx) => {
+      await tx.update(cases).set({ followUpCount: 1 }).where(eq(cases.employeeId, scenario.employeeId));
+      await tx.update(employees).set({ ignoredContacts: 2 }).where(eq(employees.id, scenario.employeeId));
+    });
+    scenario.channel.clear();
+  }
+  /** Follow-up calls only: a first question may have been a call of its own. */
+  const placed = () =>
+    withTenant(scenario.tenantId, (tx) => tx.select().from(calls).where(inArray(calls.purpose, ['follow_up', 'final_notice'])));
 
-    const result = await sweep(new Date());
+  it('rings once for the final notice, names every date, and hangs up', async () => {
+    await readyForCall([DATE, '2026-08-18']);
+    const result = await sweep(later(0));
     expect(result.called).toBe(1);
 
     await withTenant(scenario.tenantId, async (tx) => {
       const [call] = await tx.select().from(calls).where(eq(calls.purpose, 'final_notice'));
       expect(call).toBeDefined();
-
       const turn = await openingTurn(context(tx), call!.id);
       expect(turn.done).toBe(true);
       expect(turn.speak).toContain('17 August');
@@ -293,14 +332,16 @@ describe('by call', () => {
     });
     const rows = await withTenant(scenario.tenantId, (tx) => tx.select().from(cases));
     expect(rows.every((r) => r.status === 'awaiting_approval')).toBe(true);
+    // The call rule's record: when, and a call on each date.
+    expect(rows.map((r) => r.callsMade)).toEqual([1, 1]);
+    const employee = await withTenant(scenario.tenantId, (tx) => tx.query.employees.findFirst({ where: eq(employees.id, scenario.employeeId) }));
+    expect(employee!.lastCallAt).not.toBeNull();
   });
 
   it('puts a missed final notice on WhatsApp', async () => {
-    await absence({ maxFollowUps: 1 }, { voice: true });
-    await answered(DATE);
-    await sweep(new Date());
+    await readyForCall([DATE]);
+    await sweep(later(0));
     scenario.channel.clear();
-
     await withTenant(scenario.tenantId, async (tx) => {
       const [call] = await tx.select().from(calls).where(eq(calls.purpose, 'final_notice'));
       await recordNoAnswer(context(tx), call!.id, 'no_answer');
@@ -308,42 +349,50 @@ describe('by call', () => {
     expect(sent().map((m) => m.templateName)).toEqual(['attendance_final_notice']);
   });
 
-  it('goes the way its level is set, over the employee\'s own setting', async () => {
-    await absence({
-      maxFollowUps: 3,
-      followUpContacts: [
-        { channel: 'voice', callMode: 'agent' },
-        { channel: 'whatsapp', callMode: null },
-      ],
-    });
+  it('sends the first follow-up on WhatsApp, whoever the employee is', async () => {
+    await absence({ maxFollowUps: 3 }, { voice: true });
     await answered(DATE);
+    await withTenant(scenario.tenantId, (tx) => tx.update(employees).set({ ignoredContacts: 9 }).where(eq(employees.id, scenario.employeeId)));
     scenario.channel.clear();
-
-    await sweep(new Date());
-    const [first] = await withTenant(scenario.tenantId, (tx) => tx.select().from(calls));
-    expect(first).toMatchObject({ purpose: 'follow_up', provider: 'livekit' });
-    expect(sent(), 'a WhatsApp employee is rung for this level').toEqual([]);
-
-    await answered(DATE);
-    await sweep(new Date());
+    await sweep(later(0));
+    expect(await placed()).toHaveLength(0);
     expect(sent().map((m) => m.templateName)).toEqual(['attendance_follow_up']);
-    expect(await withTenant(scenario.tenantId, (tx) => tx.select().from(calls))).toHaveLength(1);
   });
 
-  it('leaves a level with nothing set to the employee\'s own setting', async () => {
-    await absence({ maxFollowUps: 2, followUpContacts: [{ channel: null, callMode: null }] }, { voice: true });
-    await answered(DATE);
-    expect((await sweep(new Date())).called).toBe(1);
+  it('is WhatsApp until they have ignored enough contacts in a row', async () => {
+    await readyForCall([DATE], { maxFollowUps: 3 });
+    await withTenant(scenario.tenantId, (tx) => tx.update(employees).set({ ignoredContacts: 1 }).where(eq(employees.id, scenario.employeeId)));
+    await sweep(later(0));
+    expect(await placed()).toHaveLength(0);
+    expect(sent()).toHaveLength(1);
   });
 
-  it('counts every date one reminder call covers', async () => {
-    await absence({ maxFollowUps: 2 }, { voice: true });
-    await answered(DATE);
-    await answered('2026-08-18');
+  it('keeps the gap after their last call', async () => {
+    await readyForCall([DATE], { maxFollowUps: 3 });
+    await withTenant(scenario.tenantId, (tx) => tx.update(employees).set({ lastCallAt: new Date(later(0).getTime() - 86_400_000) }).where(eq(employees.id, scenario.employeeId)));
+    await sweep(later(0));
+    expect(await placed()).toHaveLength(0);
+  });
 
-    expect((await sweep(new Date())).called).toBe(1);
+  it('never calls at a follow-up set to WhatsApp, even with every other condition met', async () => {
+    await readyForCall([DATE], { maxFollowUps: 3, followUpContacts: rowsOf(['voice', 'whatsapp', 'voice']) });
+    await sweep(later(0));
+    expect(await placed()).toHaveLength(0);
+    expect(sent().map((m) => m.templateName)).toEqual(['attendance_follow_up']);
+  });
+
+  it('by default calls only for the follow-up before the final notice', async () => {
+    await readyForCall([DATE], { maxFollowUps: 3, followUpContacts: [] });
+    await sweep(later(0));
+    expect(await placed()).toHaveLength(1);
+  });
+
+  it('rings once for all due dates, in the row\'s call style', async () => {
+    await readyForCall([DATE, '2026-08-18'], { maxFollowUps: 3, followUpContacts: rowsOf(['whatsapp', 'voice', 'voice'], 'agent') });
+    expect((await sweep(later(0))).called).toBe(1);
+    const [call] = await placed();
+    expect(call).toMatchObject({ purpose: 'follow_up', provider: 'livekit' });
     const rows = await withTenant(scenario.tenantId, (tx) => tx.select().from(cases));
-    expect(rows.map((r) => r.followUpCount)).toEqual([1, 1]);
-    expect((await sweep(new Date())).due, 'neither is due again yet').toBe(0);
+    expect(rows.map((r) => r.followUpCount)).toEqual([2, 2]);
   });
 });

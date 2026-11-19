@@ -68,6 +68,15 @@ export const cases = pgTable(
     followUpSentAt: timestamp('follow_up_sent_at', { withTimezone: true }),
     followUpCount: integer('follow_up_count').notNull().default(0),
     followUpReply: text('follow_up_reply'),
+    /** After "Done": no follow-up until after this day, so the next file can show it was done. */
+    followUpPausedUntil: date('follow_up_paused_until'),
+    /** Reminders this date has had (the first question is not one), and when the last went. */
+    reminderCount: integer('reminder_count').notNull().default(0),
+    remindedAt: timestamp('reminded_at', { withTimezone: true }),
+    /** Calls made about this date under the call rule; it stops at the customer's maximum. */
+    callsMade: integer('calls_made').notNull().default(0),
+    /** When the date went to HR. */
+    hrAt: timestamp('hr_at', { withTimezone: true }),
     callAttempts: integer('call_attempts').notNull().default(0),
 
     /** Set when the day was explained by later data rather than by a reply. */

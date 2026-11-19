@@ -331,13 +331,6 @@ export async function payrollSummary(tx: Db, tenantId: string, employeeId: strin
   ].join('\n');
 }
 
-/** What the agent is told about payroll, for its rules. */
-export const PAYROLL_RULES = `SALARY: PAYROLL, when given, is this employee's own salary for the months listed, uploaded by their employer
-after that month's attendance was made final. You may say those amounts. A month's pay is the full monthly salary times
-the paid days, divided by the days in the month. The days not paid are the absences, unpaid leave and half days (a half
-day counts half) in that month's ATTENDANCE: to explain a lower salary, give the days in the month, the paid days, and
-the dates that were not paid. A deduction or an arrear you cannot explain from what is given: say what it is and raise
-a ticket for why. A month with no payroll: say it has not been uploaded yet and raise a ticket if they need more.`;
 
 /* ------------------------------------------------------------------ *
  * Downloads

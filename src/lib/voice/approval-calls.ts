@@ -1,8 +1,8 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { takeCallLine } from './lines';
 import { WAITING_FOR_LINE } from './waiting';
-import { actions, approvals, calls, cases, employees, managers, usageEvents } from '@/db/schema';
+import { absenceEscalations, actions, approvals, calls, cases, employees, managers, usageEvents } from '@/db/schema';
 import type { Meaning } from '@/lib/mapping/meanings';
 import { halfOfDay } from '@/lib/mapping/meanings';
 import { dateLabel, firstName } from '@/lib/conversation/flow';
@@ -30,8 +30,51 @@ import type { VoiceContext, CallRow, CallTurn } from './session';
  * number rung is the manager's for the first.
  */
 
-export type ApprovalCallPurpose = 'manager_approval' | 'approval_outcome';
-export const APPROVAL_CALL_PURPOSES: ApprovalCallPurpose[] = ['manager_approval', 'approval_outcome'];
+export type ApprovalCallPurpose = 'manager_approval' | 'approval_outcome' | 'manager_escalation';
+export const APPROVAL_CALL_PURPOSES: ApprovalCallPurpose[] = ['manager_approval', 'approval_outcome', 'manager_escalation'];
+
+/**
+ * The manager's call about a team member who never answered: the same choice
+ * as on WhatsApp, "I'll speak to them" or "Mark as Loss of Pay".
+ */
+async function escalationFor(ctx: VoiceContext, call: CallRow) {
+  if (!call.caseId || !call.toNumber) return null;
+  const [row] = await ctx.tx
+    .select({ escalation: absenceEscalations, manager: managers })
+    .from(absenceEscalations)
+    .innerJoin(managers, eq(managers.id, absenceEscalations.managerId))
+    .where(and(sql`${absenceEscalations.caseIds} ? ${call.caseId}`, eq(managers.mobileE164, call.toNumber)))
+    .orderBy(desc(absenceEscalations.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+async function escalationScript(ctx: VoiceContext, call: CallRow) {
+  const found = await escalationFor(ctx, call);
+  const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, call.employeeId) });
+  if (!found || !employee) return null;
+  const rows = found.escalation.caseIds.length
+    ? await ctx.tx.select().from(cases).where(inArray(cases.id, found.escalation.caseIds)).orderBy(cases.attDate)
+    : [];
+  const keypad = call.provider !== 'livekit';
+  const intro =
+    `Hello ${firstName(found.manager.fullName)}, this is the attendance assistant from ${ctx.companyName}. ` +
+    `${employee.fullName} is marked absent on ${requestDates(rows.map((caseRow) => ({ caseRow })), spokenFor)} and has not replied to our messages and calls.`;
+  const question = keypad
+    ? 'Press 1 if you will speak to them. Press 2 to mark these days as Loss of Pay.'
+    : 'Will you speak to them, or shall we mark these days as Loss of Pay?';
+  return { ...found, employee, intro, question, keypad };
+}
+
+/** What the manager pressed or said about a team member who never answered. */
+export function escalationVerdict(input: { digits?: string; speech?: string }): 'speak' | 'lop' | null {
+  if (input.digits === '1') return 'speak';
+  if (input.digits === '2') return 'lop';
+  const said = (input.speech ?? '').toLowerCase();
+  if (/\b(loss|lop|pay|cut|deduct|absent)\b/.test(said)) return 'lop';
+  if (/\b(speak|talk|baat|call|haan|yes|ok|okay|will)\b/.test(said)) return 'speak';
+  return null;
+}
 
 const spokenFor = (row: { attDate: string; meaning: string }) =>
   spokenDate(row.attDate, halfOfDay(row.meaning as Meaning) as 'first' | 'second' | null);
@@ -182,7 +225,7 @@ export async function decisionSentence(
 export function outcomeSentence(d: { approved: boolean; manager: string; what: string; date: string; applied: boolean | null; spoken?: boolean }): string {
   const hrms = d.spoken ? 'H R M S' : 'HRMS';
   const hr = d.spoken ? 'H R' : 'HR';
-  if (!d.approved) return `${d.manager} did not approve your ${d.what} for ${d.date}. Please speak to ${d.manager} or ${hr} if you need to.`;
+  if (!d.approved) return `${d.manager} did not approve your ${d.what} for ${d.date}, so it will be marked as Loss of Pay. Please speak to ${d.manager} or ${hr} if you need to.`;
   if (d.applied === true) return `${d.manager} has approved your ${d.what} for ${d.date}, and it has been applied in the ${hrms}.`;
   if (d.applied === false) return `${d.manager} has approved your ${d.what} for ${d.date}, but it could not be applied automatically, so ${hr} will finish it.`;
   return `${d.manager} has approved your ${d.what} for ${d.date}.`;
@@ -197,6 +240,16 @@ async function say(ctx: VoiceContext, callId: string, role: 'agent' | 'employee'
 /** The first thing either call says. */
 export async function approvalOpening(ctx: VoiceContext, call: CallRow): Promise<CallTurn> {
   await ctx.tx.update(calls).set({ status: 'in_progress' }).where(eq(calls.id, call.id));
+  if (call.purpose === 'manager_escalation') {
+    const script = await escalationScript(ctx, call);
+    if (!script || script.escalation.decision) {
+      const text = 'Thank you, this has already been dealt with. Goodbye.';
+      await say(ctx, call.id, 'agent', text);
+      return { speak: text, nextCaseId: null, done: true };
+    }
+    await say(ctx, call.id, 'agent', `${script.intro} ${script.question}`);
+    return { speak: script.question, intro: script.intro, nextCaseId: call.caseId, done: false };
+  }
   if (call.purpose === 'approval_outcome') {
     const told = call.caseId ? await decisionSentence(ctx, call.caseId, true) : null;
     if (!told) return { speak: 'Goodbye.', nextCaseId: null, done: true };
@@ -231,6 +284,7 @@ export function managerVerdict(input: { digits?: string; speech?: string }): 'ap
  * answer that still is not one ends the call, and the request goes on WhatsApp.
  */
 export async function approvalTurn(ctx: VoiceContext, call: CallRow, input: { digits?: string; speech?: string }): Promise<CallTurn> {
+  if (call.purpose === 'manager_escalation') return escalationTurn(ctx, call, input);
   const script = await managerScript(ctx, call);
   if (!script) return { speak: 'Goodbye.', nextCaseId: null, done: true };
   await say(ctx, call.id, 'employee', input.digits ? `pressed ${input.digits}` : input.speech?.trim() || '(silence)');
@@ -259,12 +313,50 @@ export async function approvalTurn(ctx: VoiceContext, call: CallRow, input: { di
   return { speak: script.question, intro: sorry, nextCaseId: script.caseRow.id, done: false, retry: true };
 }
 
+/** The manager's answer about a team member who never replied. */
+async function escalationTurn(ctx: VoiceContext, call: CallRow, input: { digits?: string; speech?: string }): Promise<CallTurn> {
+  const script = await escalationScript(ctx, call);
+  if (!script) return { speak: 'Goodbye.', nextCaseId: null, done: true };
+  await say(ctx, call.id, 'employee', input.digits ? `pressed ${input.digits}` : input.speech?.trim() || '(silence)');
+  const verdict = escalationVerdict(input);
+  if (verdict) {
+    const { decideEscalation } = await import('@/lib/conversation/absence-reminders');
+    await decideEscalation(ctx as never, script.escalation.id, verdict, script.manager.mobileE164, new Date(), 'call');
+    const who = firstName(script.employee.fullName);
+    const text =
+      verdict === 'speak'
+        ? `Thank you. Noted that you will speak to ${who}. Goodbye.`
+        : `Thank you. These days are marked as Loss of Pay, and ${who} will be told. Goodbye.`;
+    await say(ctx, call.id, 'agent', text);
+    await ctx.tx.update(calls).set({ outcome: 'completed_confirmed' }).where(eq(calls.id, call.id));
+    return { speak: text, nextCaseId: null, done: true };
+  }
+  const tries = (call.transcript ?? []).filter((t) => t.role === 'agent' && t.text.startsWith('Sorry')).length;
+  if (tries >= 1) {
+    const text = 'No problem. We will send you the details on WhatsApp instead. Goodbye.';
+    await say(ctx, call.id, 'agent', text);
+    return { speak: text, nextCaseId: null, done: true };
+  }
+  const sorry = script.keypad ? 'Sorry, I did not catch that.' : 'Sorry, I did not quite catch that.';
+  await say(ctx, call.id, 'agent', `${sorry} ${script.question}`);
+  return { speak: script.question, intro: sorry, nextCaseId: call.caseId, done: false, retry: true };
+}
+
 /**
  * Once a call about an approval is over, whatever it did not get across goes on
  * WhatsApp: a request the manager did not decide, or a decision the employee
  * did not pick up for.
  */
 export async function afterApprovalCall(ctx: VoiceContext, call: CallRow, answered: boolean) {
+  if (call.purpose === 'manager_escalation') {
+    // Not decided on the call: the WhatsApp again, at once.
+    const found = await escalationFor(ctx, call);
+    if (found && !found.escalation.decision) {
+      const { resendEscalation } = await import('@/lib/conversation/absence-reminders');
+      await resendEscalation(ctx as never, found.escalation.id);
+    }
+    return;
+  }
   if (call.purpose === 'manager_approval') {
     const request = await requestFor(ctx, call);
     if (request?.approval.decision === 'pending') {

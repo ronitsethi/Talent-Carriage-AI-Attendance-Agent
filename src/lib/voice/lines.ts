@@ -15,7 +15,12 @@ import { withPlatformScope } from '@/db';
  *  - an incoming call: its query has an end time;
  *  - a hold whose call row never appeared, because the caller's transaction
  *    rolled back, after two minutes;
+ *  - a talking call (voice worker) that has stopped saying it is alive for
+ *    `SILENT_AFTER_SECONDS`: the worker says so every 10 seconds while somebody
+ *    is on the line, so silence means its process was killed (out of memory,
+ *    say) and can no longer report the hangup;
  *  - anything, after 45 minutes, so a lost hangup cannot hold a line for ever.
+ *    Keypad calls, which have no worker, still rely on this.
  *
  * Later (filed for when LiveKit is upgraded): the limit becomes per customer.
  */
@@ -28,10 +33,17 @@ export const callLineLimit = () => Math.min(20, Math.max(1, Math.floor(Number(pr
 
 export type LineHolder = { kind: 'call' | 'query'; id: string };
 
+/**
+ * How long a talking call's line stays held after the worker last said the call
+ * is alive. It says so every 10 seconds, so this allows two to go missing.
+ */
+export const SILENT_AFTER_SECONDS = 30;
+
 /** A free line's condition, for the row `l`. */
 const FREE = sql`(
   l.holder_id is null
   or l.taken_at < now() - interval '45 minutes'
+  or (l.alive_at is not null and l.alive_at < now() - ${sql.raw(`interval '${SILENT_AFTER_SECONDS} seconds'`)})
   or (l.holder_kind = 'call' and (
     exists (select 1 from calls c where c.id = l.holder_id and (c.status in ('completed', 'failed', 'simulated') or c.ended_at is not null))
     or (not exists (select 1 from calls c where c.id = l.holder_id) and l.taken_at < now() - interval '2 minutes')
@@ -58,7 +70,7 @@ export async function takeCallLine(holder: LineHolder, number?: string | null): 
       if (rows[0]?.busy) return false;
     }
     const { rows } = await tx.execute<{ id: number }>(sql`
-      update call_lines set holder_kind = ${holder.kind}, holder_id = ${holder.id}, taken_at = now()
+      update call_lines set holder_kind = ${holder.kind}, holder_id = ${holder.id}, taken_at = now(), alive_at = null
       where id = (
         select l.id from call_lines l
         where l.id <= ${callLineLimit()} and ${FREE}
@@ -67,6 +79,18 @@ export async function takeCallLine(holder: LineHolder, number?: string | null): 
         for update skip locked
       )
       returning id`);
+    return rows.length > 0;
+  });
+}
+
+/**
+ * The voice worker says the call or incoming call `holderId` is still going, so
+ * its line stays held. False when it holds no line (it never took one, or the
+ * line was already given up).
+ */
+export async function noteLineAlive(holderId: string): Promise<boolean> {
+  return withPlatformScope(async (tx) => {
+    const { rows } = await tx.execute<{ id: number }>(sql`update call_lines set alive_at = now() where holder_id = ${holderId} returning id`);
     return rows.length > 0;
   });
 }
@@ -81,7 +105,7 @@ export async function linesInUse(): Promise<number> {
 
 /** Frees every line. For tests only. */
 export async function clearCallLines(): Promise<void> {
-  await withPlatformScope((tx) => tx.execute(sql`update call_lines set holder_kind = null, holder_id = null, taken_at = null`));
+  await withPlatformScope((tx) => tx.execute(sql`update call_lines set holder_kind = null, holder_id = null, taken_at = null, alive_at = null`));
 }
 
 /** What a caller is told when every line is busy. */

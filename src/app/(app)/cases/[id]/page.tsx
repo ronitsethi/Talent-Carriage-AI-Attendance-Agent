@@ -10,7 +10,7 @@ import { env } from '@/lib/env';
 import { Notice } from '@/components/notice';
 import { StatusPill } from '@/components/status-pill';
 import { ConfirmSubmit } from '@/components/confirm';
-import { closeCase, contactNow, flagForHr, resetCase, simulateCallAnswer, simulateReply, writeCaseSummary } from '@/app/actions';
+import { closeCase, contactNow, flagForHr, hrDecideCase, resetCase, simulateCallAnswer, simulateReply, writeCaseSummary } from '@/app/actions';
 import { summaryIsStale } from '@/lib/conversation/summary';
 import { SummaryWriter } from '@/components/summary-writer';
 import { CallHead, CallPanel, ChatHead, Thread, type Entry } from '@/components/conversation';
@@ -267,12 +267,33 @@ export default async function CaseDetailPage({
                     Close case
                   </button>
                 </form>
-                <form action={flagForHr}>
-                  <input type="hidden" name="caseId" value={caseRow.id} />
-                  <button className="btn small" type="submit">
-                    Flag for HR
-                  </button>
-                </form>
+                {caseRow.status === 'needs_hr' || caseRow.status === 'escalated' ? (
+                  // HR's own decisions, once a date reaches them or is with the manager.
+                  <>
+                    {(
+                      [
+                        ['lop', 'Close as Loss of Pay', 'Closes the date as absent without pay'],
+                        ['regularised', 'Mark regularised', 'Closes the date as sorted out'],
+                        ['send_back', 'Send back to agent', caseRow.replyOption ? 'Restarts its follow-ups at Follow-up 1' : 'Asks the employee again, with reminders'],
+                      ] as const
+                    ).map(([decision, label, hint]) => (
+                      <form action={hrDecideCase} key={decision}>
+                        <input type="hidden" name="caseId" value={caseRow.id} />
+                        <input type="hidden" name="decision" value={decision} />
+                        <button className="btn small" type="submit" title={hint}>
+                          {label}
+                        </button>
+                      </form>
+                    ))}
+                  </>
+                ) : (
+                  <form action={flagForHr}>
+                    <input type="hidden" name="caseId" value={caseRow.id} />
+                    <button className="btn small" type="submit">
+                      Flag for HR
+                    </button>
+                  </form>
+                )}
                 <form action={resetCase}>
                   <input type="hidden" name="caseId" value={caseRow.id} />
                   <button

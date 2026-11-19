@@ -99,6 +99,23 @@ BEGIN
       $f$, t);
     END IF;
   END LOOP;
+
+  -- prompt_versions: a customer's turns read the all-customers versions (NULL
+  -- tenant) and their own; only staff, through the bypass, write any of them.
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'prompt_versions' AND table_schema = 'public') THEN
+    EXECUTE 'ALTER TABLE prompt_versions ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'ALTER TABLE prompt_versions FORCE ROW LEVEL SECURITY';
+    EXECUTE 'DROP POLICY IF EXISTS tenant_isolation ON prompt_versions';
+    EXECUTE $f$
+      CREATE POLICY tenant_isolation ON prompt_versions
+      USING (
+        tenant_id IS NULL
+        OR tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid
+        OR current_setting('app.bypass_rls', true) = 'on'
+      )
+      WITH CHECK (current_setting('app.bypass_rls', true) = 'on')
+    $f$;
+  END IF;
 END $$;
 
 -- Full-text search over policy content, used to ground policy answers.

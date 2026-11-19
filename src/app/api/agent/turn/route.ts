@@ -10,7 +10,7 @@ import { collectTimings, mark, timed } from '@/lib/timing';
 import { buildContext } from '@/lib/runtime';
 import { agentGender, agentVoice } from '@/lib/voice/voices';
 import { addCallTurn, endCallQuery, startCallQuery, takeLineForIncoming } from '@/lib/conversation/queries';
-import { LINES_BUSY } from '@/lib/voice/lines';
+import { LINES_BUSY, noteLineAlive } from '@/lib/voice/lines';
 import { randomUUID } from 'node:crypto';
 import { addToCostScope, withCostScope } from '@/lib/costs/record';
 import { recordCallCosts, type WorkerUsage } from '@/lib/costs/calls';
@@ -49,6 +49,12 @@ type Body = {
   digits?: string;
   /** The line has dropped. There is no hangup webhook on a LiveKit call. */
   ended?: boolean;
+  /**
+   * The call (`callId`) or incoming call (`queryId`) is still going: sent every
+   * 10 seconds while somebody is on the line, so its phone line stays held.
+   * When these stop, the worker's process has died and the line is freed.
+   */
+  alive?: boolean;
   /** Describe the call without advancing it: which voice, whose language. */
   brief?: boolean;
   /**
@@ -204,6 +210,12 @@ async function turn(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as Body;
   const callId = body.callId ?? '';
+
+  if (body.alive) {
+    const holder = body.callId || body.queryId || '';
+    const isId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(holder);
+    return NextResponse.json({ held: isId ? await noteLineAlive(holder) : false });
+  }
   // A call somebody made to us is filed under its query; whatever it costs is too.
   if (body.queryId) addToCostScope({ queryId: body.queryId });
 

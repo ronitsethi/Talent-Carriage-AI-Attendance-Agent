@@ -56,7 +56,7 @@ export type CallRow = typeof calls.$inferSelect;
  * `final_notice` is the last follow-up: it warns of loss of pay, says who the case
  * has gone to, and hangs up.
  */
-export type CallPurpose = 'first_contact' | 'follow_up' | 'final_notice' | 'escalation_notice' | 'manager_approval' | 'approval_outcome';
+export type CallPurpose = 'first_contact' | 'follow_up' | 'final_notice' | 'escalation_notice' | 'manager_approval' | 'manager_escalation' | 'approval_outcome';
 
 /** One spoken turn: what the agent says, and what happens next. */
 export type CallTurn = {
@@ -380,7 +380,7 @@ export async function handleTurn(
   input: CallTurnInput,
 ): Promise<CallTurn> {
   const call = await ctx.tx.query.calls.findFirst({ where: eq(calls.id, callId) });
-  if (call?.purpose === 'manager_approval') return approvalTurn(ctx, call, input);
+  if (call?.purpose === 'manager_approval' || call?.purpose === 'manager_escalation') return approvalTurn(ctx, call, input);
   const caseRow = await ctx.tx.query.cases.findFirst({ where: eq(cases.id, caseId) });
   if (!call || !caseRow) return { speak: spokenHandover(), nextCaseId: null, done: true };
 
@@ -388,6 +388,8 @@ export async function handleTurn(
   if (!employee) return { speak: spokenHandover(), nextCaseId: null, done: true };
 
   await appendTurn(ctx, callId, 'employee', input.digits ? `pressed ${input.digits}` : (input.speech ?? '(silence)'));
+  // Picked up and answering: their run of ignored contacts is over.
+  if (input.digits || input.speech?.trim()) await ctx.tx.update(employees).set({ ignoredContacts: 0 }).where(eq(employees.id, employee.id));
 
   if (call.purpose === 'follow_up' && caseRow.replyOption) {
     return followUpTurn(ctx, call, caseRow, employee, input);
@@ -668,5 +670,10 @@ export async function recordNoAnswer(ctx: VoiceContext, callId: string, status: 
       .update(cases)
       .set({ updatedAt: new Date() })
       .where(and(eq(cases.id, call.caseId), inArray(cases.status, [...UNANSWERED])));
+  }
+  // A call about their dates that rang out: that day's WhatsApps go now instead.
+  if (call && (call.purpose === 'first_contact' || call.purpose === 'follow_up')) {
+    const { afterMissedCall } = await import('@/lib/conversation/daily-contact');
+    await afterMissedCall(ctx as never, call).catch((error) => console.error('[voice] the WhatsApps after a missed call failed:', error));
   }
 }

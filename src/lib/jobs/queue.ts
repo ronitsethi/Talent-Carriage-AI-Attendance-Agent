@@ -5,6 +5,8 @@ import { jobs } from '@/db/schema';
 export type JobKind =
   | 'upload_contact'
   | 'absence_watch'
+  | 'reminder_round'
+  | 'hr_summary'
   | 'place_call'
   | 'approval_timeout'
   | 'verify_action'

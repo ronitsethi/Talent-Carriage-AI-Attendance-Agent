@@ -10,7 +10,7 @@ import { handlers } from '@/lib/jobs/handlers';
 import { Postpone, type Job } from '@/lib/jobs/queue';
 import { isLocked, lockMonth, monthLabel, unlockMonths } from '@/lib/locks';
 import { takeLineForIncoming } from '@/lib/conversation/queries';
-import { linesInUse, takeCallLine } from '@/lib/voice/lines';
+import { linesInUse, noteLineAlive, takeCallLine } from '@/lib/voice/lines';
 import { previewUnlockSend, startUnlockSend } from '@/lib/upload-send';
 import { giveAttendance, makeScenario, tapOption, typeText, type Scenario } from './helpers/scenario';
 
@@ -192,8 +192,8 @@ describe('after unlocking', () => {
 
     await startUnlockSend(scenario.tenantId, [OCT]);
     const queued = await withTenant(scenario.tenantId, (tx) => tx.select().from(jobs).where(eq(jobs.kind, 'upload_contact')));
-    const stage = (name: string) => queued.find((job) => job.payload.stage === name)!;
-    expect(stage('follow_up').priority).toBeLessThan(stage('first_contact').priority);
+    // One turn for the person, for everything due.
+    expect(queued.map((job) => job.payload.stage)).toEqual(['person']);
     expect((await read(unopened.id)).status).toBe('queued');
   });
 
@@ -249,6 +249,39 @@ describe('the three call lines', () => {
       tx.insert(queries).values({ id: incoming, tenantId: scenario.tenantId, employeeId: scenario.employeeId, channel: 'voice', endedAt: new Date() }),
     );
     expect(await withTenant(scenario.tenantId, (tx) => takeLineForIncoming(tx, scenario.tenantId, id()))).toBe(true);
+  });
+
+  it("frees a talking call's line 30 seconds after the worker stops saying it is alive", async () => {
+    scenario = await makeScenario();
+    const ago = (seconds: number) =>
+      withPlatformScope((tx) => tx.execute(sql`update call_lines set alive_at = now() - make_interval(secs => ${seconds}) where holder_id = ${incoming}`));
+    // An incoming call whose process is then killed: its query never ends.
+    const incoming = id();
+    expect(await withTenant(scenario.tenantId, (tx) => takeLineForIncoming(tx, scenario.tenantId, incoming))).toBe(true);
+    await withTenant(scenario.tenantId, (tx) =>
+      tx.insert(queries).values({ id: incoming, tenantId: scenario.tenantId, employeeId: scenario.employeeId, channel: 'voice' }),
+    );
+    expect(await noteLineAlive(incoming)).toBe(true);
+    // A keypad call, which has no worker to say so.
+    const keypad = id();
+    await takeCallLine({ kind: 'call', id: keypad });
+    await withTenant(scenario.tenantId, (tx) =>
+      tx.insert(calls).values({ id: keypad, tenantId: scenario.tenantId, employeeId: scenario.employeeId, provider: 'plivo', purpose: 'first_contact', status: 'in_progress', toNumber: scenario.mobile }),
+    );
+    await withPlatformScope((tx) => tx.execute(sql`update call_lines set taken_at = now() - interval '10 minutes' where holder_id = ${keypad}`));
+    expect(await linesInUse()).toBe(2);
+
+    await ago(25);
+    expect(await linesInUse()).toBe(2);
+    await ago(31);
+    // The talking call's line is free; the keypad call keeps its own.
+    expect(await linesInUse()).toBe(1);
+
+    // A worker that comes back before anyone takes the line holds it again.
+    expect(await noteLineAlive(incoming)).toBe(true);
+    expect(await linesInUse()).toBe(2);
+    // An id holding no line is told so.
+    expect(await noteLineAlive(id())).toBe(false);
   });
 
   it('makes a call wait for a free line, follow-ups first, and rings it once one is free', async () => {

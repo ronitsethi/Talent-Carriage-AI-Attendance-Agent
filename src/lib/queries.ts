@@ -551,7 +551,7 @@ export async function flaggedInRange(
           select ${cases.status} in ('asked', 'delivered', 'read')
             and coalesce(${employees.operatingMode}, ts.operating_mode) = 'manual'
             and ts.reminder_interval_days > 0
-            and coalesce(${employees.absenceContactAt}, ${cases.askedAt}) + make_interval(days => ts.reminder_interval_days) <= now()
+            and (coalesce(${cases.remindedAt}, ${cases.askedAt}) at time zone ts.timezone)::date + ts.reminder_interval_days <= (now() at time zone ts.timezone)::date
           from tenant_settings ts where ts.tenant_id = ${employees.tenantId}
         ), false)`,
       })

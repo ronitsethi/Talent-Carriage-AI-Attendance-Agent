@@ -77,6 +77,10 @@ export const employees = pgTable(
     absenceContactAt: timestamp('absence_contact_at', { withTimezone: true }),
     /** Reminders sent since they last answered; enough of them and the manager is told. */
     absenceReminders: integer('absence_reminders').notNull().default(0),
+    /** Reminders and follow-ups sent in a row with no reply; any reply clears it. The call rule reads it. */
+    ignoredContacts: integer('ignored_contacts').notNull().default(0),
+    /** When they were last rung about their dates; the call rule keeps a gap after it. */
+    lastCallAt: timestamp('last_call_at', { withTimezone: true }),
     whatsappOptOut: boolean('whatsapp_opt_out').notNull().default(false),
     callOptOut: boolean('call_opt_out').notNull().default(false),
     consentAt: timestamp('consent_at', { withTimezone: true }),

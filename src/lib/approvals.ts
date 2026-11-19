@@ -14,6 +14,8 @@ import type { VoiceContext } from '@/lib/voice/session';
 import { instructionFor, OUTCOMES, type ApplicationStage, type LeaveChoice, type OutcomeCode } from '@/lib/conversation/outcomes';
 import { executeAction } from '@/lib/actions/engine';
 import { requestCases, requestDates, type ActionRow } from '@/lib/approval-dates';
+import { handToHr, stepDay } from '@/lib/hr';
+import { morningOf } from '@/lib/dates';
 
 /**
  * The manager's side of every leave, regularisation, On-Duty and comp-off.
@@ -159,6 +161,11 @@ export async function requestManagerApproval(
 ): Promise<{ managerReached: boolean; manager: ManagerRow | null; approvalId: string | null }> {
   const application = OUTCOMES[request.code].application;
   if (!application) throw new Error(`${request.code} is not applied for`);
+  // Set to send to HR directly once the employee's steps have run out.
+  if (request.stage === 'overdue' && ctx.settings.escalationRoute === 'hr') {
+    await handToHr(ctx, employee, [caseRow, ...(request.alsoCases ?? [])], `Still not applied after ${request.followUps ?? 'the'} follow-ups`, new Date(), true);
+    return { managerReached: false, manager: null, approvalId: null };
+  }
   const manager = await managerFor(ctx.tx, ctx.tenantId, employee);
   const at = new Date();
   const agentApplies = request.stage === 'apply_for_me' && Boolean(ctx.hrms);
@@ -241,7 +248,8 @@ export async function requestManagerApproval(
       approverEmployeeId: manager.employeeId,
       approverManagerId: manager.id,
       channel: 'whatsapp',
-      timeoutAt: new Date(at.getTime() + ctx.settings.approvalTimeoutHours * 3600_000),
+      // The manager's WhatsApp step: they have this many working days before the call.
+      timeoutAt: morningOf(stepDay(ctx.settings, at, ctx.settings.managerRespondDays), ctx.settings.timezone),
       covers: also.map((row) => row.id),
     })
     .returning();
@@ -448,7 +456,7 @@ export async function decideApproval(
     await ctx.tx.update(actions).set({ status: 'rejected', updatedAt: at }).where(inArray(actions.id, decidedActionIds));
     await ctx.tx
       .update(cases)
-      .set({ status: 'resolved', resolvedAt: at, closeReason: `Not approved by ${manager.fullName}`, updatedAt: at })
+      .set({ status: 'resolved', resolvedAt: at, closeReason: `Not approved by ${manager.fullName} - Loss of Pay`, updatedAt: at })
       .where(inArray(cases.id, decidedCaseIds));
     await tellEmployee(ctx, caseRow, employee);
     await tellManager(ctx, manager, `Noted - not approved. ${employee.fullName} has been told on WhatsApp.`, caseRow.id, via === 'whatsapp');

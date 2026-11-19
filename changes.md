@@ -2,10 +2,120 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-19 14:17
+- **Files:** (deploy only) production database, web app tc-attendance-99772
+- **Change:** Migration 0040 (`reminder_contacts`, `follow_up_contacts` cleared) applied to production; 41 migrations recorded, temporary firewall rule removed. Web app deployed with reminders only on upload days and the per-level call rows; `/api/health` ok. Two customers had old follow-up rows (one: only Follow-up 4 by call), now cleared to the defaults. No call was live (three call lines held by stale incoming queries, already treated as free). The voice worker is unchanged.
+- **Why:** The user asked to deploy, commit and push.
+
+## 2026-11-19 13:58
+- **Files:** src/db/migrations/0040_level_contacts.sql, src/db/migrations/meta/_journal.json, src/db/schema/tenants.ts, src/lib/level-contacts.ts (new), src/lib/conversation/daily-contact.ts, src/lib/conversation/followup.ts, src/lib/contact.ts, src/lib/channel.ts, src/components/follow-up-contacts.tsx, src/app/(app)/settings/page.tsx, src/app/actions.ts, tests/absence-reminders.test.ts, tests/follow-ups.test.ts, tests/calls.test.ts, tests/settings-form.test.ts, CURRENT_STATE.md
+- **Change:** Every reminder and every follow-up has its own row in Settings (Contact by WhatsApp or Call, and Call style), replacing "Calls allowed for reminders", "Calls allowed for follow-ups", both Call style boxes and "Max calls per date". The call rule (`callRuleAllows` → `callRuleFor`, which returns the call style) now rings only when a due date's level is set to Call and the person ignored enough contacts and the gap since their last call has passed; a WhatsApp row is never a call. One call still covers all the person's due dates; talking wins when the Call rows differ. Defaults for levels not saved: the last reminder and the follow-up before the final notice are calls (never level 1), all WhatsApp where the old box was off. Migration 0040 adds `tenant_settings.reminder_contacts` and clears the old `follow_up_contacts`. Removed the unused `followUpChannel` helper. Tests updated; new ones for a WhatsApp row never ringing, the defaults, and one call covering mixed levels. Applied 0040 to the local database.
+- **Why:** The user wants fewer calls and exact control over which reminder and follow-up may be a call, instead of the call rule ringing whenever its conditions pass.
+
+## 2026-11-19 13:29
+- **Files:** src/lib/jobs/scheduler.ts, src/lib/jobs/handlers.ts, src/lib/conversation/daily-contact.ts, src/app/(app)/settings/page.tsx, src/app/actions.ts, tests/absence-reminders.test.ts, CURRENT_STATE.md
+- **Change:** Reminders no longer go on days no attendance file is uploaded. The scheduler stops queueing the daily `reminder_round` at `reminder_time`; `runReminderRound` is removed and a leftover `reminder_round` job does nothing. Reminders still go with an upload's send (and an unlock's). Settings loses the "Reminders go at" box (the `reminder_time` column is kept, no longer saved or read), and "Remind after" now says reminders go only with an upload. The reminder-round test is replaced by one that a whole day on the clock queues nothing for the employee.
+- **Why:** The user asked that reminders, like follow-ups, go only on days the attendance file is uploaded.
+
+## 2026-11-19 13:55
+- **Files:** (deploy only) production database, web app tc-attendance-99772
+- **Change:** Migration 0039 (`prompt_versions`) and `rls.sql` applied to production (40 migrations recorded; RLS enabled and forced, 1 policy; temporary firewall rules removed). Web app deployed with the AI prompts page and the split prompts; `/api/health` ok, `/prompts` redirects signed-out visitors to `/login`. No call line was held when it switched. The voice worker is unchanged.
+- **Why:** The user asked to proceed with going live after the prompt behaviour was checked against the live version.
+
+## 2026-11-19 13:30
+- **Files:** src/lib/prompts/build.ts, tests/follow-ups.test.ts, CURRENT_STATE.md
+- **Change:** (1) The guideline answerer's fixed fields now say: it never hands over or says HR will contact them; asked for HR or a person it gives the ticket line with `answered` false; someone only upset gets an apology and a question, with `answered` true. (2) `tests/follow-ups.test.ts` pins the clock (`vi.useFakeTimers({ toFake: ['Date'] })`, Tuesday 17 Nov 2026 09:00 IST) before each test.
+- **Why:** (1) With the shared Limits, "I want to talk to someone from HR" on WhatsApp got "Someone from HR will contact you. Goodbye." (0/3 like live); now the live ticket line 6/6, and "I am very upset" answers as live 6/6 instead of going to HR. (2) The tests' `later()` moves weekend days to Monday, so from a Wednesday two offsets landed on the same Monday ("carries on after Not done", "with three, two ordinary follow-ups come first" failed) and from a Thursday another did ("sends the first, then the final one"); 20/20 pass now. Full suite: 367 passed, 2 failed (the two voice tests that need a valid local AI key, failing before this work too).
+
+## 2026-11-19 10:00
+- **Files:** src/lib/prompts/build.ts, src/lib/prompts/defaults.ts, CURRENT_STATE.md
+- **Change:** The rules for the records (Attendance, Leave, Payroll) now come last in both built prompts, after the answer's fields, as leave and payroll did before; Limits gains "No LEAVE BALANCE or PAYROLL given means you do not have it: never state a balance or an amount then."
+- **Why:** A deeper live test (420 requests, old vs new prompts) found the new WhatsApp prompt inventing "5 days of Sick leave" 5/5 times for an employee with no balance on file (old 0/5). Each change alone fixed it (5/5); both are kept. After the fix: old 124/145 checks, new 134/145; the remaining failures happen with the old prompt too, except "talk to HR" on WhatsApp, which now says HR will contact them instead of the ticket line.
+
+## 2026-11-18 16:25
+- **Files:** src/db/schema/prompts.ts (new), src/db/schema/index.ts, src/db/migrations/0039_prompt_versions.sql (new), src/db/migrations/meta/_journal.json, src/db/rls.sql, src/lib/prompts/index.ts (new), src/lib/prompts/defaults.ts (new), src/lib/prompts/build.ts (new), src/lib/prompts/diff.ts (new), src/lib/conversation/talk.ts, src/lib/knowledge/index.ts, src/lib/leave-balance.ts, src/lib/payroll.ts, src/app/prompt-actions.ts (new), src/app/(app)/prompts/page.tsx (new), src/app/(app)/prompts/editor.tsx (new), src/app/(app)/shell.tsx, src/app/globals.css, tests/prompts.test.ts (new), CURRENT_STATE.md
+- **Change:** New staff-only page AI prompts (`/prompts`, sidebar under COE Teams) to edit six prompts: Talking agent, Guideline answerer, Attendance rules, Limits, Leave rules, Payroll rules. Each save is a new version (table `prompt_versions`, migration 0039) and is used at once; a version is for every customer, or, with "Use this version only for <customer>" ticked, for the customer being viewed. The agent uses the customer's active version, else the all-customers one, else the original wording (`src/lib/prompts/defaults.ts`, shown as version 0, never stored or deletable). Versions can be viewed, compared line by line with what is in use, made active again, or deleted (not the one in use). A Try box asks the AI a question with the unsaved text (a call goes to the talking agent as an incoming call; WhatsApp to the guideline answerer); nothing is saved or sent. The old fixed prompts (`RULES`/`CHAT_SYSTEM` in talk.ts, `ANSWER_RULES`/`CHAT_RULES` in knowledge, `LEAVE_RULES`, `PAYROLL_RULES`) were split into the six editable texts plus parts code keeps fixed (`src/lib/prompts/build.ts`: opening line, call vs WhatsApp lines, outcomes list, recording/applying rules, answer fields). Call and WhatsApp share one text; on calls HR/HRMS are spelt H R / H R M S by code. New shared Attendance rules and Limits (merged from the talking agent and guideline answerer). Limits sit before the records in both prompts; the guideline answerer now also gets Attendance rules and Limits, raises a ticket where the talking agent would hand over, and is told to answer in the language of the question. Prompts are read per customer in a savepoint and kept 30 s in memory (a save clears it). RLS: customers read all-customers rows and their own; only the platform scope writes. 11 new tests.
+- **Why:** The user wants to control how the AI answers on WhatsApp and calls (guidelines, documents, attendance, payroll, leave) from the portal, without a deploy, with every version kept. Checked old vs new prompts on Azure gpt-4.1-mini with invented records: same answers on leave, salary, notice period, another employee and HR-number questions; the first merged Limits stopped "call me back" raising a ticket and answered English in Hindi on WhatsApp, both fixed by wording and order before finishing.
+
+## 2026-11-17 21:55
+- **Files:** (deploy only) production database, web app tc-attendance-99772, Container App tc-attendance-worker
+- **Change:** Deployed the 30-second line fix. Migration 0038 applied to production (39 migrations recorded; temporary firewall rule removed afterwards). Web app deployed and healthy; `alive` answers `{"held":false}` for an unknown call. Worker image v23 built from the v22 image with only worker.py replaced, so the libraries are identical, and running as revision tc-attendance-worker--0000023 (registered with LiveKit). Switched while no call was in progress.
+- **Why:** Requested by the user before tomorrow's demo.
+
+## 2026-11-17 22:20
+- **Files:** CURRENT_STATE.md
+- **Change:** Replaced the voice-worker memory issue with measured facts. Idle, the worker runs main (277 MB), forkserver (333 MB) and spare (381 MB), about 1 GB. Every call starts a replacement spare, and the kernel then kills a process, sometimes the call. The earlier "previous call still closing" explanation is dropped: the 19:57 call died with no other call running.
+- **Why:** The user asked for the actual root cause, measured, not guessed. No code changed.
+
+## 2026-11-17 21:45
+- **Files:** src/db/migrations/0038_call_line_alive.sql (new), src/db/migrations/meta/_journal.json, src/db/schema/locks.ts, src/lib/voice/lines.ts, src/app/api/agent/turn/route.ts, agent/worker.py, tests/locks.test.ts, CURRENT_STATE.md
+- **Change:** A talking call's phone line is freed 30 seconds after the voice worker last said the call is alive. The worker sends `alive` to `/api/agent/turn` every 10 s while somebody is on the line (`TurnApi.keep_alive`); the platform stamps `call_lines.alive_at` (`noteLineAlive`), and a line whose `alive_at` is over 30 s old counts as free. A taken line starts with no `alive_at`, so keypad calls and older workers keep the old rules (call/query end, 2 min, 45 min). A worker that comes back before the line is retaken holds it again. New test in locks.test.ts.
+- **Why:** Call processes killed for lack of memory could not report their hangup and held their line for 45 minutes; on 2026-11-17 three such calls made every later caller hear "All our lines are busy".
+
+## 2026-11-17 21:15
+- **Files:** CURRENT_STATE.md
+- **Change:** Corrected the voice-worker memory issue. Worker v22 is not the cause: the v21 and v22 images load at the same 250-320 MB per process. The idle level has always varied (550-780 MB) by restart, and calls reached about 1 GB on v21 too.
+- **Why:** Measured both images after the user asked what the 16 Nov update added. No code changed.
+
+## 2026-11-17 20:35
+- **Files:** CURRENT_STATE.md
+- **Change:** Added an open issue: the voice worker runs out of memory, killed call processes never report their hangup, and their lines stay held for 45 minutes, so callers hear "all our lines are busy".
+- **Why:** Diagnosed from production after a report that callers could not get through. No code changed.
+
+## 2026-11-17 22:55
+- **Files:** docs/changes-16-17-nov-2026.pdf
+- **Change:** Removed the "Not done yet" and "Technical record" sections, and the not-yet-handled mentions (public holidays, HR email).
+- **Why:** Requested by the user.
+
+## 2026-11-17 22:45
+- **Files:** docs/changes-16-17-nov-2026.pdf (new)
+- **Change:** A 3-page PDF summarising the changes made on 16-17 Nov 2026 from the customer's "Follow-ups, Reminders and Calls Rules" document: working days, reminders, follow-ups, the call rule, manager and HR, Settings, what it means for live customers, what is not done yet, and a short technical record.
+- **Why:** Requested by the user.
+
+## 2026-11-17 22:20
+- **Files:** none changed (deploy)
+- **Change:** Deployed the Settings layout fix; health check passed. No migration.
+- **Why:** Requested by the user.
+
+## 2026-11-17 22:00
+- **Files:** src/app/globals.css, src/app/(app)/settings/page.tsx
+- **Change:** Settings boxes use a new `.settings-grid`: each box's label, input and help line up across a row (CSS subgrid), and a box alone in its row keeps a box's width instead of stretching ("Start sending after" was full width).
+- **Why:** The user found the boxes uneven and the delay box too long.
+
+## 2026-11-17 21:30
+- **Files:** CURRENT_STATE.md
+- **Change:** Production migrated through 0037 (38 migration records) and deployed with working days, grouped follow-ups, the manager → call → HR chain, HR settings, reminders per date and the call rule; health check passed. All seven new templates approved by Meta. Every customer still has reminders off (Remind after = 0). Laptop firewall rule added for the migration and removed afterwards.
+- **Why:** Requested by the user.
+
+## 2026-11-17 21:00
+- **Files:** src/db/migrations/0037_reminder_steps_and_call_rule.sql (new), src/db/migrations/meta/_journal.json, src/db/schema/{tenants,employees,cases}.ts, src/lib/conversation/daily-contact.ts (new), src/lib/conversation/{absence-group,absence-reminders,absence-templates,followup,engine,talk}.ts, src/lib/contact.ts, src/lib/upload-send.ts, src/lib/voice/session.ts, src/lib/queries.ts, src/lib/jobs/{queue,handlers,scheduler}.ts, src/app/actions.ts, src/app/(app)/settings/page.tsx, scripts/create-ticket-templates.ts, tests/absence-reminders.test.ts (rewritten), tests/{follow-ups,upload-send,locks,calls}.test.ts, CURRENT_STATE.md
+- **Change:** Reminders per date and the call rule (the customer's rules, steps 2 and 3). Reminders: counted per date every "Remind after" working days (1 = daily) after the first question, up to "Number of reminders", worded normal / firmer / last warning (new templates `attendance_absent_reminder_firm`, `attendance_absent_last_warning`, submitted), then the manager chain; on upload days they go with the send, otherwise at a new "Reminders go at" time. "Days before the manager" and the per-person reminder clock are removed. Call rule for reminders and follow-ups: calls allowed yes/no + call style each, a call only after N ignored contacts, M working days since the last call, under the per-date cap, never for a date's first reminder or follow-up; a first-question call follows the employee's own setting and counts under the rule; one call covers reminders then follow-ups; missed call → that day's WhatsApps at once; any reply clears the ignored count. One upload turn per person deciding everything due. Settings rewritten with a one-line explanation under every box; per-level follow-up rows and the reminders Contact by row removed.
+- **Why:** The customer's "Follow-ups, Reminders and Calls Rules" document, as agreed with the user (remind-after stays with 1 as default, no default number of reminders, reminders with the upload send or at a set time, first question by the employee's own setting, first reminder and follow-up always WhatsApp).
+
+## 2026-11-17 16:30
+- **Files:** src/db/migrations/0036_working_days_and_escalation.sql (new), src/db/migrations/meta/_journal.json, src/db/schema/{tenants,cases,actions}.ts, src/lib/dates.ts, src/lib/hr.ts (new), src/lib/conversation/{followup,follow-up-state,flow,engine,absence-reminders,absence-group,summary}.ts, src/lib/approvals.ts, src/lib/voice/{approval-calls,session}.ts, src/lib/upload-send.ts, src/lib/jobs/{queue,handlers,scheduler}.ts, src/app/actions.ts, src/app/(app)/{settings/page,cases/page,cases/[id]/page}.tsx, scripts/create-ticket-templates.ts, tests/escalation-chain.test.ts (new), tests/{follow-ups,absence-reminders,approval-calls,calls,whatsapp-sheet}.test.ts, CURRENT_STATE.md
+- **Change:** Follow-ups, the manager and HR per the customer's one-page rules. Working days: Mon-Fri, Saturday by a Settings checkbox; follow-ups, manager steps and reminders only on working days. Follow-ups: one WhatsApp per person for all their dates (`fg:` group buttons), one final notice and one manager request per thing for dates ending together; "Done" pauses a working day for the file instead of closing. Manager: WhatsApp, then a call the next working day if ignored (whatever their Contact by; Manual managers not called; once a day per manager; missed call → WhatsApp again), then HR; the same for no-reply escalations with a new `manager_escalation` call (press 1 speak, 2 Loss of Pay). Reject = Loss of Pay. "I'll speak to them" gives N working days, then HR. Route: manager then HR / HR directly / manager only. HR: Settings contact (name, WhatsApp, email stored), hand-over with the employee told, WhatsApp alert and daily summary (template `hr_attendance_alert`, submitted to Meta), payroll cut-off urgency, HR buttons on a case. The approval timeout in hours is replaced by working-day steps. Migration first numbered 0035, renumbered 0036 after finding `0035_company_mapping` from the 14 Nov session.
+- **Why:** The customer's "Follow-ups, Reminders and Calls Rules" document, agreed step by step with the user (Saturday checkbox, follow-up count from Settings, manager 1 and 2 are the same manager - WhatsApp then a call, HR ready for when its details come, no email).
+
+## 2026-11-16 12:55
+- **Files:** none (git only)
+- **Change:** Committed the filler fix as 9fefffa ("Stop the talking agent saying "Okay" twice after a filler": agent/worker.py and its entries in changes.md, Backend-changes.md and CURRENT_STATE.md only) and pushed to main on both remotes (ronitsethi and AttendanceMaster). The company-mapping work stays uncommitted.
+- **Why:** Requested by the user.
+
 ## 2026-11-16 12:42
 - **Files:** agent/worker.py, CURRENT_STATE.md
 - **Change:** After a filler, a reply that opens with an acknowledgement of its own followed by a comma or stop ("Okay, ...", "Sure! ...", "अच्छा, ...", "ठीक है जी, ...", up to two in a row) loses it, so the caller no longer hears "Okay. Okay, ...". The worker reads the first ~14 characters of the reply while the filler plays before deciding (`drop_opening_ack`, `_without_repeat`). Left alone: "Okay so ...", "जी हाँ, ...", a reply that is only "Okay.", and every reply that had no filler. Filler placement, words and timing are unchanged. Deployed as worker image v22 (revision tc-attendance-worker--0000022); `AGENT_FILLERS` stays `on`.
 - **Why:** Reported by the user: on some incoming (query) calls the filler word was said twice, once as the filler and again at the start of the answer. Cause: the platform prompt (`RULES` in `src/lib/conversation/talk.ts`) lets a reply begin with a short "Okay" / "अच्छा" / "ठीक है", and the model cannot know a filler was already said.
+
+## 2026-11-14 15:10
+- **Files:** CURRENT_STATE.md
+- **Change:** Production migrated through 0035 (36 migration records; `tenant_settings.company_column` / `company_name`) and deployed with the Company tab on Mapping; health check passed. Laptop firewall rule added for the migration and removed afterwards.
+- **Why:** Put the company mapping live.
+
+## 2026-11-14 14:45
+- **Files:** src/lib/company.ts, src/lib/mapping/import.ts, src/app/actions.ts, src/db/schema/tenants.ts, src/db/migrations/0035_company_mapping.sql (new), src/db/migrations/meta/_journal.json, src/components/company-mapping.tsx (new), src/app/(app)/mapping/page.tsx, tests/company.test.ts, tests/leave-balance.test.ts, CURRENT_STATE.md
+- **Change:** The company check no longer compares uploads with the customer's name in the Viewing customer list. Mapping has a new **Company** tab (separate from Attendance, Leave balance and Payroll) with two fields: the company name column (its heading in the sheet) and the company name itself, saved on `tenant_settings.company_column` / `company_name` (migration 0035) by the new `saveCompanyMapping` action (admins; both or neither, both blank turns the check off). Attendance, leave balance and payroll uploads find the column by that heading (case and spacing ignored) and are refused if any non-blank cell names another company: "<file> is <kind> for <company>, not <mapped name>. Check the file, or the company name on Mapping, Company tab." Names still ignore case, punctuation and legal-form words (Pvt Ltd, Private Limited, LLP...), but a shorter or longer name no longer counts as the same company. Not set up, or no such column in the file: not checked. The automatic company-heading guess (Company, Employer, Entity...) is gone. Tests updated.
+- **Why:** The user wants the company column mapped explicitly and checked against a company name they set, not against the portal's customer name.
 
 ## 2026-11-12 21:45
 - **Files:** none changed (deploy)

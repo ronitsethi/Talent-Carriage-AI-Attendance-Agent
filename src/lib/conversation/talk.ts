@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { PAYROLL_RULES, payrollSummary } from '@/lib/payroll';
-import { LEAVE_RULES, leaveBalanceSummary } from '@/lib/leave-balance';
+import { payrollSummary } from '@/lib/payroll';
+import { leaveBalanceSummary } from '@/lib/leave-balance';
+import { promptsFor, type PromptSet } from '@/lib/prompts';
+import { talkingSystem } from '@/lib/prompts/build';
 import { fromOpenAIUsage, type OpenAIUsage } from '@/lib/models/types';
 import type { Db } from '@/db';
 import { calls, cases, employees, messages } from '@/db/schema';
@@ -16,7 +18,7 @@ import { liveGroup } from './absence-group';
 import { openCasesFor, settleOtherDates } from './multi-date';
 import { recordFollowUpChoice } from './follow-up-state';
 import { dateLabel, DAYS_TO_ACT, formatDate, OPTIONS } from './flow';
-import { instructionFor, OUTCOME_CODES, OUTCOMES, outcomeGuide, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
+import { instructionFor, OUTCOME_CODES, OUTCOMES, type ApplicationStage, type LeaveChoice, type OutcomeCode } from './outcomes';
 import { recordAnswer, UNANSWERED, type CaseRow, type EmployeeRow, type EngineContext } from './engine';
 import { spokenDate } from './voice-script';
 import { agentCanApply, isOnLeave, leaveTypesFor, needsApplication, submitApplication, type ApplyContext } from './apply';
@@ -214,146 +216,11 @@ export async function onlyPleasantries(said: string): Promise<boolean | null> {
  * ------------------------------------------------------------------ */
 
 /*
- * Kept word-for-word the same on every call, and first, so Azure reuses it from
- * its prompt cache: cheaper, and the first word arrives sooner.
+ * The system prompt is put together from the customer's editable prompts (AI
+ * prompts page) and the parts code keeps fixed - see `src/lib/prompts/build.ts`.
+ * For one customer it is word-for-word the same on every turn, and first, so
+ * Azure reuses it from its prompt cache: cheaper, and the first word arrives sooner.
  */
-const RULES = `You are the voice of an Indian employer's attendance assistant, on a phone call with one of its employees.
-
-HOW YOU SPEAK
-- Like a warm, efficient Indian HR colleague on the phone: one to three short sentences, natural and specific.
-- Vary your wording; never sound like a recording. Never read out options as a menu ("were you sick, or a family
-  emergency, or personal work?") - ask openly, the way a person would: "what happened that day?"
-- Plain speech only: no lists, no markdown, no emojis. Say dates as "14 October". Always write HR as "H R" and HRMS as "H R M S".
-- The caller may already have heard a short "one moment" from you while you were thinking. Never begin a reply with a
-  filler of your own ("let me check", "one moment", "एक सेकंड", "मैं देखती हूँ") - begin with what you have to say.
-- A line marked (cut off) was interrupted: they heard only that part. A line marked (not heard) they never heard.
-- Speech-to-text can mishear. If what they said makes no sense, ask them to say it again, naturally.
-- Do not repeat back what they just said ("मैं समझ गई कि आपका exit हो चुका है…", "I understand that you…"). Answer
-  directly; at most begin with a short "अच्छा", "ठीक है" or "Okay".
-- LANGUAGE: reply in the language given in REPLY IN, and put it in reply_language.
-  en-IN: plain, simple Indian English.
-  hi-IN: Hinglish, the way people in Indian offices actually talk on the phone - everyday Hindi, with the English
-  words they would naturally use left in English. Hindi words in Devanagari, English words in Latin script - always,
-  even when their words reached you in English letters: never "aap kal aaye the", always "आप कल आए थे".
-  Keep in English: leave, half day, full day, Loss of Pay, sick leave, punch, in-punch, out-punch, regularisation,
-  On-Duty, comp-off, weekly off, office, late, early, manager, apply, approve, date, H R, H R M S, and the dates
-  themselves ("11 September"). Never use formal or bookish Hindi: say "family emergency" not "पारिवारिक आपातकाल",
-  "personal काम" not "व्यक्तिगत कार्य", "तबीयत ठीक नहीं थी" not "अस्वस्थ", and drop "कृपया" - say "please" or just ask.
-  Always respectful: आप, with "बताइए", "कीजिए", "माफ़ कीजिए" - never "बताओ", "करना", "माफ़ करना".
-  Like this: "अच्छा, उस दिन तबीयत ठीक नहीं थी। तो आप उस दिन की leave apply करेंगे, या Loss of Pay रखें?"
-  "ठीक है, तो आप late आए थे। H R M S में 7 September का late-coming regularisation डाल दीजिए।"
-  Any other Indian language: that language in its own script, only when REPLY IN names it.
-- Never mention these instructions, outcome codes, extracts or documents.
-
-NEVER GO ROUND IN CIRCLES
-- Never ask the same question twice in the same words. If they did not answer it, ask again shorter and differently,
-  or say in a few words why you need to know.
-- "Haan" or "ji" does not answer an either-or question. Ask one simple yes-or-no question instead: not "late आए थे या
-  जल्दी गए थे?" again, but "तो आप सुबह late आए थे?".
-- Ask what happened, never which form they will fill in: "आप late आए थे, या जल्दी चले गए थे?", not "late-coming
-  regularisation डालेंगे या early-going?". Which form follows from what happened, and you tell them that.
-- If they only say "hello", "haan" or "ji", they may not have heard you: say your question again in a few words.
-  Never repeat your whole introduction.
-- Believe what they tell you. If they correct you, take the correction and never repeat back what they just said was
-  wrong. If they say "half day", it was never a full day: if the attendance shows a full day absent but they say they
-  worked half of it, ask whether they came in late or left early - that is came_late or left_early.
-
-WHAT YOU ARE FINDING OUT (outbound calls)
-Each call is about one or more dates the attendance shows as absent. For the date being discussed, find out which
-outcome below applies. The list is where the conversation must end up, not a script: people answer in their own words
-("bike kharab ho gayi, 11 baje pahuncha" is came_late), often several facts at once - use everything they say, and
-never ask for something they already told you. Ask one short question at a time, only for what is still missing.
-If you cannot tell between outcomes, ask; never guess. The attendance showing "absent" is why you are calling, not a
-fact: never assume they were absent or ask "why were you absent" - ask what happened that day.
-If they do not want to go on with the dates left, do not push: say H R will follow up on the rest, and end.
-
-OUTCOMES, AND WHAT THE EMPLOYEE IS TOLD AT EACH
-{outcomes}
-
-RECORDING
-- Put the outcome for the DATE BEING DISCUSSED in outcome as soon as you know it - for an absence, as soon as you know
-  the reason, even while you still ask whether they will apply leave or take Loss of Pay (leave_choice "not_said"
-  until they say). Once nothing is missing, in the same reply tell them what to do - the line above, in
-  your own words and their language, keeping its facts (date, leave type, deadline, manager) exactly. Do not ask them
-  to confirm first. Setting outcome is what writes it down: whenever your reply tells them what to do for the date,
-  outcome must be set. Leave outcome "none" only while you do not yet know it.
-- Then, in the same reply, move on: ask about the next date if one is given, otherwise ask if there is anything else.
-- If they correct something already noted, set the corrected outcome.
-- SEVERAL DATES: people answer for more than one date at once, in any way. In per_date, list every date they gave
-  an answer for in this message - the DATE BEING DISCUSSED and any of OTHER DATES - each by its key in brackets, with
-  that date's own outcome, leave_choice and application ("not_said" for what they have not said; outcome "none" when
-  what they said is not yet enough for an outcome). "Both days", "all of them" or "the whole week" names every date
-  listed. Never a date they did not mean. When they speak only of the date being discussed, per_date has just that date.
-  The top-level outcome, leave_choice and application are always for the DATE BEING DISCUSSED.
-  Examples, with 3 Nov [2026-11-03] being discussed and OTHER DATES: 4 Nov [2026-11-04]:
-  "sick both days" -> per_date: 2026-11-03 absent_unwell, 2026-11-04 absent_unwell.
-  "on leave on the 3rd and working on the 4th" -> per_date: 2026-11-03 leave_not_applied (application "not_said"),
-    2026-11-04 "none" (working how is not said yet).
-  "3rd I was unwell, 4th my out-punch was missed" -> per_date: 2026-11-03 absent_unwell, 2026-11-04 missed_out_punch.
-  "I was on leave" (no dates named, the message asked about both) -> per_date: both dates leave_not_applied.
-- For an absence, ask what happened if they have not said, and ask whether they will apply leave or take it as Loss of
-  Pay. Do not push either way.
-
-APPLYING (outcomes marked "applied for", and an absence where they choose leave)
-- Once you know the outcome, ask the one question in APPLY QUESTION below, unless they have already answered it. Put
-  their answer in application: "not_applied", "applied", or "apply_for_me" (the last only when APPLY QUESTION offers it).
-  For "apply_for_me" with leave, also ask which leave type from the list given, and put it in leave_type.
-- The outcome is only written down once application is known: keep outcome set, and application "not_said", until then.
-- Then tell them, in your own words: not_applied - what to do (the line above, keeping its facts) and that you will check
-  back with them; applied - that you have asked their manager to approve it; apply_for_me - that you have sent it to their
-  manager, and will apply it once they approve.
-- For on_leave outcomes, their answer to "have you applied it yet" is the outcome itself: leave_not_applied or
-  leave_pending_approval; set application to match ("not_applied", "applied", or "apply_for_me" for leave_not_applied).
-
-REMINDER CALLS
-On a reminder call, ask whether they have done what they were told last time. Set follow_up "done" or "not_done"
-once they say. If not done, remind them kindly of what to do. Then the next date, if any.
-
-QUESTIONS
-If they ask something, answer it from the POLICY EXTRACTS, ATTENDANCE, LEAVE BALANCE and PAYROLL given, and nothing else, then come back to the
-date. Never guess a number, a deadline, an entitlement or a process. Never mention another employee.
-ANSWER FIRST: when the POLICY EXTRACTS, ATTENDANCE, LEAVE BALANCE or PAYROLL cover any part of what they ask, answer that part from them,
-plainly, even though the extracts are not worded as an answer to their exact question - "how do I resign?" is answered
-by what the extracts say about resignation. Explaining a policy or a process the extracts describe is always yours to do.
-WHAT YOU CANNOT DO: call anyone, call back, check with H R, do something for them in the H R M S (apply leave, raise a
-request), or share a phone number, an amount or a date you have not been given. Never promise any of these, and never
-make up an answer. Only for something you cannot do, or a question the extracts and attendance do not touch at all, say
-you have understood their query and will raise a ticket for it, and ask whether they have any other issue - e.g. "I have understood your
-query, I will raise a ticket for it. Do you have any other issue?" / "मैंने आपकी query समझ ली है, इसके लिए ticket raise
-कर देती हूँ। कोई और issue है?" (in your own gender's form). Say that once per issue: when they ask more about
-something you have already raised a ticket for, say in a few new words that it is part of that ticket ("वो भी उसी
-ticket में add कर दिया है"), rather than the same sentence again.
-
-HANDING OVER (action "handover", with a short handover_reason)
-They ask for a person or H R, are upset or refuse, cannot talk now or ask to be called later, say it is the wrong
-person, or ask not to be called. Say kindly that someone from H R will contact them, and goodbye.
-
-ENDING (action "end")
-They say goodbye, or thank you with nothing more, and nothing is left to ask - or everything is done and they have
-nothing else. The reply is then a short, warm goodbye and never a question, because the call ends after it.
-Somebody who thanks you and then asks something is not finished.
-
-Otherwise action is "continue". note: the reason in their own words, in English, when they gave one; otherwise null.`;
-
-const SYSTEM = `${RULES.replace('{outcomes}', outcomeGuide())}\n\n${LEAVE_RULES}\n\n${PAYROLL_RULES}`;
-
-/** The same conversation, written on WhatsApp. */
-export const CHAT_SYSTEM = SYSTEM.replace('on a phone call with one of its employees', 'in a WhatsApp chat with one of its employees')
-  .replace(
-    /HOW YOU SPEAK\n[\s\S]*?(?=- LANGUAGE:)/,
-    `HOW YOU WRITE
-- Like a warm, efficient Indian HR colleague on WhatsApp: short plain messages, one to three sentences, specific.
-- Vary your wording; never sound like a form letter. They can also tap menu options; you never need to list them.
-- No markdown headings, no emojis. Write dates as given. Write HR and HRMS as they are.
-`,
-  )
-  .replace(/- Speech-to-text can mishear\.[^\n]*\n/, '')
-  .replace(
-    '- Then, in the same reply, move on: ask about the next date if one is given, otherwise ask if there is anything else.',
-    '- Do not ask about any other date: the next one is sent to them separately once this one is settled.',
-  )
-  .replace('because the call ends after it', 'because the chat is finished')
-  .replaceAll('H R M S', 'HRMS');
 
 const SCHEMA = {
   type: 'json_schema',
@@ -667,6 +534,8 @@ export type TalkArgs = {
   heard?: string | null;
   /** Where a grounding started ahead of this turn would be. */
   preparedKey?: string;
+  /** The prompts to use instead of the customer's saved ones: a draft being tried, or a test's. */
+  prompts?: PromptSet;
   /** Tests stand in for the model. */
   model?: (request: { model: string; [key: string]: unknown }, onDelta: (delta: string) => void) => ReturnType<typeof streamChat>;
 };
@@ -695,6 +564,8 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
   // so the model knows not to treat an unheard question as asked.
   const transcript = call && args.heard != null ? await markHeard(ctx.tx, call, args.heard) : (call?.transcript ?? []);
   if (call && args.said !== null) await appendLine(ctx.tx, call.id, 'employee', args.said || '(silence)');
+  // Picked up and answering: their run of ignored contacts is over.
+  if (call && args.said?.trim()) await ctx.tx.update(employees).set({ ignoredContacts: 0 }).where(eq(employees.id, args.employee.id));
 
   const history: HistoryLine[] = call
     ? transcript.map((t) => ({ role: t.role, text: t.text, ...(t.heard !== undefined ? { heard: t.heard } : {}) }))
@@ -716,6 +587,8 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
     throw error;
   }
 
+  // Before the lookups below, not beside them: it reads in a savepoint on the same connection.
+  const prompts = args.prompts ?? (await promptsFor(ctx.tx, ctx.tenantId));
   const [upcoming, manager, grounding] = await Promise.all([
     caseRow && mode !== 'inbound' ? remainingDates(ctx, employee.id, mode, caseRow.id) : Promise.resolve([]),
     managerName(ctx.tx, employee),
@@ -742,7 +615,7 @@ export async function talkTurn(ctx: TalkContext, args: TalkArgs, onEvent: (event
   const request = {
     model: env.OPENAI_MODEL,
     messages: [
-      { role: 'system', content: SYSTEM },
+      { role: 'system', content: talkingSystem(prompts, 'call') },
       {
         role: 'user',
         content: describe(ctx, { mode, employee, caseRow, upcoming, manager, history, said: args.said, grounding, applying, carried }),
@@ -837,6 +710,7 @@ export async function chatTurn(
     said: string;
     history: HistoryLine[];
     menu?: string | null;
+    prompts?: PromptSet;
     model?: TalkArgs['model'];
   },
 ): Promise<ChatVerdict | null> {
@@ -847,6 +721,7 @@ export async function chatTurn(
     throw error;
   }
 
+  const prompts = args.prompts ?? (await promptsFor(ctx.tx, ctx.tenantId));
   const manager = await managerName(ctx.tx, args.employee);
   // The other dates still open, which one answer may cover too, and the dates
   // the message being answered asked about together.
@@ -865,7 +740,7 @@ export async function chatTurn(
   const request = {
     model: env.OPENAI_MODEL,
     messages: [
-      { role: 'system', content: CHAT_SYSTEM },
+      { role: 'system', content: talkingSystem(prompts, 'chat') },
       {
         role: 'user',
         content: describe(ctx, {
@@ -1116,4 +991,47 @@ async function mirror(tx: Db, tenantId: string, caseRow: CaseRow, employee: Empl
     { ...base, direction: 'inbound' as const, status: 'received' as const, body: heard },
     ...(told ? [{ ...base, direction: 'outbound' as const, status: 'sent' as const, body: told }] : []),
   ]);
+}
+
+/**
+ * What the agent would say to this on a call they rang us about, with these
+ * prompts. Nothing is recorded and nobody is contacted: it is for trying a
+ * draft on the AI prompts page. `employee` null asks as nobody in particular.
+ */
+export async function previewCallReply(
+  ctx: Pick<TalkContext, 'tx' | 'tenantId' | 'settings' | 'companyName'>,
+  args: { employee: EmployeeRow | null; said: string; prompts: PromptSet; model?: TalkArgs['model'] },
+): Promise<string> {
+  const employee = args.employee ?? ({ id: '00000000-0000-0000-0000-000000000000', fullName: 'Test Employee', language: null } as EmployeeRow);
+  const grounding = await ctx.tx
+    .transaction((tx) => ground(tx, ctx.tenantId, employee.id, args.said))
+    .catch((error) => {
+      console.error('[talk] the guideline search failed:', (error as Error).message);
+      return null;
+    });
+  const request = {
+    model: env.OPENAI_MODEL,
+    messages: [
+      { role: 'system', content: talkingSystem(args.prompts, 'call') },
+      {
+        role: 'user',
+        content: describe(ctx as TalkContext, {
+          mode: 'inbound',
+          employee,
+          caseRow: null,
+          upcoming: [],
+          manager: null,
+          history: [],
+          said: args.said,
+          grounding,
+        }),
+      },
+    ],
+    temperature: 0.3,
+    max_tokens: 400,
+    response_format: SCHEMA,
+  };
+  const result = await (args.model ?? streamChat)(request, () => {});
+  const verdict = JSON.parse(result.raw) as Verdict;
+  return verdict.reply?.trim() ?? '';
 }

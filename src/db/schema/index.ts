@@ -12,3 +12,4 @@ export * from './coe';
 export * from './locks';
 export * from './payroll';
 export * from './leave';
+export * from './prompts';

@@ -222,10 +222,3 @@ export async function leaveBalanceSummary(tx: Db, tenantId: string, employeeId: 
   return [`Leave balance as on ${onDate(asOf)}, by leave type:`, ...lines].join('\n');
 }
 
-/** What the agent is told about leave balances, for its rules. */
-export const LEAVE_RULES = `LEAVE: LEAVE BALANCE, when given, is this employee's own leave left per leave type, from their employer, as on the
-date shown. You may say it. Where leave is pending approval, give the balance and what is left once it is approved.
-A leave type is named by its kind and code, e.g. "Sick leave (SL)"; ATTENDANCE gives the leave taken under the same
-names and codes, so for leave taken of a type use that, and set it against the balance of the same type. Leave applied
-or taken after the balance's date may not be in the balance yet, so say the date it is from. A leave type not listed, or no LEAVE BALANCE at all: say you do not have that balance
-and raise a ticket if they need it. Never work a balance out yourself from the policy.`;

@@ -1,3 +1,4 @@
+import { isWorkingDay, today } from '@/lib/dates';
 import { afterEach, describe, expect, it } from 'vitest';
 import { asc, desc, eq } from 'drizzle-orm';
 import { withTenant, type Db } from '@/db';
@@ -320,8 +321,8 @@ describe('contacting several dates at once', () => {
  */
 describe('the follow-up call', () => {
   /** A week answered "I was working" the old way, each date awaiting its regularisation. */
-  async function answeredWeek() {
-    await absentAllWeek();
+  async function answeredWeek(settings = {}) {
+    await absentAllWeek(settings);
     await withTenant(scenario.tenantId, async (tx) => {
       const ctx = scenario.context(tx);
       for (const row of await tx.select().from(cases)) await recordAnswer(ctx, row, 2);
@@ -389,7 +390,8 @@ describe('the follow-up call', () => {
       expect(heard(turn)).toContain('That is everything');
 
       const rows = await tx.select().from(cases);
-      expect(rows.every((r) => r.status === 'resolved')).toBe(true);
+      // "Done" waits for the next file to show it, so the dates stay open, paused.
+      expect(rows.every((r) => r.status === 'answered' && r.followUpPausedUntil)).toBe(true);
       expect(rows.every((r) => r.followUpReply === 'done')).toBe(true);
     });
   });
@@ -445,20 +447,31 @@ describe('the follow-up call', () => {
   });
 
   it('rings a voice employee once when their reminders fall due', async () => {
-    await answeredWeek();
+    // Follow-up 2 (the final notice) set to Call in Settings.
+    await answeredWeek({
+      followUpContacts: [
+        { channel: 'whatsapp', callMode: 'keypad' },
+        { channel: 'voice', callMode: 'keypad' },
+      ],
+    });
 
     await withTenant(scenario.tenantId, async (tx) => {
       const ctx = scenario.context(tx);
-      // Two days on, every date is due its reminder.
-      const result = await sendDueFollowUps(ctx, new Date(Date.now() + 3 * 86_400_000));
+      // A second follow-up due on every date, after two ignored contacts: the call rule rings.
+      await tx.update(cases).set({ followUpCount: 1 }).where(eq(cases.employeeId, scenario.employeeId));
+      await tx.update(employees).set({ ignoredContacts: 2, lastCallAt: null }).where(eq(employees.id, scenario.employeeId));
+      let at = new Date(Date.now() + 3 * 86_400_000);
+      while (!isWorkingDay(today('Asia/Kolkata', at), { saturdayWorking: false })) at = new Date(at.getTime() + 86_400_000);
+      const result = await sendDueFollowUps(ctx, at);
 
       expect(result.due).toBe(5);
       expect(result.called, 'one call, not one per date').toBe(1);
-      expect(result.sent, 'nothing on WhatsApp for someone set to Call').toBe(0);
+      expect(result.sent, 'nothing on WhatsApp when it is a call').toBe(0);
       expect(scenario.voice.history()).toHaveLength(1);
 
+      // With two follow-ups, the second is the final notice.
       const call = await callAbout(tx, '2026-09-21');
-      expect(call.purpose).toBe('follow_up');
+      expect(call.purpose).toBe('final_notice');
     });
   });
 });

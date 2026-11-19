@@ -416,6 +416,17 @@ export function followUpSelectionId(caseId: string, choice: FollowUpChoice): str
   return `fu:${caseId}:${choice}`;
 }
 
+/** A follow-up button on a message about several dates: the first date, the message, and the answer. */
+export function followUpGroupSelectionId(caseId: string, groupId: string, choice: FollowUpChoice): string {
+  return `fg:${caseId}:${groupId}:${choice}`;
+}
+
+export function parseFollowUpGroupSelectionId(value: string | undefined | null): { caseId: string; groupId: string; choice: FollowUpChoice } | null {
+  const match = /^fg:([0-9a-f-]{36}):([0-9a-f-]{36}):(done|not_done|help)$/i.exec(value ?? '');
+  if (!match) return null;
+  return { caseId: match[1]!, groupId: match[2]!, choice: match[3] as FollowUpChoice };
+}
+
 export function parseFollowUpSelectionId(
   value: string | undefined | null,
 ): { caseId: string; choice: FollowUpChoice } | null {
@@ -427,7 +438,7 @@ export function parseFollowUpSelectionId(
 export function followUpAcknowledgement(choice: FollowUpChoice, label: string): string {
   switch (choice) {
     case 'done':
-      return `Thank you. I will confirm ${label} against the HRMS record and close it.`;
+      return `Thank you. It will be checked against the next attendance file for ${label}, and closed once it shows it.`;
     case 'not_done':
       return `Thank you for telling me. Please complete it for ${label} as soon as you can.`;
     case 'help':

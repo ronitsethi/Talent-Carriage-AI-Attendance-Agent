@@ -183,15 +183,10 @@ describe('sending', () => {
     expect(await previewUploadSend(scenario.tenantId, importId)).toMatchObject({ people: 1, firstContact: 1, followUps: 1 });
     await startUploadSend(scenario.tenantId, importId);
     const queued = await queuedJobs();
-    expect(queued.map((job) => job.payload.stage).sort()).toEqual(['first_contact', 'follow_up']);
-    // Both at the same moment, follow-ups first: the queue takes the lower priority number first, and the
-    // call lines never ring one person twice at once.
-    const job = (stage: string) => queued.find((row) => row.payload.stage === stage)!;
-    expect(job('follow_up').runAt.getTime()).toBe(job('first_contact').runAt.getTime());
-    expect(job('follow_up').priority).toBeLessThan(job('first_contact').priority);
+    // One turn per person, deciding everything due for them at once.
+    expect(queued.map((job) => job.payload.stage)).toEqual(['person']);
 
-    await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'first_contact');
-    await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'follow_up');
+    await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'person');
 
     const rows = await allCases();
     const on = (date: string) => rows.find((row) => row.attDate === date)!;
@@ -256,7 +251,7 @@ describe('sending', () => {
     await startUploadSend(scenario.tenantId, await upload());
 
     await withTenant(scenario.tenantId, (tx) => tx.update(employees).set({ operatingMode: 'manual' }).where(eq(employees.id, scenario.employeeId)));
-    expect(await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'first_contact')).toMatchObject({ skipped: 'no longer automatic', contacted: 0 });
+    expect(await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'person')).toMatchObject({ skipped: 'no longer automatic' });
 
     await withTenant(scenario.tenantId, async (tx) => {
       await tx.update(employees).set({ operatingMode: null }).where(eq(employees.id, scenario.employeeId));
@@ -302,11 +297,9 @@ describe('one call, not two', () => {
     const followUp = await addCase({ status: 'answered', replyOption: 4, answeredAt: new Date('2026-08-18T06:00:00Z'), followUpDueAt: new Date('2026-08-19T06:00:00Z') });
     await addCase({ attDate: '2026-08-19', status: 'queued' });
 
-    // The follow-up's own turn leaves its call to the absence call.
+    // Their one turn: the first question by call, as they are set, carrying the follow-up.
     const placed = () => withTenant(scenario.tenantId, (tx) => tx.select().from(calls).where(eq(calls.employeeId, scenario.employeeId)));
-    await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'follow_up', onThe20th);
-    expect(await placed()).toHaveLength(0);
-    await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'first_contact', onThe20th);
+    await contactAfterUpload(scenario.tenantId, scenario.employeeId, 'person', onThe20th);
     expect(await placed()).toHaveLength(1);
 
     await withTenant(scenario.tenantId, async (tx) => {

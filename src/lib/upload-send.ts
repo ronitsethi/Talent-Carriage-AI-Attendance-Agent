@@ -1,12 +1,10 @@
-import { and, asc, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { withTenant } from '@/db';
-import { cases, employees, imports } from '@/db/schema';
+import { cases, employees, imports, jobs } from '@/db/schema';
 import { type TenantSettings } from '@/lib/conversation/engine';
-import { followUpDueOnUpload, nextFollowUp, sendFollowUpsAfterUpload } from '@/lib/conversation/followup';
-import { channelFor, followUpChannel } from '@/lib/channel';
-import { contactCaseById } from '@/lib/contact';
-import { askGroup, noteAbsenceContact, unansweredCases } from '@/lib/conversation/absence-group';
-import { MAX_RANGE_DAYS, datesInRange } from '@/lib/dates';
+import { followUpDueOnUpload } from '@/lib/conversation/followup';
+import { contactPerson, reminderIsDue } from '@/lib/conversation/daily-contact';
+import { MAX_RANGE_DAYS, datesInRange, isWorkingDay, today } from '@/lib/dates';
 import { contactDateFor, findGaps, runDailyCheck } from '@/lib/detection/run';
 import { enqueue } from '@/lib/jobs/queue';
 import { buildContext, type FullContext } from '@/lib/runtime';
@@ -25,6 +23,9 @@ import { lockedMonths, monthOf } from '@/lib/locks';
  */
 
 export type SendStage = 'first_contact' | 'follow_up';
+
+/** A queued turn: one person, everything due for them (`stage: 'person'`), or a stage queued before that. */
+export type QueuedStage = SendStage | 'person';
 
 /**
  * Follow-ups go before first questions: both are due at once, and the queue takes
@@ -92,12 +93,27 @@ async function planSend(ctx: FullContext, upload: { dateFrom: string | null; dat
         ),
       ),
     );
+  // Follow-ups go on working days only.
+  const workingDay = isWorkingDay(today(ctx.settings.timezone, at), ctx.settings);
   for (const row of open) {
     if (!isAutomatic(row, ctx.settings)) continue;
-    (row.status === 'queued' ? firstContact : followUps).add(row.employeeId);
+    if (row.status === 'queued') firstContact.add(row.employeeId);
+    else if (workingDay) followUps.add(row.employeeId);
   }
 
-  return { firstContact: [...firstContact], followUps: [...followUps], newDates };
+  // Reminders due go with the send too: an upload day's reminders ride along with it.
+  const asked = await ctx.tx
+    .select({ caseRow: cases, operatingMode: employees.operatingMode })
+    .from(cases)
+    .innerJoin(employees, eq(employees.id, cases.employeeId))
+    .where(and(eq(cases.tenantId, ctx.tenantId), isNull(employees.deletedAt), inArray(cases.status, ['asked', 'delivered', 'read'])));
+  const reminders = new Set<string>();
+  for (const { caseRow, operatingMode } of asked) {
+    if (!isAutomatic({ operatingMode }, ctx.settings) || locked.has(monthOf(caseRow.attDate))) continue;
+    if (workingDay && reminderIsDue(caseRow, ctx.settings, at)) reminders.add(caseRow.employeeId);
+  }
+
+  return { firstContact: [...firstContact], followUps: [...followUps], reminders: [...reminders], newDates };
 }
 
 /** What the choice after an upload would do, or null when there is no choice to offer. */
@@ -107,9 +123,9 @@ export async function previewUploadSend(tenantId: string, importId: string, at =
     if (!automaticUploads(ctx.settings)) return null;
     const upload = await latestUpload(ctx, importId);
     if (!upload) return null;
-    const { firstContact, followUps } = await planSend(ctx, upload, at);
+    const { firstContact, followUps, reminders } = await planSend(ctx, upload, at);
     return {
-      people: new Set([...firstContact, ...followUps]).size,
+      people: new Set([...firstContact, ...followUps, ...reminders]).size,
       firstContact: firstContact.length,
       followUps: followUps.length,
       delayMinutes: ctx.settings.sendDelayMinutes,
@@ -129,32 +145,33 @@ export async function startUploadSend(tenantId: string, importId: string, at = n
     const upload = await latestUpload(ctx, importId);
     if (!upload) return { people: 0, delayMinutes: 0 };
 
-    const { firstContact, followUps, newDates } = await planSend(ctx, upload, at);
+    const { firstContact, followUps, reminders, newDates } = await planSend(ctx, upload, at);
     for (const date of newDates) {
       await runDailyCheck(ctx, { date, trigger: 'import', createOnly: true, importId });
     }
 
-    const people = await queueSends(ctx, { firstContact, followUps }, at, importId);
+    const people = await queueSends(ctx, { firstContact, followUps, reminders }, at, importId);
     return { people, delayMinutes: ctx.settings.sendDelayMinutes };
   });
 }
 
 /** Each person's turn, queued for when the customer's time period ends. Returns how many people. */
-async function queueSends(ctx: FullContext, plan: { firstContact: string[]; followUps: string[] }, at: Date, key: string) {
+async function queueSends(ctx: FullContext, plan: { firstContact: string[]; followUps: string[]; reminders: string[] }, at: Date, key: string) {
   const runAt = new Date(at.getTime() + ctx.settings.sendDelayMinutes * 60_000);
-  const stages: { employeeId: string; stage: SendStage }[] = [
-    ...plan.followUps.map((employeeId) => ({ employeeId, stage: 'follow_up' as const })),
-    ...plan.firstContact.map((employeeId) => ({ employeeId, stage: 'first_contact' as const })),
-  ];
-  for (const { employeeId, stage } of stages) {
+  // One turn per person, deciding everything due for them at once. Those with
+  // follow-ups or reminders go first, as before; their calls take the lines first.
+  const people = new Set([...plan.followUps, ...plan.reminders, ...plan.firstContact]);
+  const chasing = new Set([...plan.followUps, ...plan.reminders]);
+  for (const employeeId of people) {
+    const stage: SendStage = chasing.has(employeeId) ? 'follow_up' : 'first_contact';
     await enqueue(
       'upload_contact',
-      { employeeId, stage },
-      { tenantId: ctx.tenantId, runAt, priority: PRIORITY[stage], dedupeKey: `upload_contact:${key}:${stage}:${employeeId}` },
+      { employeeId, stage: 'person' },
+      { tenantId: ctx.tenantId, runAt, priority: PRIORITY[stage], dedupeKey: `upload_contact:${key}:person:${employeeId}` },
       ctx.tx,
     );
   }
-  return new Set(stages.map((s) => s.employeeId)).size;
+  return people.size;
 }
 
 /** Every date of these months, up to the date contact is due, oldest first. */
@@ -179,9 +196,9 @@ export async function previewUnlockSend(tenantId: string, months: string[], at =
   return withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
     if (!automaticUploads(ctx.settings) || !months.length) return null;
-    const { firstContact, followUps } = await planSend(ctx, { dateFrom: null, dateTo: null }, at, datesOfMonths(months, ctx.settings, at));
+    const { firstContact, followUps, reminders } = await planSend(ctx, { dateFrom: null, dateTo: null }, at, datesOfMonths(months, ctx.settings, at));
     return {
-      people: new Set([...firstContact, ...followUps]).size,
+      people: new Set([...firstContact, ...followUps, ...reminders]).size,
       firstContact: firstContact.length,
       followUps: followUps.length,
       delayMinutes: ctx.settings.sendDelayMinutes,
@@ -195,69 +212,32 @@ export async function startUnlockSend(tenantId: string, months: string[], at = n
   return withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
     if (!automaticUploads(ctx.settings) || !months.length) return { people: 0, delayMinutes: 0 };
-    const { firstContact, followUps, newDates } = await planSend(ctx, { dateFrom: null, dateTo: null }, at, datesOfMonths(months, ctx.settings, at));
+    const { firstContact, followUps, reminders, newDates } = await planSend(ctx, { dateFrom: null, dateTo: null }, at, datesOfMonths(months, ctx.settings, at));
     for (const date of newDates) await runDailyCheck(ctx, { date, trigger: 'import', createOnly: true });
-    const people = await queueSends(ctx, { firstContact, followUps }, at, `unlock:${months.join(',')}:${at.getTime()}`);
+    const people = await queueSends(ctx, { firstContact, followUps, reminders }, at, `unlock:${months.join(',')}:${at.getTime()}`);
     return { people, delayMinutes: ctx.settings.sendDelayMinutes };
   });
 }
 
-/** Whether this person is due a call about new absences from this send, which their follow-ups then join. */
-async function absenceCallDue(ctx: FullContext, employee: typeof employees.$inferSelect, at: Date) {
-  if (channelFor(employee, ctx.settings.defaultChannel) !== 'voice') return false;
-  const unanswered = await unansweredCases(ctx, employee.id, { upTo: contactDateFor(ctx.settings, at) });
-  return unanswered.some((row) => row.status === 'queued');
-}
 
 /**
  * One person's turn. Everything is checked again, because the time period can be
  * long: the switch may be off now, they may have been set to Manual, or a date
  * may be closed. What cannot go now stays due for the next upload.
  */
-export async function contactAfterUpload(tenantId: string, employeeId: string, stage: SendStage, at = new Date()) {
-  const plan = await withTenant(tenantId, async (tx) => {
+export async function contactAfterUpload(tenantId: string, employeeId: string, stage: SendStage | 'person', at = new Date()) {
+  return withTenant(tenantId, async (tx) => {
     const ctx = await buildContext(tx, tenantId);
     const employee = await tx.query.employees.findFirst({ where: eq(employees.id, employeeId) });
     if (!employee || employee.deletedAt) return { skipped: 'employee is gone' };
     if (!followsUploads(employee, ctx.settings)) return { skipped: 'no longer automatic' };
-
-    // Someone also due a call about new absences hears their follow-ups on that call, not a second one.
+    // Turns queued before one turn per person: each still decides everything due, once.
     if (stage === 'follow_up') {
-      const merged = await absenceCallDue(ctx, employee, at);
-      return { followUps: await sendFollowUpsAfterUpload(ctx, employeeId, at, true, merged) };
+      const due = await tx.query.jobs.findFirst({
+        where: and(eq(jobs.kind, 'upload_contact'), eq(jobs.status, 'pending'), sql`${jobs.payload}->>'employeeId' = ${employeeId}`, sql`${jobs.payload}->>'stage' = 'first_contact'`),
+      });
+      if (due) return { skipped: 'goes with their first-question turn' };
     }
-
-    // Everything they have not answered, asked before or not, in one message or
-    // one call. Only a new date sends anything: dates already asked and ignored
-    // wait for their reminder.
-    const unanswered = await unansweredCases(ctx, employeeId, { upTo: contactDateFor(ctx.settings, at) });
-    if (!unanswered.some((row) => row.status === 'queued')) return { caseIds: [] };
-
-    if (channelFor(employee, ctx.settings.defaultChannel) === 'voice') {
-      // One call, opening on the oldest date and naming them all, which sweeps the
-      // rest - and then any follow-ups due by call, so they are not rung twice.
-      const followUps = await tx
-        .select()
-        .from(cases)
-        .where(and(followUpDueOnUpload(ctx.settings.timezone, at), eq(cases.employeeId, employeeId)))
-        .orderBy(asc(cases.attDate));
-      const carried = followUps.filter((row) => followUpChannel(employee, ctx.settings, nextFollowUp(row, ctx.settings).number) === 'voice');
-      return { caseIds: [unanswered[0]!.id], call: true, thenFollowUps: carried.map((row) => row.id) };
-    }
-    const result = await askGroup(ctx, employee, unanswered, 'first');
-    for (const row of unanswered) await tx.update(cases).set({ channel: 'whatsapp' }).where(eq(cases.id, row.id));
-    return { caseIds: [], grouped: result.sent ? unanswered.length : 0, reason: result.sent ? undefined : result.reason };
+    return contactPerson(ctx, employee, at, { fresh: true, followUps: true });
   });
-
-  let contacted = 'grouped' in plan && plan.grouped ? 1 : 0;
-  for (const caseId of plan.caseIds ?? []) {
-    const outcome = await withTenant(tenantId, async (tx) => {
-      const ctx = await buildContext(tx, tenantId);
-      const result = await contactCaseById(ctx, caseId, { thenFollowUps: 'thenFollowUps' in plan ? plan.thenFollowUps : [] });
-      if (result?.contacted) await noteAbsenceContact(ctx, employeeId, at);
-      return result;
-    });
-    if (outcome?.contacted) contacted++;
-  }
-  return { ...plan, contacted };
 }

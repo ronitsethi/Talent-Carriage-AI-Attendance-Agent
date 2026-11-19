@@ -38,6 +38,7 @@ import {
   systemReply,
   parseSelectionId,
   parseApprovalSelectionId,
+  parseFollowUpGroupSelectionId,
   parseFollowUpSelectionId,
   parseOfferSelectionId,
   parseLeaveTypeSelectionId,
@@ -476,6 +477,8 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     .returning();
   if (!inserted.length) return { handled: false, reason: 'duplicate' };
   const inboundRow = inserted[0]!;
+  // Any word from them ends their run of ignored contacts, for the call rule.
+  await ctx.tx.update(employees).set({ ignoredContacts: 0 }).where(eq(employees.id, employee.id));
 
   // The employee wrote to us, so free-form replies are allowed for 24 hours.
   const expires = new Date(inbound.receivedAt.getTime() + WINDOW_HOURS * 3600_000);
@@ -502,6 +505,15 @@ export async function handleInbound(ctx: EngineContext, inbound: InboundMessage)
     };
   }
 
+  // A follow-up about several dates: one answer for all of them.
+  const followUpGroup = parseFollowUpGroupSelectionId(inbound.selectionId);
+  if (followUpGroup) {
+    const { followUpGroupFor, handleFollowUpGroupResponse } = await import('./followup');
+    const rows = await followUpGroupFor(ctx, followUpGroup.caseId, followUpGroup.groupId, employee.id);
+    await ctx.tx.update(messages).set({ caseId: followUpGroup.caseId }).where(eq(messages.id, inboundRow.id));
+    await handleFollowUpGroupResponse(ctx, rows, employee, followUpGroup.choice);
+    return { handled: true, caseId: followUpGroup.caseId, classification: { intent: 'other', option: null, confidence: 1, source: 'rules' }, action: 'answered' };
+  }
   const followUp = parseFollowUpSelectionId(inbound.selectionId);
   if (followUp && ctx.hooks?.onFollowUpResponse) {
     const followUpCase = await ctx.tx.query.cases.findFirst({
@@ -924,8 +936,6 @@ export async function recordAnswer(
       updatedAt: at,
     })
     .where(eq(cases.id, caseRow.id));
-  // They are answering: the reminders they ignored no longer count towards telling their manager.
-  await ctx.tx.update(employees).set({ absenceReminders: 0 }).where(eq(employees.id, caseRow.employeeId));
 
   return { label, guidance: systemReply(option, label) };
 }

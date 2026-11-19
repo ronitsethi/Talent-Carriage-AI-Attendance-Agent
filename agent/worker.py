@@ -264,6 +264,9 @@ GREETING_WORDS = 3
 # About eight seconds in all, which covers a call placed inside a long-running
 # batch without keeping anybody waiting on a call that genuinely does not exist.
 _BACKOFF = (0.3, 0.6, 1.0, 1.5, 2.0, 2.5)
+# How often the platform hears that a call is still going (see TurnApi.keep_alive).
+# It frees the line after 30 seconds without hearing, so two can go missing.
+ALIVE_EVERY_S = 10
 _RETRIES = len(_BACKOFF)
 
 
@@ -309,6 +312,31 @@ class TurnApi:
         # models and the session's own model used - see count_usage.
         self.answered_at: float | None = None
         self.usage: dict = {}
+
+    async def keep_alive(self, room) -> None:  # noqa: ANN001
+        """
+        Tells the platform every ALIVE_EVERY_S seconds that the call is still
+        going, while somebody is on the line, so its phone line stays held.
+
+        A process killed mid-call - out of memory, say - can never report the
+        hangup, and its line used to stay held for 45 minutes, so callers heard
+        that every line was busy. Now these stop with the process, and the
+        platform frees the line 30 seconds after the last one.
+        """
+        while self._ending is None:
+            holder = {"callId": self._call_id} if self._call_id else {"queryId": self.query_id} if self.query_id else None
+            if holder and room.remote_participants:
+                try:
+                    async with self._http.post(
+                        f"{APP_BASE_URL}/api/agent/turn",
+                        json={"alive": True, **holder},
+                        headers={"x-agent-token": AGENT_API_TOKEN},
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as response:
+                        await response.read()
+                except Exception:  # noqa: BLE001 - a missed one is covered by the next
+                    log.warning("could not tell the platform the call is alive", exc_info=True)
+            await asyncio.sleep(ALIVE_EVERY_S)
 
     async def opening(self) -> Turn:
         """The introduction, written for this call. Asked for while it rings."""
@@ -1276,8 +1304,10 @@ async def entrypoint(ctx: JobContext) -> None:
             asyncio.ensure_future(api_client.ended())
 
     ctx.room.on("participant_disconnected", caller_left)
+    alive = asyncio.ensure_future(api_client.keep_alive(ctx.room))
 
     async def on_shutdown() -> None:
+        alive.cancel()
         # The end before the recording. Usually it was reported when the line
         # dropped; if not, it goes now, ahead of an upload that can be slow or
         # cut short when the process is stopped.

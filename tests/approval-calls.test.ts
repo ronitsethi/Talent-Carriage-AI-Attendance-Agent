@@ -166,7 +166,8 @@ describe('the manager on the phone', () => {
       expect(heard(decided)).toContain('not approved');
 
       const row = await tx.query.cases.findFirst({ where: eq(cases.attDate, '2026-09-21') });
-      expect(row).toMatchObject({ status: 'resolved', closeReason: 'Not approved by Deepak Gajjar' });
+      // Rejecting means Loss of Pay.
+      expect(row).toMatchObject({ status: 'resolved', closeReason: 'Not approved by Deepak Gajjar - Loss of Pay' });
       expect(await callFor(tx, 'approval_outcome')).toBeUndefined();
       expect(toEmployee()).toHaveLength(1);
       expect(toEmployee()[0]!.variables![3]).toContain('did not approve');

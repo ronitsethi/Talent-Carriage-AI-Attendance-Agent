@@ -1,8 +1,9 @@
 import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
-import { runAbsenceWatch } from '@/lib/conversation/absence-reminders';
+import { runManagerSteps } from '@/lib/conversation/absence-reminders';
+import { sendHrSummary } from '@/lib/hr';
 import { withPlatformScope, withTenant } from '@/db';
 import { approvals, actions, cases, employees, tenants, tenantSettings } from '@/db/schema';
-import { contactAfterUpload, type SendStage } from '@/lib/upload-send';
+import { contactAfterUpload, type QueuedStage } from '@/lib/upload-send';
 import { buildContext } from '@/lib/runtime';
 import { sendPlainText } from '@/lib/conversation/engine';
 import { sendQueryFeedback } from '@/lib/conversation/feedback';
@@ -20,7 +21,7 @@ export type JobHandler = (job: Job) => Promise<Record<string, unknown>>;
 
 /** One person's turn in a send after an attendance upload. */
 const uploadContact: JobHandler = async (job) => {
-  const { employeeId, stage } = job.payload as { employeeId: string; stage: SendStage };
+  const { employeeId, stage } = job.payload as { employeeId: string; stage: QueuedStage };
   return contactAfterUpload(job.tenantId!, employeeId, stage);
 };
 
@@ -28,50 +29,19 @@ const uploadContact: JobHandler = async (job) => {
  * An approval nobody answered. Rather than leaving the employee waiting, the
  * case goes to whoever the tenant nominated - HR by default.
  */
+/**
+ * The manager's steps, hourly (`runManagerSteps`): a request or escalation
+ * ignored on WhatsApp brings a call; a call ignored brings HR.
+ */
 const approvalTimeout: JobHandler = async (job) => {
   const tenantId = job.tenantId!;
-  return withTenant(tenantId, async (tx) => {
-    const ctx = await buildContext(tx, tenantId);
-    const expired = await tx
-      .select()
-      .from(approvals)
-      .where(
-        and(
-          eq(approvals.tenantId, tenantId),
-          eq(approvals.decision, 'pending'),
-          lte(approvals.timeoutAt, new Date()),
-          // A locked month's request waits with its case; unlocking gives it back the time it had left.
-          sql`not exists (select 1 from actions a join cases c on c.id = a.case_id where a.id = ${approvals.actionId} and c.status = 'unresolved')`,
-        ),
-      )
-      .limit(100);
+  return withTenant(tenantId, async (tx) => runManagerSteps(await buildContext(tx, tenantId)));
+};
 
-    let escalated = 0;
-    for (const approval of expired) {
-      await tx
-        .update(approvals)
-        .set({ decision: 'expired', escalatedTo: ctx.settings.approvalEscalatesTo })
-        .where(eq(approvals.id, approval.id));
-      // Every date the request decided goes to HR, not only the one it was asked from.
-      const decided = await tx
-        .select({ caseId: actions.caseId })
-        .from(actions)
-        .where(inArray(actions.id, [approval.actionId, ...(approval.covers ?? [])]));
-      const caseIds = decided.map((row) => row.caseId).filter((id): id is string => Boolean(id));
-      if (caseIds.length) {
-        await tx
-          .update(cases)
-          .set({
-            status: 'needs_hr',
-            needsHrReason: `Manager did not respond within ${ctx.settings.approvalTimeoutHours} hours`,
-            updatedAt: new Date(),
-          })
-          .where(inArray(cases.id, caseIds));
-      }
-      escalated++;
-    }
-    return { escalated };
-  });
+/** HR's daily summary of what is waiting on them, when the customer has an HR contact. */
+const hrSummary: JobHandler = async (job) => {
+  const tenantId = job.tenantId!;
+  return withTenant(tenantId, async (tx) => sendHrSummary(await buildContext(tx, tenantId)));
 };
 
 /**
@@ -208,16 +178,17 @@ const placeCall: JobHandler = async (job) => {
   return { skipped: 'voice provider not configured', caseId: job.payload.caseId };
 };
 
-/** One person's unanswered absences: a reminder, or the manager, when due. */
-const absenceWatch: JobHandler = async (job) => {
-  const tenantId = job.tenantId!;
-  const employeeId = String(job.payload.employeeId ?? '');
-  return withTenant(tenantId, async (tx) => runAbsenceWatch(await buildContext(tx, tenantId), employeeId));
-};
+/** Old per-person reminder checks, booked before reminders went daily: nothing to do now. */
+const absenceWatch: JobHandler = async () => ({ skipped: 'reminders now go in the daily reminder round' });
+
+/** Old daily reminder rounds, queued before reminders went only with uploads: nothing to do now. */
+const reminderRound: JobHandler = async () => ({ skipped: 'reminders now go only with an upload send' });
 
 export const handlers: Record<JobKind, JobHandler> = {
   upload_contact: uploadContact,
   absence_watch: absenceWatch,
+  reminder_round: reminderRound,
+  hr_summary: hrSummary,
   approval_timeout: approvalTimeout,
   verify_action: verifyAction,
   refresh_leave_balances: refreshLeaveBalances,

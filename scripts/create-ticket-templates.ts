@@ -24,11 +24,16 @@ import {
 } from '@/lib/conversation/flow';
 import { MANAGER_TEMPLATE, MANAGER_TEMPLATE_BODY, NOTED_TEMPLATE, NOTED_TEMPLATE_BODY, OUTCOME_TEMPLATE } from '@/lib/approvals';
 import { EMPLOYEE_TICKET_BODIES, EMPLOYEE_TICKET_TEMPLATES } from '@/lib/conversation/ticket-notices';
+import { HR_ALERT_TEMPLATE, HR_ALERT_TEMPLATE_BODY } from '@/lib/hr';
 import {
   ABSENT_ESCALATED_TEMPLATE,
   ABSENT_ESCALATED_TEMPLATE_BODY,
   ABSENT_GROUP_TEMPLATE,
   ABSENT_GROUP_TEMPLATE_BODY,
+  ABSENT_LAST_WARNING_TEMPLATE,
+  ABSENT_LAST_WARNING_TEMPLATE_BODY,
+  ABSENT_REMINDER_FIRM_TEMPLATE,
+  ABSENT_REMINDER_FIRM_TEMPLATE_BODY,
   ABSENT_REMINDER_TEMPLATE,
   ABSENT_REMINDER_TEMPLATE_BODY,
   MANAGER_NO_RESPONSE_BUTTONS,
@@ -89,10 +94,31 @@ const ATTENDANCE_TEMPLATES = [
     buttons: [OPTIONS[1].templateButton, OPTIONS[2].templateButton, OPTIONS[3].templateButton, OPTIONS[4].templateButton],
   },
   {
+    // A reminder after the first, firmer.
+    name: ABSENT_REMINDER_FIRM_TEMPLATE,
+    body: ABSENT_REMINDER_FIRM_TEMPLATE_BODY,
+    example: ['Aryan', '03-Nov-2026 and 04-Nov-2026'],
+    buttons: [OPTIONS[1].templateButton, OPTIONS[2].templateButton, OPTIONS[3].templateButton, OPTIONS[4].templateButton],
+  },
+  {
+    // A date's last reminder: which dates go on, and to whom.
+    name: ABSENT_LAST_WARNING_TEMPLATE,
+    body: ABSENT_LAST_WARNING_TEMPLATE_BODY,
+    example: ['Aryan', '03-Nov-2026 and 04-Nov-2026', '03-Nov-2026', 'your manager, Deepak'],
+    buttons: [OPTIONS[1].templateButton, OPTIONS[2].templateButton, OPTIONS[3].templateButton, OPTIONS[4].templateButton],
+  },
+  {
     // The last warning before the manager is told.
     name: ABSENT_ESCALATED_TEMPLATE,
     body: ABSENT_ESCALATED_TEMPLATE_BODY,
     example: ['Aryan', '03-Nov-2026 and 06-Nov-2026', 'your manager, Deepak'],
+    buttons: [],
+  },
+  {
+    // To the customer's HR contact: dates that reached them, and the daily summary.
+    name: HR_ALERT_TEMPLATE,
+    body: HR_ALERT_TEMPLATE_BODY,
+    example: ['Priya', 'Aryan Jain (DI-1001): 03-Nov-2026 and 04-Nov-2026. Deepak Gajjar did not respond.'],
     buttons: [],
   },
   {

@@ -41,3 +41,37 @@ export function today(timezone?: string, at = new Date()): string {
 export function defaultRange(timezone?: string, at = new Date()): { from: string; to: string } {
   return { from: today(timezone, new Date(at.getTime() - 7 * 86_400_000)), to: today(timezone, at) };
 }
+
+/**
+ * Working days: Monday to Friday, and Saturday when the customer works it.
+ * Nothing is sent, and no step counted, on any other day.
+ */
+export function isWorkingDay(isoDate: string, settings: { saturdayWorking: boolean }): boolean {
+  const day = new Date(`${isoDate}T00:00:00Z`).getUTCDay();
+  if (day === 0) return false;
+  if (day === 6) return settings.saturdayWorking;
+  return true;
+}
+
+/** The working day `n` working days after `isoDate` (0 = that day, or the next working one if it is not). */
+export function addWorkingDays(isoDate: string, n: number, settings: { saturdayWorking: boolean }): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  let left = n;
+  while (!isWorkingDay(d.toISOString().slice(0, 10), settings)) d.setUTCDate(d.getUTCDate() + 1);
+  while (left > 0) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (isWorkingDay(d.toISOString().slice(0, 10), settings)) left--;
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+/** 10 in the morning of a date, in the customer's timezone: when a working-day step falls due. */
+export function morningOf(isoDate: string, timezone: string): Date {
+  // The offset of the timezone on that day, worked out from how it shows noon UTC.
+  const noon = new Date(`${isoDate}T12:00:00Z`);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(noon).map((p) => [p.type, p.value]),
+  ) as Record<string, string>;
+  const offsetMinutes = (Number(parts.hour) - 12) * 60 + Number(parts.minute);
+  return new Date(Date.parse(`${isoDate}T10:00:00Z`) - offsetMinutes * 60_000);
+}

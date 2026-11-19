@@ -285,8 +285,8 @@ describe('the manager', () => {
   it('rejects: the employee is told and the date is closed', async () => {
     const { approval } = await requested();
     await inbound(tapOption(managerMobile, approvalSelectionId(approval.id, 'reject')));
-    expect(sent()[0]!.body).toBe('Deepak did not approve your leave for 17-Aug-2026. Please speak to Deepak or HR if you need to.');
-    expect(await caseOn('2026-08-17')).toMatchObject({ status: 'resolved', closeReason: 'Not approved by Deepak Gajjar' });
+    expect(sent()[0]!.body).toBe('Deepak did not approve your leave for 17-Aug-2026, so it will be marked as Loss of Pay. Please speak to Deepak or HR if you need to.');
+    expect(await caseOn('2026-08-17')).toMatchObject({ status: 'resolved', closeReason: 'Not approved by Deepak Gajjar - Loss of Pay' });
   });
 
   it('can only be decided by the manager it went to', async () => {

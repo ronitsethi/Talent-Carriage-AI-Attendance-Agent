@@ -1,10 +1,11 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { cases, employees } from '@/db/schema';
 import type { CaseRow, EmployeeRow } from '@/lib/conversation/engine';
-import { askGroup, noteAbsenceContact, unansweredCases } from '@/lib/conversation/absence-group';
-import { channelFor, followUpChannel } from '@/lib/channel';
+import { askGroup, unansweredCases } from '@/lib/conversation/absence-group';
+import { callRuleFor, noteContacted } from '@/lib/conversation/daily-contact';
+import { channelFor } from '@/lib/channel';
 import { callPurposeFor, placeCaseCall, type CallPurpose } from '@/lib/voice/session';
-import { nextFollowUp, recordFollowUpSent, sendFollowUp } from '@/lib/conversation/followup';
+import { recordFollowUpSent, sendFollowUp } from '@/lib/conversation/followup';
 import { isLocked, LOCKED_REASON } from '@/lib/locks';
 import { waitForLine } from '@/lib/voice/waiting';
 import type { FullContext } from '@/lib/runtime';
@@ -59,9 +60,13 @@ export async function contactCase(
 }
 
 async function reach(ctx: FullContext, caseRow: CaseRow, employee: EmployeeRow, queueIfBusy: boolean, thenFollowUps: string[] = []): Promise<ContactResult> {
+  // A follow-up goes by call only when the call rule allows it; anything else HR
+  // sends goes the way the employee is set, as the first question does.
   const channel =
     callPurposeFor(caseRow) === 'follow_up'
-      ? followUpChannel(employee, ctx.settings, nextFollowUp(caseRow, ctx.settings).number)
+      ? callRuleFor(ctx, employee, { reminders: [], followUps: [caseRow] }, new Date())
+        ? 'voice'
+        : 'whatsapp'
       : channelFor(employee, ctx.settings.defaultChannel);
 
   // Record the channel on the case, so history shows how someone was reached
@@ -77,7 +82,7 @@ async function reach(ctx: FullContext, caseRow: CaseRow, employee: EmployeeRow, 
   const purpose = callPurposeFor(caseRow);
 
   if (purpose === 'follow_up') {
-    const result = await sendFollowUp(ctx, caseRow, employee);
+    const result = await sendFollowUp(ctx, caseRow, employee, new Date(), undefined, channel === 'voice' ? 'call' : 'whatsapp');
     if (result.reached) return { contacted: true, channel, purpose, simulated: result.simulated };
     if ('busy' in result && result.busy) return busy(ctx, caseRow, purpose, queueIfBusy, true);
     return { contacted: false, channel, purpose, reason: result.reason };
@@ -88,16 +93,22 @@ async function reach(ctx: FullContext, caseRow: CaseRow, employee: EmployeeRow, 
   const unanswered = await unansweredCases(ctx, employee.id);
   const together = unanswered.some((row) => row.id === caseRow.id) ? unanswered : [caseRow, ...unanswered];
   const reminder = together.every((row) => row.status !== 'queued');
+  // Dates already asked: this is their reminder, counted on each.
+  const reminded = together.filter((row) => row.status !== 'queued');
 
   if (channel === 'voice') {
     const result = await placeCaseCall(ctx, caseRow, employee, purpose, undefined, { thenFollowUps });
     if (result.placed) {
-      await noteContact(ctx, employee, reminder);
       // The follow-ups it carries count as sent, as a follow-up call's do, picked up or not.
+      const carried: CaseRow[] = [];
       for (const id of thenFollowUps) {
         const followUp = await ctx.tx.query.cases.findFirst({ where: eq(cases.id, id) });
-        if (followUp) await recordFollowUpSent(ctx, followUp, employee, new Date());
+        if (followUp) {
+          await recordFollowUpSent(ctx, followUp, employee, new Date(), undefined, 'call');
+          carried.push(followUp);
+        }
       }
+      await noteContacted(ctx, employee, new Date(), { reminders: reminded, called: [...together, ...carried], absence: true });
       return { contacted: true, channel, purpose, simulated: result.simulated };
     }
     if ('busy' in result && result.busy) return busy(ctx, caseRow, purpose, queueIfBusy, false);
@@ -105,20 +116,10 @@ async function reach(ctx: FullContext, caseRow: CaseRow, employee: EmployeeRow, 
   }
 
   const result = await askGroup(ctx, employee, together, reminder ? 'reminder' : 'first');
-  if (result.sent && reminder) await countReminder(ctx, employee);
+  if (result.sent) await noteContacted(ctx, employee, new Date(), { reminders: reminded, called: [], absence: true });
   return result.sent
     ? { contacted: true, channel, purpose, simulated: result.simulated }
     : { contacted: false, channel, purpose, reason: result.reason };
-}
-
-/** A call about unanswered absences restarts the reminder clock, and counts when it was the reminder. */
-async function noteContact(ctx: FullContext, employee: EmployeeRow, reminder: boolean) {
-  if (reminder) await countReminder(ctx, employee);
-  await noteAbsenceContact(ctx, employee.id, new Date());
-}
-
-async function countReminder(ctx: FullContext, employee: EmployeeRow) {
-  await ctx.tx.update(employees).set({ absenceReminders: sql`${employees.absenceReminders} + 1` }).where(eq(employees.id, employee.id));
 }
 
 /** Every line was busy: the call waits for one, or - when asked not to queue - that is reported. */

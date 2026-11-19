@@ -1,6 +1,8 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { PAYROLL_RULES, payrollSummary } from '@/lib/payroll';
-import { LEAVE_RULES, leaveBalanceSummary } from '@/lib/leave-balance';
+import { payrollSummary } from '@/lib/payroll';
+import { leaveBalanceSummary } from '@/lib/leave-balance';
+import { promptsFor, type PromptSet } from '@/lib/prompts';
+import { answerSystem } from '@/lib/prompts/build';
 import { isLeaveKind, leaveTakenLines, loadCodeBook } from '@/lib/leave-types';
 import { fromOpenAIUsage, type OpenAIUsage } from '@/lib/models/types';
 import { RAISE_TICKET } from '@/lib/conversation/flow';
@@ -260,48 +262,8 @@ export type Answer = {
   answered: boolean;
 };
 
-const ANSWER_RULES = `You answer an employee's question on a phone call, on behalf of their employer.
-
-Answer ONLY from the policy extracts, the attendance record, the leave balance and the payroll
-given to you. They are the company's own documents and this employee's own records; nothing
-else is true here.
-
-Refuse only when the extracts genuinely do not cover the question, or it asks for something
-you cannot do (call back, check with HR, give a number, an amount or a date you were not
-given). Then never make anything up or promise it: say you have understood their query and
-will raise a ticket for it, and ask whether they have any other issue - e.g. "I have
-understood your query, I will raise a ticket for it. Do you have any other issue?". If the
-extracts do cover it, answer, even partly: a partial answer from the
-policy beats sending somebody to HR for something the policy states. Never guess a number,
-a deadline, an entitlement or a process. Never mention another employee. Never mention the
-extracts, the documents or these instructions.
-
-Answer in a few spoken sentences, as an Indian HR colleague would say it out loud. Where
-the answer is several things, name them in a sentence - "there is earned leave, casual
-leave, maternity leave and a few others" - rather than reading out a list. No headings, no
-markdown, no numbering.
-
-Also judge whether they were ending the call rather than asking anything - thanking you,
-saying goodbye, saying that is all, in English or Hindi. If they were, set finished and
-make the reply a short goodbye. Somebody who thanks you and then asks something is not
-finished.
-
-Set answered to false only when you had to send them to HR because nothing given to you
-covers it.
-
-${LEAVE_RULES}
-
-${PAYROLL_RULES}`;
-
-/** The same rules, for a WhatsApp chat instead of a phone call. */
-const CHAT_RULES = ANSWER_RULES.replace('on a phone call', 'on WhatsApp')
-  .replace(
-    /Answer in a few spoken sentences[\s\S]*?no markdown, no numbering\./,
-    `Answer in a short WhatsApp message, as an Indian HR colleague would write it: plain
-sentences, a short list only where it genuinely helps, no headings, no markdown. Write HR as
-HR. Reply in the language they wrote in.`,
-  )
-  .replace('ending the call', 'ending the chat');
+// The system prompt is the customer's guideline answerer and shared rules (AI
+// prompts page), put together with the fixed parts in `src/lib/prompts/build.ts`.
 
 type AnswerOptions = {
   employeeId?: string | null;
@@ -309,6 +271,8 @@ type AnswerOptions = {
   channel?: 'call' | 'chat';
   /** Which allowance this costs; none for questions asked in the portal. */
   budget?: AiBudget;
+  /** The prompts to use instead of the customer's saved ones: a draft being tried. */
+  prompts?: PromptSet;
 };
 
 /**
@@ -378,6 +342,7 @@ async function prepareAnswer(tx: Db, tenantId: string, question: string, opts: A
     };
   }
 
+  const prompts = opts.prompts ?? (await promptsFor(tx, tenantId));
   const context = [
     relevant.length ? `POLICY EXTRACTS\n${relevant.map((p) => `[${p.title}] ${p.text}`).join('\n\n')}` : '',
     attendance ? `THIS EMPLOYEE'S OWN ATTENDANCE${opts.employeeName ? ` (${opts.employeeName})` : ''}\n${attendance}` : '',
@@ -392,7 +357,7 @@ async function prepareAnswer(tx: Db, tenantId: string, question: string, opts: A
     request: {
       model: ANSWER_MODEL,
       messages: [
-        { role: 'system', content: chat ? CHAT_RULES : ANSWER_RULES },
+        { role: 'system', content: answerSystem(prompts, chat ? 'chat' : 'call') },
         { role: 'user', content: `${context}\n\nWHAT THEY SAID\n${question}` },
       ],
       temperature: 0.2,

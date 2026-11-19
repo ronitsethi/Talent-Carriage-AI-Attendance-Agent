@@ -9,7 +9,6 @@ import type { FollowUpContact, LeaveFieldMap, PayrollFieldMap } from '@/db/schem
 import {
   actions,
   approvals,
-  tenants,
   payrollProfiles,
   payrollUploads,
   attendanceDays,
@@ -56,7 +55,7 @@ import { CodeTaken, PersonClash, readTeamInput, removeTeam, saveTeam, validateTe
 import { createCustomer, deleteCustomer, setCustomerActive, CustomerRefused } from '@/lib/customers';
 import { startUnlockSend, startUploadSend } from '@/lib/upload-send';
 import { isMonth, lockMonth, LOCKED_REASON, monthLabel, unlockMonths } from '@/lib/locks';
-import { companyRefusal } from '@/lib/company';
+import { companyMapping, companyRefusal } from '@/lib/company';
 import {
   PAYROLL_FIELDS,
   defaultExcluded,
@@ -80,7 +79,8 @@ import {
   missingLeaveFields,
   resolveLeaveMap,
 } from '@/lib/leave-balance';
-import { scheduleAllAbsenceWatches } from '@/lib/conversation/absence-group';
+import { normaliseIndianMobile } from '@/lib/mapping/transforms';
+import { noteAbsenceContact } from '@/lib/conversation/absence-group';
 import { listQueryTypes, parseQueryTypeSheet, replaceQueryTypes } from '@/lib/query-types';
 import { PRIORITIES, closeTicket, queueAssignmentWork, type Priority } from '@/lib/tickets';
 import { sendApprovalRequest } from '@/lib/approvals';
@@ -247,6 +247,58 @@ export async function closeCase(formData: FormData) {
   revalidatePath('/cases');
 }
 
+/**
+ * HR's own decisions on a date that reached them (or is with the manager):
+ * close it as Loss of Pay, mark it regularised, or send it back to the agent -
+ * a date they answered restarts at Follow-up 1, one they never answered goes
+ * back to being asked, with reminders.
+ */
+export async function hrDecideCase(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  const caseId = String(formData.get('caseId') ?? '');
+  const decision = String(formData.get('decision') ?? '');
+  await withTenant(tenantId, async (tx) => {
+    await assertCaseIsLive(tx, tenantId, caseId);
+    const caseRow = await tx.query.cases.findFirst({ where: and(eq(cases.tenantId, tenantId), eq(cases.id, caseId)) });
+    if (!caseRow || !['needs_hr', 'escalated'].includes(caseRow.status)) return;
+    const at = new Date();
+    if (decision === 'lop' || decision === 'regularised') {
+      await tx
+        .update(cases)
+        .set({
+          status: 'resolved',
+          resolvedAt: at,
+          closeReason: decision === 'lop' ? `Closed as Loss of Pay by HR (${session.name})` : `Marked regularised by HR (${session.name})`,
+          updatedAt: at,
+        })
+        .where(eq(cases.id, caseId));
+      return;
+    }
+    if (decision !== 'send_back') return;
+    const answered = Boolean(caseRow.replyOption);
+    await tx
+      .update(cases)
+      .set({
+        status: answered ? 'answered' : 'asked',
+        followUpCount: 0,
+        followUpReply: null,
+        followUpPausedUntil: null,
+        followUpDueAt: answered ? at : null,
+        needsHrReason: null,
+        hrAt: null,
+        updatedAt: at,
+      })
+      .where(eq(cases.id, caseId));
+    if (!answered) {
+      // Unanswered again: its reminders start afresh, from today.
+      await tx.update(cases).set({ reminderCount: 0, remindedAt: at, callsMade: 0 }).where(eq(cases.id, caseId));
+      await noteAbsenceContact(await buildContext(tx, tenantId), caseRow.employeeId, at);
+    }
+  });
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath('/cases');
+}
+
 export async function flagForHr(formData: FormData) {
   const { tenantId } = await requireTenant();
   const caseId = String(formData.get('caseId') ?? '');
@@ -271,39 +323,50 @@ export async function updateSettings(formData: FormData) {
   };
 
   const maxFollowUps = Math.min(10, Math.max(1, Math.round(int('maxFollowUps', 2))));
-  const followUpContacts = Array.from({ length: maxFollowUps }, (_, index): FollowUpContact => {
-    const channel = formData.get(`followUpChannel${index + 1}`);
-    const callMode = formData.get(`followUpCallMode${index + 1}`);
-    return {
-      channel: channel === 'whatsapp' || channel === 'voice' ? channel : null,
-      callMode: channel !== 'whatsapp' && (callMode === 'keypad' || callMode === 'agent') ? callMode : null,
-    };
-  });
 
   const channelOf = (name: string) => (formData.get(name) === 'voice' ? 'voice' : 'whatsapp');
   const styleOf = (name: string) => (formData.get(name) === 'agent' ? 'agent' : 'keypad');
   const days = (name: string, max: number) => Math.min(max, Math.max(0, Math.round(int(name, 0))));
+  const remindersBeforeEscalation = days('remindersBeforeEscalation', 10);
+  // One row per reminder and per follow-up: WhatsApp or a call, and the call style.
+  const rows = (prefix: string, count: number): FollowUpContact[] =>
+    Array.from({ length: count }, (_, index) => ({
+      channel: channelOf(`${prefix}Channel${index + 1}`),
+      callMode: formData.get(`${prefix}Style${index + 1}`) ? styleOf(`${prefix}Style${index + 1}`) : null,
+    }));
 
   await withTenant(tenantId, async (tx) => {
     await tx
       .update(tenantSettings)
       .set({
         operatingMode: formData.get('operatingMode') === 'automatic' ? 'automatic' : 'manual',
-        // First contact and reminders: the defaults; an employee's own setting wins.
+        // The first question: the default; an employee's own setting wins.
         defaultChannel: channelOf('defaultChannel'),
         callMode: styleOf('callMode'),
-        reminderChannel: channelOf('reminderChannel'),
-        reminderCallMode: styleOf('reminderCallMode'),
-        reminderIntervalDays: days('reminderIntervalDays', 60),
-        remindersBeforeEscalation: days('remindersBeforeEscalation', 10),
-        escalateAfterDays: days('escalateAfterDays', 90),
+        reminderIntervalDays: days('reminderIntervalDays', 30),
+        remindersBeforeEscalation,
+        reminderContacts: rows('reminderRow', remindersBeforeEscalation),
+        followUpContacts: rows('followUpRow', maxFollowUps),
+        ignoredBeforeCall: days('ignoredBeforeCall', 10),
+        callGapDays: days('callGapDays', 10),
         sendDelayMinutes: Math.min(1440, Math.max(0, Math.round(int('sendDelayMinutes', 60)))),
         sendingEnabled: bool('sendingEnabled'),
         attendanceSource: formData.get('attendanceSource') === 'hrms' ? 'hrms' : 'csv',
         sendBacklogSummary: bool('sendBacklogSummary'),
         maxFollowUps,
-        followUpContacts,
-        approvalTimeoutHours: int('approvalTimeoutHours', 24),
+        saturdayWorking: bool('saturdayWorking'),
+        escalationRoute: (['manager_then_hr', 'hr', 'manager'] as const).find((r) => r === formData.get('escalationRoute')) ?? 'manager_then_hr',
+        managerRespondDays: Math.min(3, Math.max(1, Math.round(int('managerRespondDays', 1)))),
+        speakGraceDays: Math.min(3, Math.max(0, Math.round(int('speakGraceDays', 1)))),
+        payrollCutoffDay: (() => {
+          const day = Math.round(int('payrollCutoffDay', 0));
+          return day >= 1 && day <= 31 ? day : null;
+        })(),
+        hrName: String(formData.get('hrName') ?? '').trim() || null,
+        hrMobileE164: normaliseIndianMobile(String(formData.get('hrMobile') ?? '')),
+        hrEmail: String(formData.get('hrEmail') ?? '').trim() || null,
+        hrTellWhatsapp: bool('hrTellWhatsapp'),
+        hrDailySummary: bool('hrDailySummary'),
         // An unknown voice would leave calls silent, so anything unrecognised
         // falls back rather than being stored.
         agentVoice: isAgentVoice(String(formData.get('agentVoice') ?? '')) 
@@ -315,8 +378,6 @@ export async function updateSettings(formData: FormData) {
         updatedAt: new Date(),
       })
       .where(eq(tenantSettings.tenantId, tenantId));
-    // Reminders and escalation apply to dates already waiting, not only to new messages.
-    await scheduleAllAbsenceWatches(await buildContext(tx, tenantId));
   });
   revalidatePath('/settings');
   revalidatePath('/');
@@ -868,9 +929,8 @@ export async function uploadPayroll(formData: FormData) {
     } catch (error) {
       return { problem: `${file.name} could not be read: ${(error as Error).message}` };
     }
-    // Only this customer's own payroll: every company the file names must be the customer being viewed.
-    const customer = await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId), columns: { name: true } });
-    const wrongCompany = customer ? companyRefusal(table, customer.name, file.name, 'payroll') : null;
+    // Only this customer's own payroll: every company it names must be the company name on Mapping, Company tab.
+    const wrongCompany = companyRefusal(table, await companyMapping(tx, tenantId), file.name, 'payroll');
     if (wrongCompany) return { problem: wrongCompany };
     const fits = resolveMap(profile.fieldMap, table.columns);
     if ('missing' in fits) {
@@ -1000,8 +1060,7 @@ export async function uploadLeaveBalances(formData: FormData) {
     } catch (error) {
       return { problem: `${file.name} could not be read: ${(error as Error).message}` };
     }
-    const customer = await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId), columns: { name: true } });
-    const wrongCompany = customer ? companyRefusal(table, customer.name, file.name, 'leave balance') : null;
+    const wrongCompany = companyRefusal(table, await companyMapping(tx, tenantId), file.name, 'leave balance');
     if (wrongCompany) return { problem: wrongCompany };
     const fits = resolveLeaveMap(profile.fieldMap, table.columns);
     if ('missing' in fits) {
@@ -1057,6 +1116,33 @@ export async function saveLeaveMapping(formData: FormData) {
   revalidatePath('/mapping');
   revalidatePath('/uploads');
   redirect(toLeaveMapping({ leaveSaved: '1' }));
+}
+
+/* ------------------------------------------------------------------
+ * Company mapping: which column names the company, and the company name
+ * ------------------------------------------------------------------ */
+
+const toCompanyMapping = (params: Record<string, string>) => `/mapping?${new URLSearchParams({ tab: 'company', ...params }).toString()}`;
+
+/**
+ * Saves the Company tab: the heading of the company name column and the company
+ * name itself. Attendance, leave balance and payroll uploads are checked against
+ * them. Both blank turns the check off; one without the other is refused.
+ */
+export async function saveCompanyMapping(formData: FormData) {
+  const { session, tenantId } = await requireTenant();
+  if (!canManageSettings(session)) throw new Error('Only an admin can change the company mapping');
+  const clean = (key: string) => String(formData.get(key) ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) || null;
+  const column = clean('companyColumn');
+  const name = clean('companyName');
+  if (Boolean(column) !== Boolean(name)) {
+    redirect(toCompanyMapping({ problem: 'Fill in both the company name column and the company name, or leave both blank.' }));
+  }
+  await withTenant(tenantId, (tx) =>
+    tx.update(tenantSettings).set({ companyColumn: column, companyName: name, updatedAt: new Date() }).where(eq(tenantSettings.tenantId, tenantId)),
+  );
+  revalidatePath('/mapping');
+  redirect(toCompanyMapping({ companySaved: '1' }));
 }
 
 /** Throws away a leave balance mapping filled from a file and not saved. */

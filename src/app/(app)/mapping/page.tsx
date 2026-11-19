@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { canManageSettings, getActiveTenantId, getSession } from '@/lib/auth';
+import { CompanyMapping } from '@/components/company-mapping';
 import { LeaveBalanceMapping } from '@/components/leave-balance-mapping';
 import { PayrollMapping } from '@/components/payroll-mapping';
 import { mappingOverview } from '@/lib/queries';
@@ -16,14 +17,16 @@ import type { FieldMap } from '@/db/schema';
 
 /**
  * Mapping: how each of this customer's files is read, set up once. Attendance
- * (columns, layout and codes), leave balances and payroll each have a tab. The
- * files themselves are uploaded on Uploads, and payroll on Month end.
+ * (columns, layout and codes), leave balances and payroll each have a tab, and
+ * Company says which column names the company and what it must say. The files
+ * themselves are uploaded on Uploads, and payroll on Month end.
  */
 
 const TABS = [
   { key: 'attendance', label: 'Attendance' },
   { key: 'leave', label: 'Leave balance' },
   { key: 'payroll', label: 'Payroll' },
+  { key: 'company', label: 'Company' },
 ] as const;
 type Tab = (typeof TABS)[number]['key'];
 
@@ -38,6 +41,7 @@ export default async function MappingPage({
     payrollSaved?: string;
     leaveFilled?: string;
     leaveSaved?: string;
+    companySaved?: string;
   }>;
 }) {
   const session = await getSession();
@@ -84,6 +88,7 @@ export default async function MappingPage({
       {tab === 'payroll' ? (
         <PayrollMapping tenantId={tenantId} admin={canManageSettings(session)} filled={params.payrollFilled} saved={params.payrollSaved} />
       ) : null}
+      {tab === 'company' ? <CompanyMapping tenantId={tenantId} admin={canManageSettings(session)} saved={params.companySaved} /> : null}
     </>
   );
 }

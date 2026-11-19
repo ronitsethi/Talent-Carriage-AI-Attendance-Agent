@@ -246,6 +246,48 @@
       "when": 1791606399269,
       "tag": "0034_absence_reminders",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1791692799269,
+      "tag": "0035_company_mapping",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1791779199269,
+      "tag": "0036_working_days_and_escalation",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1791865599269,
+      "tag": "0037_reminder_steps_and_call_rule",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1791951999269,
+      "tag": "0038_call_line_alive",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792038399269,
+      "tag": "0039_prompt_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792124799269,
+      "tag": "0040_level_contacts",
+      "breakpoints": true
     }
   ]
 }

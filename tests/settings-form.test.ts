@@ -14,6 +14,7 @@ describe('the settings form', () => {
     const page = ['src/app/(app)/settings/page.tsx', 'src/components/follow-up-contacts.tsx'].map((file) => fs.readFileSync(file, 'utf8')).join('');
 
     expect(fields.length).toBeGreaterThan(5);
-    expect(fields.filter((field) => !page.includes(`name="${field}"`))).toEqual([]);
+    // The rows component names its number box from a table: `countName: 'maxFollowUps'`.
+    expect(fields.filter((field) => !page.includes(`name="${field}"`) && !page.includes(`countName: '${field}'`))).toEqual([]);
   });
 });

@@ -3,9 +3,14 @@ import { cases, conversations, employees } from '@/db/schema';
 import type { Meaning } from '@/lib/mapping/meanings';
 import { lockedMonths, monthOf } from '@/lib/locks';
 import { enqueue } from '@/lib/jobs/queue';
+import { addWorkingDays, isWorkingDay, morningOf, today } from '@/lib/dates';
 import {
   ABSENT_GROUP_TEMPLATE,
   ABSENT_GROUP_TEMPLATE_BODY,
+  ABSENT_LAST_WARNING_TEMPLATE,
+  ABSENT_LAST_WARNING_TEMPLATE_BODY,
+  ABSENT_REMINDER_FIRM_TEMPLATE,
+  ABSENT_REMINDER_FIRM_TEMPLATE_BODY,
   ABSENT_REMINDER_TEMPLATE,
   ABSENT_REMINDER_TEMPLATE_BODY,
 } from './absence-templates';
@@ -129,11 +134,22 @@ export async function groupForTap(ctx: EngineContext, tapped: CaseRow, groupId: 
   return setGroup(ctx, open[0]!, open);
 }
 
-export type AskKind = 'first' | 'reminder';
+/** The first question, or a reminder: the first, a firmer one, or a date's last, which says what happens next. */
+export type AskKind = 'first' | 'reminder' | 'firm' | 'last';
 
-/** The question in a message's own words: the template's, inside the window as well, so the two always say the same. */
-function questionBody(kind: AskKind, name: string, dates: string): string {
-  return fillTemplate(kind === 'reminder' ? ABSENT_REMINDER_TEMPLATE_BODY : ABSENT_GROUP_TEMPLATE_BODY, [name, dates]);
+/** For a last reminder: the dates at their last, and who they go to next. */
+export type LastWarning = { dates: CaseRow[]; to: string };
+
+const TEMPLATES: Record<AskKind, { name: string; body: string }> = {
+  first: { name: ABSENT_GROUP_TEMPLATE, body: ABSENT_GROUP_TEMPLATE_BODY },
+  reminder: { name: ABSENT_REMINDER_TEMPLATE, body: ABSENT_REMINDER_TEMPLATE_BODY },
+  firm: { name: ABSENT_REMINDER_FIRM_TEMPLATE, body: ABSENT_REMINDER_FIRM_TEMPLATE_BODY },
+  last: { name: ABSENT_LAST_WARNING_TEMPLATE, body: ABSENT_LAST_WARNING_TEMPLATE_BODY },
+};
+
+/** The variables of a message, in its template's order. */
+function variablesFor(kind: AskKind, name: string, dates: string, last?: LastWarning): string[] {
+  return kind === 'last' && last ? [name, dates, datesLabel(last.dates), last.to] : [name, dates];
 }
 
 /**
@@ -142,7 +158,9 @@ function questionBody(kind: AskKind, name: string, dates: string): string {
  * the way it always has (`askCase`); otherwise the oldest date leads and the
  * message lists them all. Each date counts as asked.
  */
-export async function askGroup(ctx: EngineContext, employee: EmployeeRow, rows: CaseRow[], kind: AskKind) {
+export async function askGroup(ctx: EngineContext, employee: EmployeeRow, given: CaseRow[], kind: AskKind, last?: LastWarning) {
+  // Oldest first, whatever order they came in: the message reads them in order, and the oldest leads.
+  const rows = [...given].sort((a, b) => a.attDate.localeCompare(b.attDate));
   if (!rows.length) return { sent: false as const, reason: 'Nothing to ask' };
   const block = canSend(ctx, employee);
   if (block.blocked) return { sent: false as const, reason: block.reason };
@@ -160,8 +178,12 @@ export async function askGroup(ctx: EngineContext, employee: EmployeeRow, rows: 
   const dates = datesLabel(rows);
   const conversation = await getConversation(ctx, employee.id);
   const inWindow = windowOpen(conversation, at);
-  const templateName = kind === 'reminder' ? ABSENT_REMINDER_TEMPLATE : ABSENT_GROUP_TEMPLATE;
-  const body = questionBody(kind, name, dates);
+  // A last reminder needs to say which dates go on, and to whom; without that it is an ordinary firm one.
+  const wording: AskKind = kind === 'last' && !last ? 'firm' : kind;
+  const templateName = TEMPLATES[wording].name;
+  const variables = variablesFor(wording, name, dates, last);
+  // The template's own words inside the window as well, so the two always say the same.
+  const body = fillTemplate(TEMPLATES[wording].body, variables);
   const message = inWindow
     ? buildOptionList({ to: employee.mobileE164!, employeeName: employee.fullName, label: dates, caseId: lead.id, remaining: rows.length, body, groupId })
     : {
@@ -169,7 +191,7 @@ export async function askGroup(ctx: EngineContext, employee: EmployeeRow, rows: 
         to: employee.mobileE164!,
         templateName,
         language: 'en',
-        variables: [name, dates],
+        variables,
         buttonPayloads: OPTION_NUMBERS.map((n) => groupSelectionId(lead.id, groupId, n)),
         preview: body,
       };
@@ -199,81 +221,10 @@ export async function askGroup(ctx: EngineContext, employee: EmployeeRow, rows: 
 }
 
 /**
- * A first message, call or reminder about unanswered absences went to this
- * person: the reminder clock starts again from now, and their next check is
- * booked. The count of reminders is left alone; only an answer clears it.
+ * A first question or reminder about absences went to this person: when, for
+ * "already contacted today". Reminders themselves are counted per date
+ * (`cases.reminder_count`), by the daily contact (`daily-contact.ts`).
  */
 export async function noteAbsenceContact(ctx: EngineContext, employeeId: string, at: Date) {
   await ctx.tx.update(employees).set({ absenceContactAt: at }).where(eq(employees.id, employeeId));
-  await scheduleAbsenceWatch(ctx, employeeId, at);
-}
-
-const DAY_MS = 86_400_000;
-
-/** The hour and minute it is in `timezone` at `at`, and how far that clock is from UTC. */
-function localClock(at: Date, timezone: string) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-GB', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-      .formatToParts(at)
-      .map((part) => [part.type, part.value]),
-  ) as Record<string, string>;
-  const wall = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute));
-  return { hour: Number(parts.hour), offsetMs: wall - Math.floor(at.getTime() / 60_000) * 60_000, year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
-}
-
-/** Nobody is messaged or rung at night: between 8 pm and 8 am it waits for 10 am. */
-export function inWorkingHours(at: Date, timezone: string): Date {
-  const clock = localClock(at, timezone);
-  if (clock.hour >= 8 && clock.hour < 20) return at;
-  const day = clock.hour >= 20 ? clock.day + 1 : clock.day;
-  return new Date(Date.UTC(clock.year, clock.month - 1, day, 10, 0) - clock.offsetMs);
-}
-
-/**
- * When this person's unanswered absences next need something: a reminder, the
- * interval after the last contact, or the manager, so many days after the
- * oldest date was first asked - whichever comes first. Null when neither is
- * switched on or nothing is waiting.
- */
-export async function nextAbsenceCheck(ctx: EngineContext, employeeId: string, at: Date): Promise<Date | null> {
-  const s = ctx.settings;
-  if (s.reminderIntervalDays <= 0 && s.escalateAfterDays <= 0) return null;
-  const employee = await ctx.tx.query.employees.findFirst({ where: eq(employees.id, employeeId), columns: { absenceContactAt: true } });
-  const waiting = await unansweredCases(ctx, employeeId, { askedOnly: true });
-  if (!waiting.length) return null;
-  const times: number[] = [];
-  // Before the reminder clock existed, the last time they were asked stands in for it.
-  const last = employee?.absenceContactAt ?? new Date(Math.max(...waiting.map((row) => (row.askedAt ?? at).getTime())));
-  if (s.reminderIntervalDays > 0) times.push(last.getTime() + s.reminderIntervalDays * DAY_MS);
-  const firstAsked = Math.min(...waiting.map((row) => (row.askedAt ?? at).getTime()));
-  if (s.escalateAfterDays > 0) times.push(firstAsked + s.escalateAfterDays * DAY_MS);
-  return inWorkingHours(new Date(Math.min(...times)), s.timezone);
-}
-
-/**
- * Books a check for everyone with something unanswered: when reminders or
- * escalation are switched on or changed, so it takes effect for dates already
- * waiting, not only for messages sent from now on.
- */
-export async function scheduleAllAbsenceWatches(ctx: EngineContext, at = new Date()) {
-  const people = await ctx.tx
-    .selectDistinct({ employeeId: cases.employeeId })
-    .from(cases)
-    .where(and(eq(cases.tenantId, ctx.tenantId), inArray(cases.status, ['asked', 'delivered', 'read'])));
-  let booked = 0;
-  for (const { employeeId } of people) if (await scheduleAbsenceWatch(ctx, employeeId, at)) booked++;
-  return booked;
-}
-
-/** Books this person's next check. A newer booking makes an older one find nothing to do. */
-export async function scheduleAbsenceWatch(ctx: EngineContext, employeeId: string, at: Date) {
-  const runAt = await nextAbsenceCheck(ctx, employeeId, at);
-  if (!runAt) return null;
-  await enqueue(
-    'absence_watch',
-    { employeeId },
-    { tenantId: ctx.tenantId, runAt, dedupeKey: `absence_watch:${employeeId}:${runAt.toISOString()}`, priority: 4 },
-    ctx.tx,
-  );
-  return runAt;
 }

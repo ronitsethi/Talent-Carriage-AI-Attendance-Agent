@@ -33,3 +33,15 @@ export const MANAGER_NO_RESPONSE_TEMPLATE_BODY =
 
 /** The manager's two buttons, as they read on the message. */
 export const MANAGER_NO_RESPONSE_BUTTONS = { speak: "I'll speak to them", lossOfPay: 'Mark as Loss of Pay' } as const;
+
+/** A reminder after the first, firmer. {{1}} first name, {{2}} the dates. */
+export const ABSENT_REMINDER_FIRM_TEMPLATE = 'attendance_absent_reminder_firm';
+export const ABSENT_REMINDER_FIRM_TEMPLATE_BODY =
+  'Hi {{1}}, we are still waiting to hear from you about your absence on {{2}}. Please reply today by choosing the reason below; ' +
+  'it will be taken for every date listed. If different dates had different reasons, just type them here.';
+
+/** A date's last reminder, saying what happens next. {{1}} first name, {{2}} all the dates, {{3}} the dates at their last reminder, {{4}} who they go to. */
+export const ABSENT_LAST_WARNING_TEMPLATE = 'attendance_absent_last_warning';
+export const ABSENT_LAST_WARNING_TEMPLATE_BODY =
+  'Hi {{1}}, this is the last reminder about your absence on {{2}}. If we do not hear from you, {{3}} will then go to {{4}}. ' +
+  'Please choose the reason below; it will be taken for every date listed. If different dates had different reasons, just type them here.';

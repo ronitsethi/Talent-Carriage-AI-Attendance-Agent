@@ -80,10 +80,11 @@ describe('reading a leave balance file', () => {
     expect(resolveLeaveMap({ ...MAP, balance: 'Closing balance' }, table.columns)).toEqual({ missing: ['"Closing balance" (leave balance)'] });
   });
 
-  it('is refused for another company', () => {
+  it('is refused for a company other than the mapped one', () => {
+    const mapping = { column: 'Company', name: 'Test Company Pvt Ltd' };
     const table = leaveTable(file(SAMPLE, 'Some Other Company Pvt Ltd'));
-    expect(companyRefusal(table, 'Test Company', 'leave.xlsx', 'leave balance')).toContain('leave.xlsx is leave balance for Some Other Company Pvt Ltd, not Test Company');
-    expect(companyRefusal(leaveTable(file(SAMPLE)), 'Test Company', 'leave.xlsx', 'leave balance')).toBeNull();
+    expect(companyRefusal(table, mapping, 'leave.xlsx', 'leave balance')).toContain('leave.xlsx is leave balance for Some Other Company Pvt Ltd, not Test Company Pvt Ltd');
+    expect(companyRefusal(leaveTable(file(SAMPLE)), mapping, 'leave.xlsx', 'leave balance')).toBeNull();
   });
 });
 

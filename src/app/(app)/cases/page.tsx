@@ -6,6 +6,9 @@ import { followsUploads } from '@/lib/upload-send';
 import { actionLabel, caseDateLabel, caseStatus, followUpLabel, formatTime, replyLabel } from '@/lib/display';
 import { StatusPill } from '@/components/status-pill';
 import { Notice } from '@/components/notice';
+import { payrollCutoff } from '@/lib/hr';
+import { today } from '@/lib/dates';
+import { formatDate } from '@/lib/conversation/flow';
 import { Toast } from '@/components/toast';
 import { RowLink } from '@/components/row-link';
 import { contactSelectedCases, setCallModeFromRow, setChannelFromRow, setModeFromRow } from '@/app/actions';
@@ -58,8 +61,18 @@ export default async function CasesPage({
     .map((row) => ({ value: `${row.employeeId}|${row.id}`, selected: false }));
   const selectionKey = selectionRows.map((row) => row.value).join(',');
 
+  // Dates with HR, close to the payroll cut-off: urgent.
+  const cutoff = settings ? payrollCutoff(settings, today(settings.timezone)) : null;
+
   return (
     <>
+      {cutoff?.urgent && counts.needs_hr ? (
+        <Notice tone="err">
+          <strong>Payroll is cut off on {formatDate(cutoff.cutoff)}.</strong> The {counts.needs_hr}{' '}
+          {counts.needs_hr === 1 ? 'date' : 'dates'} with HR need deciding before then.{' '}
+          <Link href="/cases?status=needs_hr">Open Needs HR</Link>
+        </Notice>
+      ) : null}
       {blocked ? (
         <Notice tone="err" clear={['sent', 'blocked']}>
           {sent ? `Contacted ${sent} ${Number(sent) === 1 ? 'time' : 'times'}. ` : ''}
