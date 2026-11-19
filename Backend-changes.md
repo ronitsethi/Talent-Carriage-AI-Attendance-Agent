@@ -11,6 +11,12 @@ Format:
 - **Impact:** e.g. breaking API change, migration required, new env var
 ```
 
+## 2026-11-19 17:50
+- **Files:** src/app/actions.ts, src/components/follow-up-contacts.tsx, CURRENT_STATE.md
+- **Change:** Removed the upper limit of 10 on "Number of reminders" and "No. of follow-ups". The Settings number boxes have no `max` and the per-level rows follow any number typed; `updateSettings` clamps only to the Postgres `integer` range (`INT_MAX`). Minimums stay (reminders 0, follow-ups 1).
+- **Why:** The user asked for no limit on reminders and follow-ups.
+- **Impact:** Server-side validation change only; no migration, no new env vars. Not yet deployed.
+
 ## 2026-11-19 15:02
 - **Files:** (deploy only) production database, web app tc-attendance-99772
 - **Change:** Migration 0041 (`policy_documents.file_path`) applied to production; 42 migrations recorded, temporary firewall rule removed. Web app deployed with guideline previews and the folded reminder/follow-up rows in Settings. `/api/health` ok; pages send `X-Frame-Options: DENY`, `/api/guidelines/...` sends `SAMEORIGIN` and `frame-ancestors 'self'` and answers 401 when signed out. No call was live. The voice worker is unchanged.

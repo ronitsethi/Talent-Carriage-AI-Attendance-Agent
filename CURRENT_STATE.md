@@ -104,7 +104,7 @@ Drizzle schema lives in `src/db/schema/*.ts`. Migrations `0000`–`0041` are in 
 - Sending: `operating_mode=manual` (`automatic` means sending after uploads, CSV customers only), `send_delay_minutes=60` (0–1440), `timezone=Asia/Kolkata`, `contact_lag_days=1`, quiet hours 20:00–09:00.
 - Sending and actions: `sending_enabled=false`, `actions_enabled=false`, `attendance_source=csv` (0018; `hrms` lets the agent apply leave and regularisation itself once the manager approves).
 - Calls: `call_mode=keypad`, `agent_voice=simran_enhi_customer`, `agent_voice_pace=0.95`.
-- Follow-up: `max_follow_ups=2` (1–10, "No. of follow-ups"), `follow_up_contacts` and `reminder_contacts` (one row per level: `channel` WhatsApp or voice, and `callMode`; a level with no row takes the default, `src/lib/level-contacts.ts`), `approval_timeout_hours=24`. Employees are told to act by the next day (`DAYS_TO_ACT` in `flow.ts`), which is not a setting.
+- Follow-up: `max_follow_ups=2` (1 or more, no upper limit since 2026-11-19, "No. of follow-ups"; "Number of reminders" likewise 0 or more), `follow_up_contacts` and `reminder_contacts` (one row per level: `channel` WhatsApp or voice, and `callMode`; a level with no row takes the default, `src/lib/level-contacts.ts`), `approval_timeout_hours=24`. Employees are told to act by the next day (`DAYS_TO_ACT` in `flow.ts`), which is not a setting.
 - Backlog: `max_outstanding_questions=0` (no cap), `send_backlog_summary=true`.
 - Company mapping: `company_column`, `company_name` (null until saved on Mapping, Company tab; both or neither).
 

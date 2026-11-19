@@ -313,6 +313,9 @@ export async function flagForHr(formData: FormData) {
   revalidatePath(`/cases/${caseId}`);
 }
 
+/** The largest value a Postgres `integer` column holds. */
+const INT_MAX = 2147483647;
+
 export async function updateSettings(formData: FormData) {
   const { session, tenantId } = await requireTenant();
   if (!canManageSettings(session)) throw new Error('Not allowed');
@@ -323,12 +326,13 @@ export async function updateSettings(formData: FormData) {
     return Number.isFinite(value) ? value : fallback;
   };
 
-  const maxFollowUps = Math.min(10, Math.max(1, Math.round(int('maxFollowUps', 2))));
+  // No upper limit on reminders or follow-ups; only the database column's own range.
+  const maxFollowUps = Math.min(INT_MAX, Math.max(1, Math.round(int('maxFollowUps', 2))));
 
   const channelOf = (name: string) => (formData.get(name) === 'voice' ? 'voice' : 'whatsapp');
   const styleOf = (name: string) => (formData.get(name) === 'agent' ? 'agent' : 'keypad');
   const days = (name: string, max: number) => Math.min(max, Math.max(0, Math.round(int(name, 0))));
-  const remindersBeforeEscalation = days('remindersBeforeEscalation', 10);
+  const remindersBeforeEscalation = days('remindersBeforeEscalation', INT_MAX);
   // One row per reminder and per follow-up: WhatsApp or a call, and the call style.
   const rows = (prefix: string, count: number): FollowUpContact[] =>
     Array.from({ length: count }, (_, index) => ({

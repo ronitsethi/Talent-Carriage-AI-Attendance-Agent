@@ -38,7 +38,7 @@ export function LevelContacts({ kind, settings, children }: { kind: LevelKind; s
   const savedCount = kind === 'reminder' ? settings.remindersBeforeEscalation : settings.maxFollowUps;
   const [typed, setTyped] = useState(String(savedCount));
   const [channels, setChannels] = useState<Record<number, string>>({});
-  const count = Math.min(10, Math.max(text.min, Math.round(Number(typed)) || 0));
+  const count = Math.max(text.min, Math.round(Number(typed)) || 0);
   const levels = Array.from({ length: count }, (_, index) => index + 1);
   const channelOf = (level: number) =>
     channels[level] ?? saved[level - 1]?.channel ?? defaultLevelContact(settings, kind, level, count).channel;
@@ -54,7 +54,6 @@ export function LevelContacts({ kind, settings, children }: { kind: LevelKind; s
             className="input"
             type="number"
             min={text.min}
-            max={10}
             id={text.countName}
             name={text.countName}
             value={typed}
