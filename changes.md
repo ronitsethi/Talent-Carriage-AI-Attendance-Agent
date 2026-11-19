@@ -2,6 +2,11 @@
 
 Entries are appended per session: `### YYYY-MM-DD — <one-line summary>` followed by **What changed**, **Why**, **Where**, and **Technical details** bullets.
 
+## 2026-11-19 18:05
+- **Files:** (deploy only) web app tc-attendance-99772
+- **Change:** Web app deployed with no upper limit on reminders and follow-ups (commit 8506a2e). Azure's deployment log shows the zip deploy succeeded at 17:52 IST; `/api/health` answers 200. No migration. The `az webapp deploy` command itself hung after Azure had finished and was stopped. The voice worker is unchanged.
+- **Why:** The user asked to deploy, commit and push.
+
 ## 2026-11-19 17:50
 - **Files:** src/app/actions.ts, src/components/follow-up-contacts.tsx, CURRENT_STATE.md
 - **Change:** Removed the upper limit of 10 on "Number of reminders" and "No. of follow-ups". The Settings number boxes have no `max` and the per-level rows follow any number typed; `updateSettings` clamps only to the Postgres `integer` range (`INT_MAX`). Minimums stay (reminders 0, follow-ups 1).
